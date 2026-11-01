@@ -1,0 +1,10 @@
+import "std";
+
+mcfun show() {
+    var $heldItemEnchantments = @s.$SelectedItem.components."minecraft:enchantments";
+    if($heldItemEnchantments) {
+        /say has enchantments;
+    } else {
+        /say no enchantments;
+    }
+}

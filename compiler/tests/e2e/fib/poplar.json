@@ -1,0 +1,6 @@
+{
+  "$schema": "../../../schema/poplar.schema.json",
+  "zipName": "Poplar Fib Test",
+  "description": { "text": "Poplar e2e: recursion", "color": "green" },
+  "zip": true
+}

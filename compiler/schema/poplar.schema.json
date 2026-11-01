@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Poplar project config",
+  "description": "poplar.json: the config of a Poplar project. Every field is optional.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The path or URL of this schema, for editors."
+    },
+    "zipName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]+$",
+      "description": "The name of the built pack: poplar-out/<zipName>/ and poplar-out/<zipName>.zip. It is also the name that /datapack list shows. Default: the project folder name."
+    },
+    "namespace": {
+      "type": "string",
+      "pattern": "^[a-z0-9_.-]+$",
+      "description": "The datapack namespace (a-z, 0-9, _ . -). Default: the project folder name."
+    },
+    "description": {
+      "description": "The pack description in pack.mcmeta. Any text component: a string, an object such as {\"text\": \"Hi\", \"color\": \"green\"}, or an array. Default: zipName.",
+      "type": [
+        "string",
+        "object",
+        "array"
+      ]
+    },
+    "minFormat": {
+      "$ref": "#/definitions/packFormat",
+      "description": "The oldest data pack format that the pack supports. At least 88 (Minecraft 1.21.9). Default: the format of the Minecraft version that Poplar targets."
+    },
+    "maxFormat": {
+      "$ref": "#/definitions/packFormat",
+      "description": "The newest data pack format that the pack supports. Not less than minFormat. Default: minFormat."
+    },
+    "entry": {
+      "type": "string",
+      "pattern": "^src/",
+      "description": "The entry file. It must be inside src/. Default: src/main.poplar."
+    },
+    "zip": {
+      "type": "boolean",
+      "description": "Also write poplar-out/<zipName>.zip, with pack.mcmeta at its root. Default: false."
+    }
+  },
+  "definitions": {
+    "packFormat": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 88
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer",
+              "minimum": 88
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "additionalItems": false,
+          "minItems": 1,
+          "maxItems": 2
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,43 @@
+loaded = 1
+math = 13
+temp = -3
+grade = 123
+logic = 1
+while = 5
+data = 11
+scaled = 1000
+item stone
+quote = a "b" \ c
+for = 10
+stone x3
+typed = 200
+path = 20
+literal = 7
+len = 2
+insert 2 double 4
+second Steve
+condition ok
+flag off
+flag exists
+no bonus
+odd sum = 25
+square = 8
+abs = 5
+clamp = 20
+sqrt = 7
+pow = 1024
+random = 5
+random in range
+minmax = 2
+entity = 21
+strong = 1
+nbt = 7
+nbt scaled = 70
+copy 7
+marker 7
+via = 5
+param via = 9
+locals = 6
+local recursion = 100
+copy present
+copy absent

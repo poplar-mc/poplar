@@ -1,0 +1,4 @@
+// The Poplar standard library. `import "std";` in a project loads this file.
+// An mcfun here is only written into the pack when the project calls it.
+import "math.poplar";
+import "text.poplar";

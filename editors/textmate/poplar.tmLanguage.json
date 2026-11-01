@@ -1,0 +1,253 @@
+{
+  "name": "poplar",
+  "scopeName": "source.poplar",
+  "fileTypes": [
+    "poplar"
+  ],
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#command"
+    },
+    {
+      "include": "#execute"
+    },
+    {
+      "include": "#declaration"
+    },
+    {
+      "include": "#expression"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.double-slash.poplar",
+      "match": "//.*$"
+    },
+    "command": {
+      "begin": "(?:^|(?<=[{};]))\\s*(/)(?![/*])([a-z_]+)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.command.poplar"
+        },
+        "2": {
+          "name": "entity.name.function.command.poplar"
+        }
+      },
+      "end": ";",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.terminator.poplar"
+        }
+      },
+      "contentName": "string.unquoted.command.poplar",
+      "patterns": [
+        {
+          "include": "#command-content"
+        }
+      ]
+    },
+    "execute": {
+      "begin": "\\b(execute)\\s*(\\()",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.execute.poplar"
+        },
+        "2": {
+          "name": "punctuation.section.parens.begin.poplar"
+        }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.parens.end.poplar"
+        }
+      },
+      "contentName": "string.unquoted.command.poplar",
+      "patterns": [
+        {
+          "include": "#command-content"
+        }
+      ]
+    },
+    "command-content": {
+      "patterns": [
+        {
+          "include": "#insert"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#selector"
+        },
+        {
+          "begin": "\\[",
+          "end": "\\]",
+          "patterns": [
+            {
+              "include": "#command-content"
+            }
+          ]
+        },
+        {
+          "begin": "\\{(?!\\{)",
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#command-content"
+            }
+          ]
+        }
+      ]
+    },
+    "insert": {
+      "name": "meta.embedded.insert.poplar",
+      "begin": "\\{\\{",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.poplar"
+        }
+      },
+      "end": "\\}\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.poplar"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    "declaration": {
+      "begin": "\\b(mcfun)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.function.poplar"
+        },
+        "2": {
+          "name": "entity.name.function.poplar"
+        },
+        "3": {
+          "name": "punctuation.section.parens.begin.poplar"
+        }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.parens.end.poplar"
+        }
+      },
+      "patterns": [
+        {
+          "name": "variable.parameter.poplar",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "punctuation.separator.poplar",
+          "match": ","
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "name": "storage.type.poplar",
+          "match": "\\b(mcfun|var)\\b"
+        },
+        {
+          "name": "keyword.control.import.poplar",
+          "match": "\\bimport\\b"
+        },
+        {
+          "name": "keyword.control.poplar",
+          "match": "\\b(if|else|for|while|return|break|continue|execute)\\b"
+        },
+        {
+          "name": "keyword.operator.word.poplar",
+          "match": "\\b(and|or|as)\\b"
+        },
+        {
+          "name": "constant.language.poplar",
+          "match": "\\b(true|false|null)\\b"
+        },
+        {
+          "name": "support.type.poplar",
+          "match": "(?<=\\bas)\\s*\\b(byte|short|int|long|float|double)\\b"
+        },
+        {
+          "name": "support.function.builtin.poplar",
+          "match": "\\b(append|prepend|insert|remove|len|text|onEvent)(?=\\s*\\()"
+        },
+        {
+          "name": "entity.name.function.poplar",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        },
+        {
+          "match": "\\|\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\|",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.poplar"
+            }
+          }
+        },
+        {
+          "include": "#selector"
+        },
+        {
+          "name": "variable.language.score.poplar",
+          "match": "#[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "variable.other.property.data.poplar",
+          "match": "\\$(?:\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)(?:\\.(?:\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)|\\[[^\\]]*\\])*"
+        },
+        {
+          "name": "variable.other.property.key.poplar",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+        },
+        {
+          "name": "constant.numeric.poplar",
+          "match": "\\b\\d+(?:\\.\\d+)?[bBsSlLfFdD]?\\b"
+        },
+        {
+          "name": "keyword.operator.poplar",
+          "match": "==|!=|<=|>=|\\.\\.|[<>=+\\-*/%!]"
+        },
+        {
+          "name": "punctuation.terminator.poplar",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.separator.poplar",
+          "match": "[,.]"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.poplar",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.poplar",
+          "match": "\\\\[\"\\\\]"
+        }
+      ]
+    },
+    "selector": {
+      "name": "entity.name.tag.selector.poplar",
+      "match": "@[aeprsn](?:\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])?"
+    }
+  }
+}

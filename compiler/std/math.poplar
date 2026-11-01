@@ -1,0 +1,62 @@
+// Math on ints. Each one is an mcfun, so a call is a real function call.
+// They use parameters and recursion, not global scores, so std adds no objectives to a pack.
+
+// The value without its sign: `abs(-5)` is 5.
+mcfun abs(x) {
+    if (x < 0) { return -x; }
+    return x;
+}
+
+// 1 for a positive `x`, -1 for a negative `x`, 0 for 0.
+mcfun sign(x) {
+    if (x > 0) { return 1; }
+    if (x < 0) { return -1; }
+    return 0;
+}
+
+// The smaller of `a` and `b`.
+mcfun min(a, b) {
+    if (a < b) { return a; }
+    return b;
+}
+
+// The larger of `a` and `b`.
+mcfun max(a, b) {
+    if (a > b) { return a; }
+    return b;
+}
+
+// `x`, moved into `low..high` (both included).
+mcfun clamp(x, low, high) {
+    if (x < low) { return low; }
+    if (x > high) { return high; }
+    return x;
+}
+
+// `base` to the power of `exponent`. A negative exponent gives 1. Overflow wraps, as all score math does.
+mcfun pow(base, exponent) {
+    if (exponent <= 0) { return 1; }
+    return base * pow(base, exponent - 1);
+}
+
+// The integer square root, rounded down. A negative `x` gives 0.
+mcfun sqrt(x) {
+    if (x < 1) { return 0; }
+    return sqrtBetween(x, 0, min(x, 46340));
+}
+
+// Binary search: the answer is in `low..high`. 46340 is the largest int whose square fits in an int.
+mcfun sqrtBetween(x, low, high) {
+    if (low >= high) { return low; }
+    if ((low + high + 1) / 2 * ((low + high + 1) / 2) > x) {
+        return sqrtBetween(x, low, (low + high + 1) / 2 - 1);
+    }
+    return sqrtBetween(x, (low + high + 1) / 2, high);
+}
+
+// A random int in `low..high`, both included. Minecraft's `random value` needs at least 2 values,
+// so `random(5, 5)` gives 5 without it.
+mcfun random(low, high) {
+    if (high <= low) { return low; }
+    /return run random value {{low}}..{{high}};
+}

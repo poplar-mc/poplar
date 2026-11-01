@@ -1,0 +1,412 @@
+const std = @import("std");
+
+const Self = @This();
+
+const commands_json = @embedFile("commands.json");
+const registries_json = @embedFile("registries.json");
+
+// The ids of each registry, without `minecraft:`: `mob_effect` → `absorption`, `bad_omen`, ...
+const Registries = std.json.ArrayHashMap([]const []const u8);
+
+pub const Node = struct {
+    pub const Kind = enum { root, literal, argument };
+
+    type: Kind,
+    children: ?std.json.ArrayHashMap(Node) = null,
+    executable: bool = false,
+    redirect: ?[]const []const u8 = null,
+    parser: ?[]const u8 = null,
+    properties: ?Properties = null,
+};
+
+pub const Properties = struct {
+    min: ?f64 = null,
+    max: ?f64 = null,
+    type: ?[]const u8 = null,
+    registry: ?[]const u8 = null,
+};
+
+pub const Failure = struct {
+    message: []const u8,
+    at: usize,
+};
+
+root: Node,
+registries: Registries,
+
+pub fn load(arena: std.mem.Allocator) !Self {
+    const root = try std.json.parseFromSliceLeaky(Node, arena, commands_json, .{ .ignore_unknown_fields = true });
+    const registries = try std.json.parseFromSliceLeaky(Registries, arena, registries_json, .{});
+    return .{ .root = root, .registries = registries };
+}
+
+pub fn check(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!?Failure {
+    var walk: Walk = .{ .root = &self.root, .registries = &self.registries, .text = text };
+    if (walk.matchChildren(&self.root, 0)) return null;
+
+    const failure = walk.furthest orelse return .{ .message = "invalid command", .at = 0 };
+    return .{ .message = try failure.describe(gpa, text, &self.registries), .at = failure.at };
+}
+
+const Walk = struct {
+    const Problem = struct {
+        at: usize,
+        expected: []const u8,
+        out_of_range: bool = false,
+        // The registry when the id is not in it.
+        unknown_in: ?[]const u8 = null,
+
+        fn describe(problem: Problem, gpa: std.mem.Allocator, text: []const u8, registries: *const Registries) std.mem.Allocator.Error![]const u8 {
+            const found = text[problem.at..readBalanced(text, problem.at)];
+            if (problem.unknown_in) |registry| {
+                const id = registryId(found).?;
+                const closest = closestId(registries.map.get(registry).?, id) orelse return std.fmt.allocPrint(gpa, "unknown {s} '{s}'", .{ registry, id });
+                return std.fmt.allocPrint(gpa, "unknown {s} '{s}'. Did you mean '{s}'?", .{ registry, id, closest });
+            }
+            if (problem.out_of_range) return std.fmt.allocPrint(gpa, "{s} '{s}' is out of range", .{ problem.expected, found });
+            if (found.len == 0) return std.fmt.allocPrint(gpa, "expected {s}, found end of command", .{problem.expected});
+            return std.fmt.allocPrint(gpa, "expected {s}, found '{s}'", .{ problem.expected, found });
+        }
+    };
+
+    root: *const Node,
+    registries: *const Registries,
+    text: []const u8,
+    furthest: ?Problem = null,
+
+    fn matchChildren(walk: *Walk, node: *const Node, pos: usize) bool {
+        const children = node.children orelse return false;
+        var has_literal = false;
+
+        for (children.map.keys(), children.map.values()) |name, *child| {
+            if (child.type != .literal) continue;
+            has_literal = true;
+
+            const end = pos + name.len;
+            if (!std.mem.startsWith(u8, walk.text[pos..], name)) continue;
+            if (end < walk.text.len and walk.text[end] != ' ') continue;
+            if (walk.matchAfter(child, end)) return true;
+        }
+
+        for (children.map.values()) |*child| {
+            if (child.type != .argument) continue;
+            const end = walk.readArgument(child, pos) orelse continue;
+            if (walk.matchAfter(child, end)) return true;
+        }
+
+        if (has_literal) walk.fail(.{ .at = pos, .expected = if (node == walk.root) "a command" else "a subcommand" });
+        return false;
+    }
+
+    fn matchAfter(walk: *Walk, node: *const Node, end: usize) bool {
+        if (end == walk.text.len) {
+            if (node.executable) return true;
+            walk.fail(.{ .at = end, .expected = "more arguments" });
+            return false;
+        }
+
+        if (walk.text[end] != ' ') {
+            walk.fail(.{ .at = end, .expected = "a space" });
+            return false;
+        }
+
+        const next = walk.continuation(node) orelse {
+            walk.fail(.{ .at = end + 1, .expected = "end of command" });
+            return false;
+        };
+        return walk.matchChildren(next, end + 1);
+    }
+
+    // `execute ... run` has no children, no redirect and is not executable. It continues from the root.
+    fn continuation(walk: *Walk, node: *const Node) ?*const Node {
+        if (node.redirect) |path| {
+            var target = walk.root;
+            for (path) |name| target = target.children.?.map.getPtr(name).?;
+            return target;
+        }
+        if (node.children != null) return node;
+        if (!node.executable) return walk.root;
+        return null;
+    }
+
+    fn fail(walk: *Walk, problem: Problem) void {
+        if (walk.furthest) |furthest| {
+            if (furthest.at >= problem.at) return;
+        }
+        walk.furthest = problem;
+    }
+
+    fn readArgument(walk: *Walk, node: *const Node, pos: usize) ?usize {
+        const parser = node.parser.?;
+        const text = walk.text;
+        const end = readBalanced(text, pos);
+        const word = text[pos..end];
+        const properties = node.properties orelse Properties{};
+
+        if (eql(parser, "minecraft:message")) return text.len;
+        if (isMacroWord(word)) return end;
+
+        if (registryOf(parser, properties)) |registry| {
+            if (walk.isUnknownId(registry, word)) {
+                walk.fail(.{ .at = pos, .expected = registry, .unknown_in = registry });
+                return null;
+            }
+        }
+
+        if (eql(parser, "brigadier:string")) {
+            const string_type = properties.type orelse "word";
+            if (eql(string_type, "greedy")) return text.len;
+            if (word.len > 0 and (eql(string_type, "phrase") or isUnquotedWord(word))) return end;
+        } else if (eql(parser, "brigadier:bool")) {
+            if (eql(word, "true") or eql(word, "false")) return end;
+        } else if (eql(parser, "brigadier:integer") or eql(parser, "brigadier:float") or eql(parser, "brigadier:double")) {
+            if (parseNumber(parser, word)) |value| {
+                if (value >= (properties.min orelse -std.math.inf(f64)) and value <= (properties.max orelse std.math.inf(f64))) return end;
+                walk.fail(.{ .at = pos, .expected = describeParser(parser), .out_of_range = true });
+                return null;
+            }
+        } else if (eql(parser, "minecraft:entity") or eql(parser, "minecraft:game_profile") or eql(parser, "minecraft:score_holder")) {
+            if (isEntity(word)) return end;
+        } else if (eql(parser, "minecraft:block_pos") or eql(parser, "minecraft:vec3")) {
+            return walk.readCoordinates(pos, 3);
+        } else if (eql(parser, "minecraft:vec2") or eql(parser, "minecraft:column_pos") or eql(parser, "minecraft:rotation")) {
+            return walk.readCoordinates(pos, 2);
+        } else if (isResourceParser(parser)) {
+            if (isResourceLocation(word)) return end;
+        } else if (word.len > 0) {
+            return end;
+        }
+
+        walk.fail(.{ .at = pos, .expected = describeParser(parser) });
+        return null;
+    }
+
+    // Only vanilla ids are checked: a tag, `*`, or an id in another namespace (the pack's own) passes.
+    fn isUnknownId(walk: *const Walk, registry: []const u8, word: []const u8) bool {
+        const id = registryId(word) orelse return false;
+        const ids = walk.registries.map.get(registry) orelse return false;
+        for (ids) |known| {
+            if (eql(known, id)) return false;
+        }
+        return true;
+    }
+
+    fn readCoordinates(walk: *Walk, start: usize, count: usize) ?usize {
+        var pos = start;
+
+        for (0..count) |index| {
+            if (index > 0) {
+                if (pos >= walk.text.len or walk.text[pos] != ' ') {
+                    walk.fail(.{ .at = @min(pos + 1, walk.text.len), .expected = "a coordinate" });
+                    return null;
+                }
+                pos += 1;
+            }
+
+            const end = readBalanced(walk.text, pos);
+            if (!isCoordinate(walk.text[pos..end])) {
+                walk.fail(.{ .at = pos, .expected = "a coordinate" });
+                return null;
+            }
+            pos = end;
+        }
+
+        return pos;
+    }
+};
+
+// Reads to the next space that is outside quotes and brackets.
+fn readBalanced(text: []const u8, start: usize) usize {
+    var pos = start;
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+
+    while (pos < text.len) : (pos += 1) {
+        const ch = text[pos];
+        if (quote) |q| {
+            if (ch == '\\') {
+                pos += 1;
+            } else if (ch == q) {
+                quote = null;
+            }
+            continue;
+        }
+
+        switch (ch) {
+            '"', '\'' => quote = ch,
+            '[', '{', '(' => depth += 1,
+            ']', '}', ')' => depth -|= 1,
+            ' ' => if (depth == 0) break,
+            else => {},
+        }
+    }
+
+    return @min(pos, text.len);
+}
+
+fn parseNumber(parser: []const u8, word: []const u8) ?f64 {
+    if (!eql(parser, "brigadier:integer")) return std.fmt.parseFloat(f64, word) catch null;
+
+    const int = std.fmt.parseInt(i64, word, 10) catch return null;
+    return @floatFromInt(int);
+}
+
+// Minecraft checks a macro argument when the macro runs, so any argument kind accepts it here.
+// The registry that an argument names: `minecraft:resource` with `registry: minecraft:mob_effect` → `mob_effect`.
+fn registryOf(parser: []const u8, properties: Properties) ?[]const u8 {
+    if (eql(parser, "minecraft:item_stack") or eql(parser, "minecraft:item_predicate")) return "item";
+    if (eql(parser, "minecraft:block_state") or eql(parser, "minecraft:block_predicate")) return "block";
+
+    const keyed = [_][]const u8{ "minecraft:resource", "minecraft:resource_key", "minecraft:resource_or_tag", "minecraft:resource_or_tag_key" };
+    for (keyed) |keyed_parser| {
+        if (!eql(parser, keyed_parser)) continue;
+        const registry = properties.registry orelse return null;
+        return if (std.mem.startsWith(u8, registry, "minecraft:")) registry["minecraft:".len..] else registry;
+    }
+    return null;
+}
+
+// `minecraft:stone[lit=true]` → `stone`. Null for a tag, `*`, or another namespace.
+fn registryId(word: []const u8) ?[]const u8 {
+    if (word.len == 0 or word[0] == '#' or word[0] == '*') return null;
+    const end = std.mem.indexOfAny(u8, word, "[{") orelse word.len;
+    const id = word[0..end];
+    const separator = std.mem.indexOfScalar(u8, id, ':') orelse return id;
+    if (!eql(id[0..separator], "minecraft")) return null;
+    return id[separator + 1 ..];
+}
+
+// The id with the smallest edit distance, if it is 3 or less.
+fn closestId(ids: []const []const u8, id: []const u8) ?[]const u8 {
+    var best: ?[]const u8 = null;
+    var best_distance: usize = 4;
+    for (ids) |candidate| {
+        const distance = editDistance(candidate, id) orelse continue;
+        if (distance < best_distance) {
+            best = candidate;
+            best_distance = distance;
+        }
+    }
+    return best;
+}
+
+// Levenshtein distance. Null for words longer than 64 characters.
+fn editDistance(a: []const u8, b: []const u8) ?usize {
+    if (a.len > 64 or b.len > 64) return null;
+    var previous: [65]usize = undefined;
+    var current: [65]usize = undefined;
+    for (0..b.len + 1) |j| previous[j] = j;
+    for (a, 0..) |a_char, i| {
+        current[0] = i + 1;
+        for (b, 0..) |b_char, j| {
+            const substitution = previous[j] + @intFromBool(a_char != b_char);
+            current[j + 1] = @min(substitution, previous[j + 1] + 1, current[j] + 1);
+        }
+        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
+    }
+    return previous[b.len];
+}
+
+fn isMacroWord(word: []const u8) bool {
+    return std.mem.indexOf(u8, word, "$(") != null;
+}
+
+fn isCoordinate(word: []const u8) bool {
+    if (word.len == 0) return false;
+    if (isMacroWord(word)) return true;
+
+    const has_prefix = word[0] == '~' or word[0] == '^';
+    const number = if (has_prefix) word[1..] else word;
+    if (has_prefix and number.len == 0) return true;
+
+    _ = std.fmt.parseFloat(f64, number) catch return false;
+    return true;
+}
+
+fn isEntity(word: []const u8) bool {
+    if (word.len == 0) return false;
+    if (word[0] != '@') return true;
+    if (word.len < 2 or std.mem.indexOfScalar(u8, "aeprsn", word[1]) == null) return false;
+    return word.len == 2 or (word[2] == '[' and word[word.len - 1] == ']');
+}
+
+fn isResourceParser(parser: []const u8) bool {
+    const resource_parsers = [_][]const u8{
+        "minecraft:resource",
+        "minecraft:resource_key",
+        "minecraft:resource_location",
+        "minecraft:resource_or_tag",
+        "minecraft:resource_or_tag_key",
+        "minecraft:function",
+        "minecraft:dimension",
+    };
+    for (resource_parsers) |resource_parser| {
+        if (eql(parser, resource_parser)) return true;
+    }
+    return false;
+}
+
+fn isResourceLocation(word: []const u8) bool {
+    const location = if (std.mem.startsWith(u8, word, "#")) word[1..] else word;
+    if (location.len == 0) return false;
+
+    for (location) |ch| {
+        const valid = std.ascii.isLower(ch) or std.ascii.isDigit(ch) or std.mem.indexOfScalar(u8, "_-.:/", ch) != null;
+        if (!valid) return false;
+    }
+    return true;
+}
+
+fn isUnquotedWord(word: []const u8) bool {
+    for (word) |ch| {
+        const valid = std.ascii.isAlphanumeric(ch) or std.mem.indexOfScalar(u8, "_-.+", ch) != null;
+        if (!valid) return false;
+    }
+    return true;
+}
+
+fn describeParser(parser: []const u8) []const u8 {
+    const separator = std.mem.indexOfScalar(u8, parser, ':') orelse return parser;
+    return parser[separator + 1 ..];
+}
+
+fn eql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
+test "checks commands against the tree" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const tree = try load(arena.allocator());
+
+    const valid = [_][]const u8{
+        "say hi there",
+        "effect give @p poison 10",
+        "tp @s ~ ~1 ~",
+        "execute as @a[tag=a, limit=1] if score @s ns matches 1.. run say x",
+        "summon zombie ~ ~1 ~ {Tags:[\"a b\"],Data:[I;1,2]}",
+    };
+    for (valid) |text| {
+        if (try tree.check(arena.allocator(), text)) |failure| {
+            std.debug.print("'{s}': {s}\n", .{ text, failure.message });
+            return error.TestUnexpectedResult;
+        }
+    }
+
+    const unknown = (try tree.check(arena.allocator(), "efect give @p poison")).?;
+    try std.testing.expectEqualStrings("expected a command, found 'efect'", unknown.message);
+
+    const bad_number = (try tree.check(arena.allocator(), "effect give @p poison abc")).?;
+    try std.testing.expectEqualStrings("expected integer, found 'abc'", bad_number.message);
+    try std.testing.expectEqual(22, bad_number.at);
+
+    const effect = (try tree.check(arena.allocator(), "effect give @p minecraft:poision 10")).?;
+    try std.testing.expectEqualStrings("unknown mob_effect 'poision'. Did you mean 'poison'?", effect.message);
+    const item = (try tree.check(arena.allocator(), "give @s diamnod 2")).?;
+    try std.testing.expectEqualStrings("unknown item 'diamnod'. Did you mean 'diamond'?", item.message);
+    const block = (try tree.check(arena.allocator(), "setblock ~ ~ ~ stonee[lit=true]")).?;
+    try std.testing.expectEqualStrings("unknown block 'stonee'. Did you mean 'stone'?", block.message);
+
+    const not_checked = [_][]const u8{ "give @s mypack:wand", "clear @s #minecraft:logs", "give @s $(item)" };
+    for (not_checked) |text| try std.testing.expectEqual(null, try tree.check(arena.allocator(), text));
+}

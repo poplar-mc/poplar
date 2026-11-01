@@ -1,0 +1,23 @@
+// Text for players. Each one is an mcfun, so other packs can call it too: `function <ns>:tellraw {target:"@a",message:"..."}`.
+// `message` is a text component: a compound or a list of parts, `["HP: ", text(#hp)]`. A plain string is inserted
+// without quotes, as in any macro, so write `{text: "hi"}` or `"\"hi\""`.
+
+// Shows `message` in the chat of `target`.
+mcfun tellraw(target, message) {
+    /tellraw {{target}} {{message}};
+}
+
+// Shows `message` as a big title on the screen of `target`.
+mcfun title(target, message) {
+    /title {{target}} title {{message}};
+}
+
+// Shows `message` below the title of `target`. It shows only with a title.
+mcfun subtitle(target, message) {
+    /title {{target}} subtitle {{message}};
+}
+
+// Shows `message` above the hotbar of `target`.
+mcfun actionBar(target, message) {
+    /title {{target}} actionbar {{message}};
+}
