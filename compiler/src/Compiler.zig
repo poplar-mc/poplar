@@ -31,9 +31,12 @@ const Located = struct {
 pub const Origin = enum { entry, project, std };
 
 // `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the callback.
+// `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run `/trigger <name>`.
 const Event = struct {
     criteria: []const u8,
     callback: []const u8,
+    // The objective name of `onTrigger`. A trigger is disabled after each use, so `poplar/tick` enables it again.
+    trigger: ?[]const u8 = null,
 };
 
 const Value = Environment.Value;
@@ -354,7 +357,7 @@ fn appendEventFunctions(self: *Self, functions: *std.ArrayList(Ir.McFunction)) C
 
     var tick: std.ArrayList(Ir.Command) = .empty;
     for (self.events.items, 0..) |event, index| {
-        const objective = try self.eventObjective(index);
+        const objective = try self.eventObjective(event, index);
         const name = try std.fmt.allocPrint(self.gpa, "poplar/event_{d}", .{index});
         const reset = try std.fmt.allocPrint(self.gpa, "scoreboard players reset @s {s}", .{objective});
         try functions.append(self.gpa, .{ .name = name, .commands = try self.gpa.dupe(Ir.Command, &.{ .{ .raw = reset }, .{ .function = event.callback } }) });
@@ -362,12 +365,16 @@ fn appendEventFunctions(self: *Self, functions: *std.ArrayList(Ir.McFunction)) C
         const subcommands = try std.fmt.allocPrint(self.gpa, "as @a[scores={{{s}=1..}}] at @s", .{objective});
         try tick.append(self.gpa, .{ .execute_raw = .{ .subcommands = subcommands, .run = try self.createCommand(.{ .function = name }) } });
     }
+    for (self.events.items) |event| {
+        const trigger = event.trigger orelse continue;
+        try tick.append(self.gpa, .{ .raw = try std.fmt.allocPrint(self.gpa, "scoreboard players enable @a {s}", .{trigger}) });
+    }
     if (self.has_tick) try tick.append(self.gpa, .{ .function = "tick" });
     try functions.append(self.gpa, .{ .name = "poplar/tick", .commands = try tick.toOwnedSlice(self.gpa) });
 }
 
-fn eventObjective(self: *Self, index: usize) CompileError![]const u8 {
-    return std.fmt.allocPrint(self.gpa, "{s}.event_{d}", .{ self.namespace, index });
+fn eventObjective(self: *Self, event: Event, index: usize) CompileError![]const u8 {
+    return event.trigger orelse std.fmt.allocPrint(self.gpa, "{s}.event_{d}", .{ self.namespace, index });
 }
 
 // The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
@@ -424,7 +431,7 @@ fn buildLoadFunction(self: *Self, functions: []const Ir.McFunction) CompileError
     try commands.append(self.gpa, .{ .add_objective = null });
     for (self.globals.keys()) |name| try commands.append(self.gpa, .{ .add_objective = name });
     for (self.events.items, 0..) |event, index| {
-        const add = try std.fmt.allocPrint(self.gpa, "scoreboard objectives add {s} {s}", .{ try self.eventObjective(index), event.criteria });
+        const add = try std.fmt.allocPrint(self.gpa, "scoreboard objectives add {s} {s}", .{ try self.eventObjective(event, index), event.criteria });
         try commands.append(self.gpa, .{ .raw = add });
     }
 
@@ -545,6 +552,10 @@ fn callMacroHelper(self: *Self, name: []const u8, command_text: CommandText, nee
         switch (insert.source) {
             .data => |source| try commands.append(self.gpa, .{ .data_copy = .{ .target = target, .source = source } }),
             .value => |expression| {
+                if (expression.kind == .call and isStringCall(expression.kind.call)) {
+                    try self.compileStringInto(target, expression.kind.call, env, commands);
+                    continue;
+                }
                 const score = if (expression.kind == .identifier and expression.kind.identifier.storage == .score)
                     try self.scoreSource(expression.kind.identifier, env) orelse return
                 else blk: {
@@ -891,6 +902,11 @@ fn compileDataAssign(self: *Self, target: Ir.DataPath, value_expression: *const 
         return commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
     }
 
+    if (expression.kind == .call and isStringCall(expression.kind.call)) {
+        if (cast_type != null) return self.addError("'as' sets the type of a number, not of a string", .{});
+        return self.compileStringInto(target, expression.kind.call, env, commands);
+    }
+
     if (expression.kind == .list or expression.kind == .compound) {
         if (cast_type != null) return self.addError("'as' sets the type of one number, not of a list or compound", .{});
         return self.compileLiteralAssign(target, expression, env, commands);
@@ -1069,6 +1085,8 @@ fn compileInto(self: *Self, target: Ir.Score, expression: *const Ast.Expr, env: 
         },
         .call => |call| {
             if (isBuiltinCall(call, "len")) return self.compileLength(target, call, env, commands);
+            if (isStringCall(call)) return self.addError("'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'", .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name });
+            if (isStringTest(call)) return self.addError("'{s}' is a condition. Use it in 'if' or 'while'", .{call.callee.kind.identifier.name});
             const function = try self.findMcfn(call) orelse return;
             // Temps made after this point hold arguments. They are not needed after the call.
             const live_count = self.temp_count;
@@ -1124,6 +1142,7 @@ fn compileMcfnCall(self: *Self, call: Ast.Call, function: *const Ast.Function, e
         score.* = null;
         if (!self.containsRuntimeValue(arg, env) or isParam(arg, env)) continue;
         const value, _ = splitCast(arg);
+        if (value.kind == .call and isStringCall(value.kind.call)) continue;
 
         if (value.kind == .identifier) {
             if (value.kind.identifier.storage == .score) score.* = try self.scoreSource(value.kind.identifier, env) orelse return null;
@@ -1141,6 +1160,8 @@ fn compileMcfnCall(self: *Self, call: Ast.Call, function: *const Ast.Function, e
         if (argument_score) |score| {
             _, const cast_type = splitCast(arg);
             try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score, .type = cast_type orelse .int } });
+        } else if (arg.kind == .call and isStringCall(arg.kind.call) and self.containsRuntimeValue(arg, env)) {
+            try self.compileStringInto(target, arg.kind.call, env, commands);
         } else if (isDataIdentifier(arg)) {
             const source = try self.dataPathOf(arg.kind.identifier, env) orelse return null;
             try commands.append(self.gpa, .{ .data_copy = .{ .target = target, .source = source } });
@@ -1400,7 +1421,7 @@ fn collectExpressionCalls(
             if (call.callee.kind != .identifier) return;
 
             // An event callback is called from `load`, as far as the call graph is concerned.
-            if (isBuiltinCall(call, "onEvent") and call.args.len == 2 and call.args[1].kind == .identifier) {
+            if ((isBuiltinCall(call, "onEvent") or isBuiltinCall(call, "onTrigger")) and call.args.len == 2 and call.args[1].kind == .identifier) {
                 try calls.put(self.gpa, call.args[1].kind.identifier.name, {});
             }
             const located = self.functions.get(call.callee.kind.identifier.name) orelse return;
@@ -1452,7 +1473,7 @@ fn containsRuntimeValue(self: *const Self, expression: *const Ast.Expr, env: *co
         // An mcfun runs in the game. `text(#hp)` only names the score, so it is known when the pack is built.
         .call => |call| {
             if (isBuiltinCall(call, "text")) return false;
-            if (!isBuiltinCall(call, "len")) return true;
+            if (!isBuiltinCall(call, "len") and !isStringCall(call) and !isStringTest(call)) return true;
             for (call.args) |arg| {
                 if (self.containsRuntimeValue(arg, env)) return true;
             }
@@ -1697,6 +1718,7 @@ fn lowerCondition(self: *Self, expression: *const Ast.Expr, env: *Environment, n
             },
             else => {},
         },
+        .call => |call| if (isStringTest(call)) return self.stringTest(call, env, negated, setup),
         // `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs `== true`.
         .identifier => |identifier| if (identifier.storage == .data or identifier.storage == .entity_data) {
             const path = try self.dataPathOf(identifier, env) orelse return null;
@@ -2069,7 +2091,9 @@ fn compileCall(self: *Self, call: Ast.Call, env: *Environment, commands: *std.Ar
     if (call.callee.kind != .identifier) return self.addError("only named functions can be called", .{});
     const name = call.callee.kind.identifier.name;
 
-    if (isBuiltinCall(call, "onEvent")) return self.compileOnEvent(call, env);
+    if (isBuiltinCall(call, "onEvent")) return self.compileEvent(call, "onEvent", env);
+    if (isBuiltinCall(call, "onTrigger")) return self.compileEvent(call, "onTrigger", env);
+    if (isStringCall(call) or isStringTest(call)) return self.addError("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
     if (isBuiltin(name)) return self.compileListBuiltin(name, call, env, commands);
     const callee = self.functions.get(name) orelse return self.addError("unknown function '{s}'", .{name});
 
@@ -2079,26 +2103,40 @@ fn compileCall(self: *Self, call: Ast.Call, env: *Environment, commands: *std.Ar
     try commands.append(self.gpa, command);
 }
 
-pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent" };
+pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "slice", "str", "startsWith", "endsWith" };
 
-// `onEvent(criteria, callback)` in the entry file's `load`. It registers the event at compile time and writes no command.
-fn compileOnEvent(self: *Self, call: Ast.Call, env: *Environment) CompileError!void {
-    if (!self.in_entry_load) return self.addError("'onEvent' must be in 'mcfun load' of the entry file", .{});
-    if (isInRuntimeBranch(env)) return self.addError("'onEvent' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'", .{});
-    if (call.args.len != 2) return self.addError("'onEvent' expects 2 arguments (criteria, callback), found {d}", .{call.args.len});
+// `onEvent(criteria, callback)` or `onTrigger(name, callback)` in the entry file's `load`. It registers the event
+// at compile time and writes no command.
+fn compileEvent(self: *Self, call: Ast.Call, builtin: []const u8, env: *Environment) CompileError!void {
+    const is_trigger = std.mem.eql(u8, builtin, "onTrigger");
+    if (!self.in_entry_load) return self.addError("'{s}' must be in 'mcfun load' of the entry file", .{builtin});
+    if (isInRuntimeBranch(env)) return self.addError("'{s}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'", .{builtin});
+    const first = if (is_trigger) "name" else "criteria";
+    if (call.args.len != 2) return self.addError("'{s}' expects 2 arguments ({s}, callback), found {d}", .{ builtin, first, call.args.len });
 
-    const criteria = try self.evaluate(call.args[0], env) orelse return;
-    if (criteria != .string or criteria.string.len == 0) return self.addError("the criteria of 'onEvent' must be a string, for example \"deathCount\"", .{});
+    const value = try self.evaluate(call.args[0], env) orelse return;
+    if (value != .string or value.string.len == 0) {
+        return self.addError("the {s} of '{s}' must be a string, for example \"{s}\"", .{ first, builtin, if (is_trigger) "showoff" else "deathCount" });
+    }
+    if (is_trigger) for (value.string) |char| {
+        if (!std.ascii.isAlphanumeric(char) and std.mem.indexOfScalar(u8, "_-.+", char) == null) {
+            return self.addError("the trigger name '{s}' can only have letters, 0-9, '_', '-', '.' and '+'", .{value.string});
+        }
+    };
 
     const callback = call.args[1];
     const outer_position = self.enterExpression(callback);
     defer self.restorePosition(outer_position);
-    if (callback.kind != .identifier or callback.kind.identifier.storage != .compile_time) return self.addError("the callback of 'onEvent' must be the name of an mcfun", .{});
+    if (callback.kind != .identifier or callback.kind.identifier.storage != .compile_time) return self.addError("the callback of '{s}' must be the name of an mcfun", .{builtin});
     const name = callback.kind.identifier.name;
     const located = self.functions.get(name) orelse return self.addError("unknown mcfun '{s}'", .{name});
     if (located.function.params.len > 0) return self.addError("the callback '{s}' is run by the game, so it cannot have parameters", .{name});
 
-    try self.events.append(self.gpa, .{ .criteria = criteria.string, .callback = name });
+    if (is_trigger) {
+        try self.events.append(self.gpa, .{ .criteria = "trigger", .callback = name, .trigger = value.string });
+    } else {
+        try self.events.append(self.gpa, .{ .criteria = value.string, .callback = name });
+    }
 }
 
 fn isInRuntimeBranch(env: *const Environment) bool {
@@ -2199,6 +2237,156 @@ fn listArgument(self: *Self, name: []const u8, argument: *const Ast.Expr, env: *
     return self.dataPathOf(argument.kind.identifier, env);
 }
 
+// `slice(text, start, end)` and `str(value)` give a string. `startsWith` and `endsWith` are conditions.
+fn isStringCall(call: Ast.Call) bool {
+    return isBuiltinCall(call, "slice") or isBuiltinCall(call, "str");
+}
+
+fn isStringTest(call: Ast.Call) bool {
+    return isBuiltinCall(call, "startsWith") or isBuiltinCall(call, "endsWith");
+}
+
+// The result of a nested string helper, and the substring that `startsWith` and `endsWith` compare.
+const string_scratch: Ir.DataPath = .inStorage(.poplar, "string");
+const string_test_key = "string_test";
+
+// `data modify <target> set string <source> [start] [end]`. A score or math goes into the scratch value first,
+// because `set string` reads data: a number there becomes its text.
+fn compileStringInto(self: *Self, target: Ir.DataPath, call: Ast.Call, env: *Environment, commands: *std.ArrayList(Ir.Command)) CompileError!void {
+    const outer_position = self.enterExpression(call.callee);
+    defer self.restorePosition(outer_position);
+    if (isBuiltinCall(call, "slice")) {
+        if (call.args.len != 2 and call.args.len != 3) return self.addError("'slice' expects 2 or 3 arguments (text, start, end), found {d}", .{call.args.len});
+        const start = try self.constantIndex(call.args[1], env) orelse return;
+        const end: ?i32 = if (call.args.len == 3) try self.constantIndex(call.args[2], env) orelse return else null;
+        const source = try self.stringSource(call.args[0], env, commands) orelse return;
+        return commands.append(self.gpa, .{ .data_set_string = .{ .target = target, .source = source, .start = start, .end = end } });
+    }
+
+    if (call.args.len != 1) return self.addError("'str' expects 1 argument, found {d}", .{call.args.len});
+    const argument = call.args[0];
+    if (argument.kind == .call and isStringCall(argument.kind.call)) return self.compileStringInto(target, argument.kind.call, env, commands);
+    if (isDataIdentifier(argument)) {
+        const source = try self.dataPathOf(argument.kind.identifier, env) orelse return;
+        return commands.append(self.gpa, .{ .data_set_string = .{ .target = target, .source = source } });
+    }
+    const score = if (argument.kind == .identifier and argument.kind.identifier.storage == .score)
+        try self.scoreSource(argument.kind.identifier, env) orelse return
+    else blk: {
+        const temp = try self.newTemp();
+        try self.compileInto(temp, argument, env, commands);
+        break :blk temp;
+    };
+    try commands.append(self.gpa, .{ .score_to_data = .{ .target = string_scratch, .score = score, .type = .int } });
+    try commands.append(self.gpa, .{ .data_set_string = .{ .target = target, .source = string_scratch } });
+}
+
+// The data that a string helper reads: a `$` path, entity data, or another string helper (through the scratch value).
+fn stringSource(self: *Self, argument: *const Ast.Expr, env: *Environment, commands: *std.ArrayList(Ir.Command)) CompileError!?Ir.DataPath {
+    if (isDataIdentifier(argument)) return try self.dataPathOf(argument.kind.identifier, env);
+    if (argument.kind == .call and isStringCall(argument.kind.call)) {
+        try self.compileStringInto(string_scratch, argument.kind.call, env, commands);
+        return string_scratch;
+    }
+    const outer_position = self.enterExpression(argument);
+    defer self.restorePosition(outer_position);
+    try self.addError("the text must be data ('$x' or '@s.$path') or another string helper. For a score, use 'str(#x)'", .{});
+    return null;
+}
+
+fn constantIndex(self: *Self, expression: *const Ast.Expr, env: *Environment) CompileError!?i32 {
+    if (self.containsRuntimeValue(expression, env)) {
+        const outer_position = self.enterExpression(expression);
+        defer self.restorePosition(outer_position);
+        try self.addError("the bounds of 'slice' must be constant integers", .{});
+        return null;
+    }
+    const value = try self.evaluate(expression, env) orelse return null;
+    return self.toScoreValue(value);
+}
+
+// `startsWith(text, "minecraft:")`: the first characters go into the test value, which starts as "" so that a
+// text that is too short (the `set string` fails) does not match. Then one NBT filter compares them.
+fn stringTest(self: *Self, call: Ast.Call, env: *Environment, negated: bool, setup: *std.ArrayList(Ir.Command)) CompileError!?Condition {
+    const name = call.callee.kind.identifier.name;
+    if (call.args.len != 2) {
+        try self.addError("'{s}' expects 2 arguments (text, {s}), found {d}", .{ name, if (isBuiltinCall(call, "startsWith")) "prefix" else "suffix", call.args.len });
+        return null;
+    }
+    const affix = try self.constantString(call.args[1], env, name) orelse return null;
+    const length: i32 = @intCast(std.unicode.calcUtf16LeLen(affix) catch affix.len);
+    if (length == 0) return .{ .constant = !negated };
+
+    const source = try self.stringSource(call.args[0], env, setup) orelse return null;
+    const test_value: Ir.DataPath = .inStorage(.poplar, string_test_key);
+    try setup.append(self.gpa, .{ .data_set = .{ .target = test_value, .snbt = "\"\"" } });
+    const is_start = isBuiltinCall(call, "startsWith");
+    try setup.append(self.gpa, .{ .data_set_string = .{ .target = test_value, .source = source, .start = if (is_start) 0 else -length, .end = if (is_start) length else null } });
+    const filter = try std.fmt.allocPrint(self.gpa, "{{{s}:{s}}}", .{ string_test_key, try self.valueToSnbt(.{ .string = affix }) });
+    return try self.singleCheck(.{ .negated = negated, .score_test = .{ .data_test = .{ .holder = .{ .storage = .poplar }, .path = filter } } });
+}
+
+fn constantString(self: *Self, expression: *const Ast.Expr, env: *Environment, builtin: []const u8) CompileError!?[]const u8 {
+    const outer_position = self.enterExpression(expression);
+    defer self.restorePosition(outer_position);
+    if (!self.containsRuntimeValue(expression, env)) {
+        const value = try self.evaluate(expression, env) orelse return null;
+        if (value == .string) return value.string;
+    }
+    try self.addError("the second argument of '{s}' must be a constant string", .{builtin});
+    return null;
+}
+
+// The string helpers on constants run when the pack is built. Indices count UTF-16 units, the same as the game.
+fn evaluateStringCall(self: *Self, call: Ast.Call, env: *Environment) CompileError!?Value {
+    const name = call.callee.kind.identifier.name;
+    const arity_ok = if (isBuiltinCall(call, "slice")) call.args.len == 2 or call.args.len == 3 else if (isBuiltinCall(call, "str")) call.args.len == 1 else call.args.len == 2;
+    if (!arity_ok) {
+        try self.addError("'{s}' has the wrong number of arguments", .{name});
+        return null;
+    }
+    const first = try self.evaluate(call.args[0], env) orelse return null;
+    const text = switch (first) {
+        .string => |text| text,
+        .number => |number| try std.fmt.allocPrint(self.gpa, "{d}", .{number}),
+        else => {
+            try self.addError("'{s}' needs a string or a number, found {s}", .{ name, @tagName(first) });
+            return null;
+        },
+    };
+    if (isBuiltinCall(call, "str")) return .{ .string = text };
+    if (isStringTest(call)) {
+        const affix = try self.constantString(call.args[1], env, name) orelse return null;
+        const matches = if (isBuiltinCall(call, "startsWith")) std.mem.startsWith(u8, text, affix) else std.mem.endsWith(u8, text, affix);
+        return .{ .boolean = matches };
+    }
+
+    const units = std.unicode.utf8ToUtf16LeAlloc(self.gpa, text) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidUtf8 => {
+            try self.addError("'slice' needs valid UTF-8 text", .{});
+            return null;
+        },
+    };
+    const length: i64 = @intCast(units.len);
+    const start = try self.constantIndex(call.args[1], env) orelse return null;
+    const end: i64 = if (call.args.len == 3) try self.constantIndex(call.args[2], env) orelse return null else length;
+    const from: i64 = if (start < 0) length + start else start;
+    const to: i64 = if (end < 0) length + end else end;
+    if (from < 0 or to > length or from > to) {
+        try self.addError("'slice' bounds {d}..{d} are out of range for a text of length {d}", .{ start, end, length });
+        return null;
+    }
+    const sliced = std.unicode.utf16LeToUtf8Alloc(self.gpa, units[@intCast(from)..@intCast(to)]) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            try self.addError("'slice' cuts a character in two", .{});
+            return null;
+        },
+    };
+    return .{ .string = sliced };
+}
+
 // `len($list)`: `data get` on a list, compound or string gives its size.
 fn compileLength(self: *Self, target: Ir.Score, call: Ast.Call, env: *const Environment, commands: *std.ArrayList(Ir.Command)) CompileError!void {
     if (call.args.len != 1) return self.addError("'len' expects 1 argument, found {d}", .{call.args.len});
@@ -2238,6 +2426,7 @@ fn evaluateCall(self: *Self, call: Ast.Call, env: *Environment) CompileError!?Va
         }
         return self.textComponent(call.args[0], env);
     }
+    if (isStringCall(call) or isStringTest(call)) return self.evaluateStringCall(call, env);
     if (isBuiltinCall(call, "len") and call.args.len == 1) {
         const value = try self.evaluate(call.args[0], env) orelse return null;
         switch (value) {
@@ -3335,4 +3524,64 @@ test "a wrapper that can return is not inlined where the return value is read" {
     const program = try compiler.compile();
     try std.testing.expectEqual(0, compiler.errors.items.len);
     try std.testing.expectEqualStrings("function ns:poplar/pick/if_0\n", try renderForTest(arena.allocator(), program, "pick"));
+}
+
+test "onTrigger makes a trigger objective, runs the callback and enables it again" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try compileForTest(arena.allocator(),
+        \\mcfun load() {
+        \\    onTrigger("showoff", show);
+        \\    onTrigger("bad name", show);
+        \\}
+        \\mcfun show() { /say shown; }
+    );
+    const program = try compiler.compile();
+    try std.testing.expectEqual(1, compiler.errors.items.len);
+    try std.testing.expectEqualStrings("the trigger name 'bad name' can only have letters, 0-9, '_', '-', '.' and '+'", compiler.errors.items[0].message);
+
+    try std.testing.expectEqualStrings(
+        \\execute as @a[scores={showoff=1..}] at @s run function ns:poplar/event_0
+        \\scoreboard players enable @a showoff
+        \\
+    , try renderForTest(arena.allocator(), program, "poplar/tick"));
+    try std.testing.expectEqualStrings(
+        \\scoreboard players reset @s showoff
+        \\function ns:show
+        \\
+    , try renderForTest(arena.allocator(), program, "poplar/event_0"));
+    const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
+    try std.testing.expect(std.mem.indexOf(u8, load, "scoreboard objectives add showoff trigger\n") != null);
+}
+
+test "string helpers use set string, and run in the compiler on constants" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try compileForTest(arena.allocator(),
+        \\var $id = "minecraft:diamond";
+        \\var #n = 42;
+        \\mcfun main() {
+        \\    $id = slice(@s.$SelectedItem.id, 10, -2);
+        \\    $id = str(#n);
+        \\    /say {{slice("minecraft:stone", 10)}};
+        \\    if (endsWith($id, "_sword")) { /say sword; }
+        \\    #n = slice($id, 1);
+        \\}
+    );
+    const program = try compiler.compile();
+    try std.testing.expectEqual(1, compiler.errors.items.len);
+    try std.testing.expectEqualStrings("'slice' gives a string, so it cannot be a score. Store it in data: '$x = slice(...);'", compiler.errors.items[0].message);
+
+    try std.testing.expectEqualStrings(
+        \\data modify storage ns:data id set string entity @s SelectedItem.id 10 -2
+        \\execute store result storage ns:poplar string int 1 run scoreboard players get #global ns.n
+        \\data modify storage ns:data id set string storage ns:poplar string
+        \\say stone
+        \\data modify storage ns:poplar string_test set value ""
+        \\data modify storage ns:poplar string_test set string storage ns:data id -6
+        \\execute if data storage ns:poplar {string_test:"_sword"} run say sword
+        \\
+    , try renderForTest(arena.allocator(), program, "main"));
 }

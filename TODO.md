@@ -38,6 +38,9 @@
 - [x] User documentation in `docs.md` (a docs site can come later)
 - [x] Local `#` and `$` variables in function bodies (block scope, `<var>_<mcfun>` names, saved on recursion)
 - [ ] VS Code extension (it can reuse `editors/textmate/poplar.tmLanguage.json`)
+- [x] String helpers: `slice`, `str`, `startsWith`, `endsWith`
+- [ ] String concatenation (Minecraft has no native command; a macro line works for text without `"`)
+- [x] `onTrigger(name, callback)`: `/trigger` commands without load or tick code
 - [x] Strip back the language: remove `fun`, remove declared types, `if` on a data path is Minecraft's `if data`, std text functions are mcfuns
 - [ ] LSP: completion and hover inside `/commands`, from the command tree
 - [ ] LSP: columns for function and var definitions (they point to the start of the line now)

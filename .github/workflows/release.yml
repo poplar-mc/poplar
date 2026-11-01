@@ -1,0 +1,43 @@
+name: Release
+
+# When a release is published, build Poplar for each platform and attach the archives to it.
+# Each archive holds `bin/poplar` (or `poplar.exe`) and `lib/poplar/std/`, which the compiler finds next to its binary.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: Build and package
+        working-directory: compiler
+        run: |
+          set -eu
+          mkdir -p ../dist
+          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            arch="${target%%-*}"
+            os="${target#*-}"
+            name="poplar-$os-$arch"
+            zig build -Doptimize=ReleaseSafe -Dtarget="$target" -p "../dist/$name"
+            rm -f "../dist/$name/bin/"*.pdb
+            if [ "$os" = windows ]; then
+              (cd "../dist/$name" && zip -qr "../$name.zip" bin lib)
+            else
+              tar -czf "../dist/$name.tar.gz" -C "../dist/$name" bin lib
+            fi
+          done
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.tar.gz dist/*.zip --clobber

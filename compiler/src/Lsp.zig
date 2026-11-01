@@ -52,6 +52,11 @@ const builtins = [_]Builtin{
     .{ .name = "len", .signature = "len(value)", .doc = "The size of a list, compound or string." },
     .{ .name = "text", .signature = "text(value)", .doc = "A text part that names a score or data. The game reads the value when it shows the text." },
     .{ .name = "onEvent", .signature = "onEvent(criteria, callback)", .doc = "Runs the mcfun `callback` as a player each time the criteria counts for that player. Only in `mcfun load` of the entry file." },
+    .{ .name = "onTrigger", .signature = "onTrigger(name, callback)", .doc = "Makes `/trigger name` run the mcfun `callback` as the player who used it. Only in `mcfun load` of the entry file." },
+    .{ .name = "slice", .signature = "slice(text, start, end)", .doc = "A substring: from `start` (included) to `end` (not included, optional). Negative bounds count from the end. One `data modify ... set string` command." },
+    .{ .name = "str", .signature = "str(value)", .doc = "A number, score or math as a string: `$label = str(#kills);`." },
+    .{ .name = "startsWith", .signature = "startsWith(text, \"prefix\")", .doc = "A condition: the text starts with a constant prefix." },
+    .{ .name = "endsWith", .signature = "endsWith(text, \"suffix\")", .doc = "A condition: the text ends with a constant suffix." },
 };
 
 comptime {

@@ -14,6 +14,7 @@ var $pos = [0, 0];
 var $names = [];
 var $flag = true;
 var $src = {};
+var $sid = "minecraft:diamond";
 
 mcfun show(label, value) {
     /say {{label}} = {{value}};
@@ -179,6 +180,18 @@ mcfun test() {
     copyLocal();
     $src = {};
     copyLocal();
+
+    var $short = slice($sid, 10);
+    /say slice {{$short}};
+    /say end {{slice($sid, -3)}};
+    #x = 42;
+    var $text = str(#x);
+    /say str {{$text}};
+    /say nested {{slice(str(#x * 3), 1)}};
+    if (startsWith($sid, "minecraft:")) { /say starts; }
+    if (endsWith($sid, "stone")) { /say wrong suffix; }
+    var $tiny = "x";
+    if (!startsWith($tiny, "minecraft:")) { /say short ok; }
 }
 
 // A failed copy must not leave the value of an earlier call: locals are removed when the mcfun ends.

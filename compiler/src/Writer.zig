@@ -213,6 +213,11 @@ fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []
             dataPathText(namespace, copy.target),
             dataPathText(namespace, copy.source),
         }),
+        .data_set_string => |set| {
+            try text.print(gpa, "data modify {f} set string {f}", .{ dataPathText(namespace, set.target), dataPathText(namespace, set.source) });
+            if (set.start) |start| try text.print(gpa, " {d}", .{start});
+            if (set.end) |end| try text.print(gpa, " {d}", .{end});
+        },
         .score_to_data => |copy| try text.print(gpa, "execute store result {f} {t} 1 run scoreboard players get {f}", .{
             dataPathText(namespace, copy.target),
             copy.type,
@@ -337,6 +342,7 @@ const DataPathText = struct {
                 .data => try writer.print("storage {s}:data {s}", .{ self.namespace, path }),
                 .args => try writer.print("storage {s}:poplar args.{s}", .{ self.namespace, path }),
                 .frame => try writer.print("storage {s}:poplar stack[-1].{s}", .{ self.namespace, path }),
+                .poplar => try writer.print("storage {s}:poplar {s}", .{ self.namespace, path }),
                 .macro => if (path.len == 0)
                     try writer.print("storage {s}:poplar macro", .{self.namespace})
                 else

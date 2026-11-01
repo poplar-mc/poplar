@@ -257,6 +257,32 @@ A literal can contain game values. `$pos = [#x, #y, 0];` writes `[0,0,0]`, then 
 
 `index` must be a constant integer. A score or math value is added as a `0` first, then stored into it.
 
+### Strings
+
+```poplar
+var $id = "";
+var #kills = 0;
+
+mcfun inspect() {
+    $id = slice(@s.$SelectedItem.id, 10);         // "minecraft:diamond_sword" → "diamond_sword"
+    var $label = str(#kills);                     // 5 → "5"
+    if (endsWith(@s.$SelectedItem.id, "_sword")) {
+        /say a sword;
+    }
+}
+```
+
+| Helper | Gives | Compiles to |
+|---|---|---|
+| `slice(text, start)`, `slice(text, start, end)` | the characters from `start` (included) to `end` (not included) | `data modify ... set string <text> <start> [<end>]` |
+| `str(value)` | a number, score or math as text | `set string` from the number |
+| `startsWith(text, "prefix")` | a condition | a substring of the text, then an NBT match |
+| `endsWith(text, "suffix")` | a condition | the same, from the end |
+
+`text` is a `$` path, entity data (`@s.$path`) or another string helper (`slice(str(#x), 1)`). `start` and `end` are constant integers; a negative one counts from the end, so `slice($id, -3)` is the last three characters. The prefix or suffix is a constant string. With only constants, the compiler does the work: `{{slice("minecraft:stone", 10)}}` writes `stone`.
+
+`slice` and `str` give a string, so store them in data, pass them to a function or insert them with `{{...}}`. `startsWith` and `endsWith` are conditions for `if` and `while`.
+
 ### NBT types with `as`
 
 The game reads some NBT fields as one type: an entity's `Health` is a float. `as` says which number type to store:
@@ -280,7 +306,12 @@ The game reads some NBT fields as one type: an entity's `Health` is a float. `as
 - **A game value added to a list costs 2 commands.** A constant, or a copy from other data, is 1 command.
 - **`remove` on a missing index does nothing** in the game.
 - **A local is removed at each exit of its function:** one `data remove` per data local at the end of the body and at every `return`. A `return` whose value is a game value computes it into a temporary score first, because the value can read a local.
-- **The list function names are reserved:** `append`, `prepend`, `insert`, `remove` and `len` cannot be function names.
+- **The list function names are reserved:** `append`, `prepend`, `insert`, `remove` and `len` cannot be function names, and neither can `slice`, `str`, `startsWith` and `endsWith`.
+- **`slice` is one command.** `str` of a score or math is 2 (the number is stored first).
+- **Each `startsWith` or `endsWith` runs 3 commands every time its condition is checked:** clear a scratch value, copy the start (or end) of the text into it, and compare it. Two of them in one condition cost 6; inside a `while`, the cost is per loop step.
+- **A slice out of range fails,** the same as in Minecraft, and the target keeps its old value. `startsWith` and `endsWith` are false for a text shorter than the prefix.
+- **Indices count UTF-16 units,** as in the game: a character outside the Basic Multilingual Plane, such as an emoji, counts as 2.
+- **There is no concatenation.** Minecraft has no command that joins strings. Join them in a command with inserts: `/data modify storage demo:data name set value "{{$first}} {{$last}}";`.
 
 ## Entities
 
@@ -564,6 +595,38 @@ execute as @a[scores={demo.event_0=1..}] at @s run function demo:poplar/event_0
 - **The score is reset on each run.** A counting criteria (`deathCount`, `minecraft.used:...`) fires once per occurrence; a value criteria (`health`, `food`) fires every tick while it is above 0.
 - **Only in the entry file's `load`.**
 - **The criteria is not checked.** A wrong one makes `scoreboard objectives add` fail in the game.
+
+### Triggers
+
+```poplar
+mcfun load() {
+    onTrigger("showoff", show);
+}
+
+mcfun show() {
+    /say I am showing off;
+}
+```
+
+`/trigger <objective>` is the command that every player can use, so datapacks use it for their own commands. `onTrigger(name, callback)` sets one up: when a player runs `/trigger showoff`, the `mcfun` `show` runs as that player, at the player. The rules are the same as for `onEvent`.
+
+`poplar/load` adds the objective `showoff` with the criteria `trigger`. The name is used as it is, without the namespace, because players type it. `poplar/tick` runs the callback for each player with a score, and then enables the trigger again for all players, because Minecraft disables a trigger after each use:
+
+```mcfunction
+# poplar/tick
+execute as @a[scores={showoff=1..}] at @s run function demo:poplar/event_0
+scoreboard players enable @a showoff
+
+# poplar/event_0
+scoreboard players reset @s showoff
+function demo:show
+```
+
+**Costs and caveats**
+
+- **Two commands every tick per trigger:** the check and the `enable`.
+- **The name has no namespace.** Two packs that use the same trigger name share it. The name can only have letters, 0-9, `_`, `-`, `.` and `+`.
+- **Any value counts once.** `/trigger showoff set 5` runs the callback once, like `/trigger showoff`. The callback cannot read the value, because the score is reset first.
 
 ## Standard library
 

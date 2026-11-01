@@ -41,3 +41,9 @@ locals = 6
 local recursion = 100
 copy present
 copy absent
+slice diamond
+end ond
+str 42
+nested 26
+starts
+short ok

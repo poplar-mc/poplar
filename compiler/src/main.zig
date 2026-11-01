@@ -19,7 +19,8 @@ pub fn main(init: std.process.Init) !void {
     });
     // `zig build run` and the e2e harness run a cached copy of the binary, so they point to `std/` with `POPLAR_STD`.
     var std_path = init.environ_map.get("POPLAR_STD") orelse try Project.installedStdPath(init.arena.allocator(), io);
-    var args = init.minimal.args.iterate();
+    // The allocator form works on every platform; Windows and WASI have no plain `iterate`.
+    var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
     root.runAndExit(&args, .{ .data = @ptrCast(&std_path) });
 }
 

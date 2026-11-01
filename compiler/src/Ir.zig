@@ -29,6 +29,7 @@ pub const Command = union(enum) {
     data_set: DataValue,
     data_set_if_unset: DataValue,
     data_copy: DataCopy,
+    data_set_string: DataSetString,
     // `data modify ... append|prepend|insert <i> value|from ...`
     data_add: DataAdd,
     data_remove: DataPath,
@@ -67,7 +68,8 @@ pub const StoreResult = struct {
 // `args` is `<ns>:poplar args`, where a key is the name of a parameter of the mcfun that is called next.
 // `frame` is the top frame of `<ns>:poplar stack`, where a key is the name of a saved temp.
 // `macro` is `<ns>:poplar macro`: the parameters and `#` keys for one macro helper. An empty key is the whole compound.
-pub const Storage = enum { data, args, frame, macro };
+// `poplar` is the root of `<ns>:poplar`, where the string helpers keep their scratch value.
+pub const Storage = enum { data, args, frame, macro, poplar };
 
 // A place for NBT: a key in one of Poplar's storages, or a path in the NBT of one entity.
 pub const DataPath = struct {
@@ -102,6 +104,14 @@ pub const DataValue = struct {
 pub const DataCopy = struct {
     target: DataPath,
     source: DataPath,
+};
+
+// `data modify <target> set string <source> [start] [end]`: a substring, or a number as a string.
+pub const DataSetString = struct {
+    target: DataPath,
+    source: DataPath,
+    start: ?i32 = null,
+    end: ?i32 = null,
 };
 
 pub const DataAdd = struct {
