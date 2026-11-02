@@ -21,6 +21,7 @@ pub fn main(init: std.process.Init) !void {
     var shared: cli.Shared = .{
         .std_path = init.environ_map.get("POPLAR_STD") orelse try Project.installedStdPath(init.arena.allocator(), io),
         .color = init.environ_map.get("NO_COLOR") == null and (std.Io.File.stdout().isTty(io) catch false),
+        .environ_map = init.environ_map,
     };
     // The allocator form works on every platform; Windows and WASI have no plain `iterate`.
     var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
@@ -31,6 +32,7 @@ test {
     _ = @import("Commands.zig");
     _ = @import("Compiler.zig");
     _ = @import("Config.zig");
+    _ = @import("DotEnv.zig");
     _ = @import("Lexer.zig");
     _ = @import("Lsp.zig");
     _ = @import("Optimizer.zig");

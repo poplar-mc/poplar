@@ -329,7 +329,7 @@ pub fn writeNewProject(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, na
     try writeNewFile(io, dir, Config.file_name, poplar_json);
     try writeNewFile(io, dir, "poplar.schema.json", schema_json);
     try writeNewFile(io, dir, "src/main.poplar", main_poplar);
-    try writeNewFile(io, dir, ".gitignore", out_dir_name ++ "/\n");
+    try writeNewFile(io, dir, ".gitignore", out_dir_name ++ "/\n.env\n");
 }
 
 fn writeNewFile(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8) !void {

@@ -101,6 +101,13 @@ poplar watch --world ~/.minecraft/saves/"My World"
 
 It builds every time you save a file and copies the pack into the world's `datapacks/` folder. Run `/reload` in the game to load the new build.
 
+To skip `--world` each time, put the world in a `.env` file in the project folder. `poplar new` adds `.env` to `.gitignore`, because the path is yours:
+
+```sh
+# .env
+POPLAR_WORLD="~/.minecraft/saves/My World"
+```
+
 ## Variables
 
 ```poplar
@@ -716,7 +723,7 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 | `poplar init` | the same, in the current folder |
 | `poplar build [dir]` | compiles into `poplar-out/` |
 | `poplar check [dir]` | prints the errors, writes nothing |
-| `poplar watch [dir] [--world <world>]` | builds again on every change; with `--world`, copies each build into the world's `datapacks/` |
+| `poplar watch [dir] [--world <world>]` | builds again on every change; with a world, copies each build into the world's `datapacks/` |
 | `poplar lsp` | the language server, over stdin and stdout |
 | `poplar --version` | the Poplar and Minecraft versions |
 
@@ -727,7 +734,9 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 ✗ 1 error, nothing was written
 ```
 
-The output has colors in a terminal; set `NO_COLOR` to turn them off. Errors go to stderr. `--world` needs a folder with `level.dat`; it only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
+The output has colors in a terminal; set `NO_COLOR` to turn them off. Errors go to stderr.
+
+`watch` takes the world from `--world`, else from the `POPLAR_WORLD` environment variable, else from `POPLAR_WORLD` in the project's `.env`. The first copy line names the source when it is not `--world`. A `.env` has `KEY=VALUE` lines, `#` comments, an optional `export ` and optional quotes; there is no variable expansion. A leading `~/` in `POPLAR_WORLD` is your home folder. The world must be a folder with `level.dat`. `watch` only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
 
 **Costs and caveats**
 

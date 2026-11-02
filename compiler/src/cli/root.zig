@@ -53,6 +53,7 @@ pub const Shared = struct {
     // The folder of the standard library, which `import "std";` loads.
     std_path: []const u8,
     color: bool,
+    environ_map: *const std.process.Environ.Map,
 };
 
 fn shared(ctx: zli.CommandContext) *const Shared {
@@ -61,6 +62,10 @@ fn shared(ctx: zli.CommandContext) *const Shared {
 
 pub fn stdPath(ctx: zli.CommandContext) []const u8 {
     return shared(ctx).std_path;
+}
+
+pub fn environment(ctx: zli.CommandContext) *const std.process.Environ.Map {
+    return shared(ctx).environ_map;
 }
 
 pub fn output(ctx: zli.CommandContext) Output {

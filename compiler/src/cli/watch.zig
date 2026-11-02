@@ -2,6 +2,7 @@ const std = @import("std");
 const zli = @import("zli");
 const Config = @import("../Config.zig");
 const Project = @import("../Project.zig");
+const DotEnv = @import("../DotEnv.zig");
 const root = @import("root.zig");
 const build = @import("build.zig");
 
@@ -15,7 +16,7 @@ pub fn register(init_options: zli.InitOptions) !*zli.Command {
     try command.addPositionalArg(root.dir_arg);
     try command.addFlag(.{
         .name = "world",
-        .description = "A world folder. Each build is copied into its datapacks/ folder, so /reload loads it",
+        .description = "A world folder. Each build is copied into its datapacks/ folder, so /reload loads it (default: POPLAR_WORLD from the environment or .env)",
         .type = .String,
         .default_value = .{ .String = "" },
     });
@@ -29,6 +30,8 @@ const WorldCopy = struct {
     const marker_name = ".poplar-watch";
 
     datapacks_path: []const u8,
+    // Where the world came from, such as ` (POPLAR_WORLD from .env)`, or empty for `--world`.
+    source: []const u8,
     copied_before: bool = false,
     // Set after an error, so that it is printed one time.
     failed: bool = false,
@@ -68,7 +71,7 @@ const WorldCopy = struct {
         };
         try target.writeFile(io, .{ .sub_path = marker_name, .data = "Copied by poplar watch, which replaces this folder after each build.\n" });
 
-        if (!copy.copied_before) try out.success("Copied to {s}{s}/datapacks/{s}{s}. Run {s}/reload{s} in the game after each build", .{ out.bold(), world_name, name, out.reset(), out.bold(), out.reset() });
+        if (!copy.copied_before) try out.success("Copied to {s}{s}/datapacks/{s}{s}{s}. Run {s}/reload{s} in the game after each build", .{ out.bold(), world_name, name, out.reset(), copy.source, out.bold(), out.reset() });
         copy.copied_before = true;
     }
 
@@ -90,17 +93,48 @@ const WorldCopy = struct {
     }
 };
 
+const World = struct {
+    path: []const u8,
+    source: []const u8,
+};
+
+// `--world`, else `POPLAR_WORLD` from the environment, else from the project's `.env`. Null when none is set.
+fn chooseWorld(ctx: zli.CommandContext, arena: std.mem.Allocator, project_path: []const u8) !?World {
+    const flag = ctx.flag("world", []const u8);
+    if (flag.len > 0) return .{ .path = flag, .source = "" };
+    if (root.environment(ctx).get("POPLAR_WORLD")) |path| {
+        return .{ .path = try expandHome(ctx, arena, path), .source = " (POPLAR_WORLD from the environment)" };
+    }
+    switch (try DotEnv.read(arena, ctx.io, project_path, "POPLAR_WORLD")) {
+        .value => |path| return .{ .path = try expandHome(ctx, arena, path), .source = " (POPLAR_WORLD from .env)" },
+        .missing => return null,
+        .invalid_line => |line| {
+            const out = root.output(ctx);
+            out.failure("{s}{s}:{d}{s}  Expected KEY=VALUE", .{ out.bold(), DotEnv.file_name, line, out.reset() });
+            root.fail(ctx);
+        },
+    }
+}
+
+// The shell turns `~/` into the home folder for `--world`, but not for a variable.
+fn expandHome(ctx: zli.CommandContext, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
+    if (!std.mem.startsWith(u8, path, "~/")) return path;
+    const environment = root.environment(ctx);
+    const home = environment.get("HOME") orelse environment.get("USERPROFILE") orelse return path;
+    return std.fs.path.join(arena, &.{ home, path[2..] });
+}
+
 // The `datapacks` folder of the world, made if the world has none yet. Null after an error is printed.
-fn datapacksPath(ctx: zli.CommandContext, arena: std.mem.Allocator, world: []const u8) !?[]const u8 {
+fn datapacksPath(ctx: zli.CommandContext, arena: std.mem.Allocator, world: World) !?[]const u8 {
     const cwd = std.Io.Dir.cwd();
     const out = root.output(ctx);
-    const world_path = cwd.realPathFileAlloc(ctx.io, world, arena) catch {
-        out.failure("The world folder {s}{s}{s} does not exist", .{ out.bold(), world, out.reset() });
+    const world_path = cwd.realPathFileAlloc(ctx.io, world.path, arena) catch {
+        out.failure("The world folder {s}{s}{s}{s} does not exist", .{ out.bold(), world.path, out.reset(), world.source });
         return null;
     };
     const level_path = try std.fs.path.join(arena, &.{ world_path, "level.dat" });
     cwd.access(ctx.io, level_path, .{}) catch {
-        out.failure("{s}{s}{s} is not a Minecraft world: it has no level.dat", .{ out.bold(), world, out.reset() });
+        out.failure("{s}{s}{s}{s} is not a Minecraft world: it has no level.dat", .{ out.bold(), world.path, out.reset(), world.source });
         return null;
     };
     const datapacks_path = try std.fs.path.join(arena, &.{ world_path, "datapacks" });
@@ -113,10 +147,12 @@ fn run(ctx: zli.CommandContext) !void {
     defer arena.deinit();
 
     const project_path = root.projectPath(ctx);
-    const world = ctx.flag("world", []const u8);
     var world_copy: ?WorldCopy = null;
-    if (world.len > 0) {
-        world_copy = .{ .datapacks_path = try datapacksPath(ctx, arena.allocator(), world) orelse root.fail(ctx) };
+    if (try chooseWorld(ctx, arena.allocator(), project_path)) |world| {
+        world_copy = .{
+            .datapacks_path = try datapacksPath(ctx, arena.allocator(), world) orelse root.fail(ctx),
+            .source = world.source,
+        };
     }
 
     var last_fingerprint = try fingerprint(ctx.allocator, ctx.io, project_path);
