@@ -28,6 +28,10 @@ fn red(self: Self) []const u8 {
     return if (self.color) "\x1b[31m" else "";
 }
 
+fn yellow(self: Self) []const u8 {
+    return if (self.color) "\x1b[33m" else "";
+}
+
 pub fn success(self: Self, comptime format: []const u8, args: anytype) std.Io.Writer.Error!void {
     try self.writer.print("{s}✓{s} " ++ format ++ "\n", .{ self.green(), self.reset() } ++ args);
 }
@@ -36,6 +40,12 @@ pub fn success(self: Self, comptime format: []const u8, args: anytype) std.Io.Wr
 pub fn failure(self: Self, comptime format: []const u8, args: anytype) void {
     self.writer.flush() catch {};
     std.debug.print("{s}✗{s} " ++ format ++ "\n", .{ self.red(), self.reset() } ++ args);
+}
+
+// Something that works, but likely not as the user wants. It goes to stderr, like a failure.
+pub fn warning(self: Self, comptime format: []const u8, args: anytype) void {
+    self.writer.flush() catch {};
+    std.debug.print("{s}!{s} " ++ format ++ "\n", .{ self.yellow(), self.reset() } ++ args);
 }
 
 // `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position.

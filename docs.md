@@ -736,7 +736,7 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 
 The output has colors in a terminal; set `NO_COLOR` to turn them off. Errors go to stderr.
 
-`watch` takes the world from `--world`, else from the `POPLAR_WORLD` environment variable, else from `POPLAR_WORLD` in the project's `.env`. The first copy line names the source when it is not `--world`. A `.env` has `KEY=VALUE` lines, `#` comments, an optional `export ` and optional quotes; there is no variable expansion. A leading `~/` in `POPLAR_WORLD` is your home folder. The world must be a folder with `level.dat`. `watch` only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
+`watch` takes the world from `--world`, else from the `POPLAR_WORLD` environment variable, else from `POPLAR_WORLD` in the project's `.env`. The first copy line names the source when it is not `--world`. With no world, `watch` still builds, but it prints a warning and copies nothing. A `.env` has `KEY=VALUE` lines, `#` comments, an optional `export ` and optional quotes; there is no variable expansion. A leading `~/` in `POPLAR_WORLD` is your home folder. The world must be a folder with `level.dat`. `watch` only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
 
 **Costs and caveats**
 

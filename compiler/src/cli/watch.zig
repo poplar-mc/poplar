@@ -153,6 +153,9 @@ fn run(ctx: zli.CommandContext) !void {
             .datapacks_path = try datapacksPath(ctx, arena.allocator(), world) orelse root.fail(ctx),
             .source = world.source,
         };
+    } else {
+        const out = root.output(ctx);
+        out.warning("No world specified, so builds are not copied anywhere. Use {s}--world{s}, or set {s}POPLAR_WORLD{s} in .env", .{ out.bold(), out.reset(), out.bold(), out.reset() });
     }
 
     var last_fingerprint = try fingerprint(ctx.allocator, ctx.io, project_path);
