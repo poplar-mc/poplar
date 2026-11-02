@@ -312,11 +312,23 @@ fn mergeCopy(gpa: Allocator, definition: Ir.Command, copy: Ir.Command, temp: Ir.
 fn isReadLater(commands: []const Ir.Command, temp: Ir.Score) bool {
     for (commands) |command| {
         if (readsScore(command, temp) or callsTempReader(command, temp)) return true;
-        // A user command can name a local's fake player in its text.
-        if (temp.owner != null and (command == .raw or command == .macro)) return true;
+        // Command text can name a local's fake player: a user command, or a `text(#x)` part in a call's arguments.
+        if (temp.owner != null and mentionsInText(command, temp.holder)) return true;
         if (setsScore(command, temp)) return false;
     }
     return false;
+}
+
+fn mentionsInText(command: Ir.Command, name: []const u8) bool {
+    return switch (command) {
+        .raw, .macro => |text| std.mem.indexOf(u8, text, name) != null,
+        .function_with => |call| call.arguments == .compound and std.mem.indexOf(u8, call.arguments.compound, name) != null,
+        .execute => |execute| mentionsInText(execute.run.*, name),
+        .execute_raw => |execute| std.mem.indexOf(u8, execute.subcommands, name) != null or mentionsInText(execute.run.*, name),
+        .store_result => |store| mentionsInText(store.run.*, name),
+        .return_run => |run| mentionsInText(run.*, name),
+        else => false,
+    };
 }
 
 pub fn readsScore(command: Ir.Command, score: Ir.Score) bool {

@@ -16,8 +16,12 @@ fn run(ctx: zli.CommandContext) !void {
     var arena: std.heap.ArenaAllocator = .init(ctx.allocator);
     defer arena.deinit();
 
+    const out = root.output(ctx);
     const result = try Project.compile(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .output = .check });
-    Project.printDiagnostics(result.diagnostics);
-    const summary = result.summary orelse root.fail(ctx);
-    try ctx.writer.print("ok: {d} {s}\n", .{ summary.function_count, summary.functionsText() });
+    out.diagnostics(result.diagnostics);
+    const summary = result.summary orelse {
+        out.errorCount(result.diagnostics.len, "");
+        root.fail(ctx);
+    };
+    try out.success("No errors in {s}{s}{s} {s}({d} {s}){s}", .{ out.bold(), summary.name, out.reset(), out.dim(), summary.function_count, summary.functionsText(), out.reset() });
 }

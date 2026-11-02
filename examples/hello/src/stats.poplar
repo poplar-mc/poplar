@@ -1,8 +1,0 @@
-var #energy = 0;
-var #max_energy = 100;
-
-mcfun regen() {
-    execute (as @a) {
-        if (@s.#energy < #max_energy) { @s.#energy = @s.#energy + 1; }
-    }
-}

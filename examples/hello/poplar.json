@@ -1,9 +1,1 @@
-{
-  "$schema": "../../compiler/schema/poplar.schema.json",
-  "zipName": "hello",
-  "description": "Hello from Poplar",
-  "minFormat": [121, 0],
-  "maxFormat": [121, 0],
-  "entry": "src/main.poplar",
-  "zip": true
-}
+{ "$schema": "../../compiler/schema/poplar.schema.json", "description": "Hello from Poplar" }

@@ -13,7 +13,7 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[^/\\\\]+$",
-      "description": "The name of the built pack: poplar-out/<zipName>/ and poplar-out/<zipName>.zip. It is also the name that /datapack list shows. Default: the project folder name."
+      "description": "The name of the built pack: poplar-out/<zipName>/ and poplar-out/<zipName>.zip (every build writes both). It is also the name that /datapack list shows. Default: the project folder name."
     },
     "namespace": {
       "type": "string",
@@ -40,10 +40,6 @@
       "type": "string",
       "pattern": "^src/",
       "description": "The entry file. It must be inside src/. Default: src/main.poplar."
-    },
-    "zip": {
-      "type": "boolean",
-      "description": "Also write poplar-out/<zipName>.zip, with pack.mcmeta at its root. Default: false."
     }
   },
   "definitions": {

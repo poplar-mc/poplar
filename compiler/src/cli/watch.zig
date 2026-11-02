@@ -40,9 +40,11 @@ const WorldCopy = struct {
         defer datapacks.close(io);
         const name = std.fs.path.basename(pack_path);
 
+        const out = root.output(ctx);
+        const world_name = std.fs.path.basename(std.fs.path.dirname(copy.datapacks_path).?);
         if (!try isReplaceable(io, datapacks, name)) {
             copy.failed = true;
-            try ctx.writer.print("{s}/{s} already exists and was not made by poplar watch. Remove it, then run watch again\n", .{ copy.datapacks_path, name });
+            out.failure("{s}{s}/datapacks/{s}{s} already exists and was not made by poplar watch. Remove it, then run watch again", .{ out.bold(), world_name, name, out.reset() });
             return;
         }
         datapacks.deleteTree(io, name) catch |err| switch (err) {
@@ -66,7 +68,7 @@ const WorldCopy = struct {
         };
         try target.writeFile(io, .{ .sub_path = marker_name, .data = "Copied by poplar watch, which replaces this folder after each build.\n" });
 
-        if (!copy.copied_before) try ctx.writer.print("copied to {s}/{s}. Run /reload in the game after each build\n", .{ copy.datapacks_path, name });
+        if (!copy.copied_before) try out.success("Copied to {s}{s}/datapacks/{s}{s}. Run {s}/reload{s} in the game after each build", .{ out.bold(), world_name, name, out.reset(), out.bold(), out.reset() });
         copy.copied_before = true;
     }
 
@@ -91,13 +93,14 @@ const WorldCopy = struct {
 // The `datapacks` folder of the world, made if the world has none yet. Null after an error is printed.
 fn datapacksPath(ctx: zli.CommandContext, arena: std.mem.Allocator, world: []const u8) !?[]const u8 {
     const cwd = std.Io.Dir.cwd();
+    const out = root.output(ctx);
     const world_path = cwd.realPathFileAlloc(ctx.io, world, arena) catch {
-        std.debug.print("world folder '{s}' not found\n", .{world});
+        out.failure("The world folder {s}{s}{s} does not exist", .{ out.bold(), world, out.reset() });
         return null;
     };
     const level_path = try std.fs.path.join(arena, &.{ world_path, "level.dat" });
     cwd.access(ctx.io, level_path, .{}) catch {
-        std.debug.print("'{s}' is not a Minecraft world: it has no level.dat\n", .{world});
+        out.failure("{s}{s}{s} is not a Minecraft world: it has no level.dat", .{ out.bold(), world, out.reset() });
         return null;
     };
     const datapacks_path = try std.fs.path.join(arena, &.{ world_path, "datapacks" });
@@ -132,15 +135,19 @@ fn rebuild(ctx: zli.CommandContext, project_path: []const u8, world_copy: ?*Worl
     var arena: std.heap.ArenaAllocator = .init(ctx.allocator);
     defer arena.deinit();
 
-    const seconds_today: u64 = @intCast(@mod(std.Io.Timestamp.now(ctx.io, .real).toSeconds(), std.time.s_per_day));
-    try ctx.writer.print("[{d:0>2}:{d:0>2}:{d:0>2} UTC] ", .{ seconds_today / 3600, seconds_today / 60 % 60, seconds_today % 60 });
+    const out = root.output(ctx);
+    const started = std.Io.Timestamp.now(ctx.io, .awake);
     const result = try Project.compile(arena.allocator(), ctx.io, project_path, .{ .std_path = root.stdPath(ctx), .output = .write });
-    Project.printDiagnostics(result.diagnostics);
+    out.diagnostics(result.diagnostics);
+
+    // The time of day (UTC, because Zig has no time zones), so that each build is easy to tell apart.
+    const seconds_today: u64 = @intCast(@mod(std.Io.Timestamp.now(ctx.io, .real).toSeconds(), std.time.s_per_day));
+    try ctx.writer.print("{s}{d:0>2}:{d:0>2}:{d:0>2} UTC{s} ", .{ out.dim(), seconds_today / 3600, seconds_today / 60 % 60, seconds_today % 60, out.reset() });
     if (result.summary) |summary| {
-        try build.printSummary(ctx.writer, summary);
+        try build.printBuilt(out, summary, root.elapsedMilliseconds(ctx, started));
         if (world_copy) |copy| try copy.update(ctx, arena.allocator(), project_path, summary.pack_path.?);
     } else {
-        try ctx.writer.writeAll("build failed, waiting for changes\n");
+        out.errorCount(result.diagnostics.len, ", waiting for changes");
     }
     try ctx.writer.flush();
 }

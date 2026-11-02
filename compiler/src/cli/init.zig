@@ -15,10 +15,11 @@ fn run(ctx: zli.CommandContext) !void {
     const cwd = std.Io.Dir.cwd();
     var arena: std.heap.ArenaAllocator = .init(ctx.allocator);
     defer arena.deinit();
+    const out = root.output(ctx);
 
     for ([_][]const u8{ Config.file_name, "src/main.poplar" }) |path| {
         if (cwd.access(ctx.io, path, .{})) {
-            std.debug.print("{s} already exists\n", .{path});
+            out.failure("{s}{s}{s} already exists, so this folder has a project", .{ out.bold(), path, out.reset() });
             root.fail(ctx);
         } else |_| {}
     }
@@ -26,10 +27,11 @@ fn run(ctx: zli.CommandContext) !void {
     const folder = try cwd.realPathFileAlloc(ctx.io, ".", arena.allocator());
     Project.writeNewProject(arena.allocator(), ctx.io, cwd, std.fs.path.basename(folder)) catch |err| switch (err) {
         error.PathAlreadyExists => {
-            std.debug.print("a project file already exists here\n", .{});
+            out.failure("A project file already exists here", .{});
             root.fail(ctx);
         },
         else => return err,
     };
-    try ctx.writer.print("made a project in {s}\n", .{folder});
+    try out.success("Made a project in {s}{s}{s}", .{ out.bold(), std.fs.path.basename(folder), out.reset() });
+    try ctx.writer.print("  {s}Next: poplar build{s}\n", .{ out.dim(), out.reset() });
 }

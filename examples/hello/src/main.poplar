@@ -1,27 +1,19 @@
-var $shown = {};
+// The smallest pack: a greeting when the pack loads.
+
+var #loads = 0;
 
 mcfun load() {
-    onTrigger("showoff", show);
-}
+    #loads = #loads + 1;
 
-mcfun show() {
-    $shown = {};
-    $shown.hover_event = @s.$SelectedItem;
-    $shown.hover_event.action = "show_item";
+    // A constant only exists while the pack is built. `{{...}}` writes it into the command.
+    var name = "Poplar";
+    /say Hello from {{name}}!;
 
-    if (@s.$SelectedItem.components."minecraft:custom_name") {
-        $shown.name = @s.$SelectedItem.components."minecraft:custom_name";
-        named($shown.hover_event);
-    } else {
-        $shown.id = slice(@s.$SelectedItem.id, 10);
-        unnamed($shown.id, $shown.hover_event);
+    // A score is read in the game, so this line becomes a macro line.
+    /say This pack has loaded {{#loads}} times;
+
+    // `for` repeats its body while the pack is built: three `say` commands.
+    for (1..4) |step| {
+        /say Step {{step}};
     }
-}
-
-mcfun named(hover) {
-    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {nbt: "shown.name", storage: "hello:data", interpret: true, color: "aqua", italic: true, hover_event: {{hover}}}, {text: "]", color: "aqua"}];
-}
-
-mcfun unnamed(id, hover) {
-    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {color: "aqua", translate: "block.minecraft.{{id}}", fallback: "%s", with: [{translate: "item.minecraft.{{id}}"}], hover_event: {{hover}}}, {text: "]", color: "aqua"}];
 }

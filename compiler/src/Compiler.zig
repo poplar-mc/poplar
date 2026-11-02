@@ -2155,7 +2155,8 @@ fn textComponent(self: *Self, argument: *const Ast.Expr, env: *Environment) Comp
         switch (identifier.storage) {
             .score => {
                 const score = try self.resolveScore(identifier, env) orelse return null;
-                const objective = try std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ self.namespace, score.objective.? });
+                // A local score is in the main objective `<ns>`, a global one in `<ns>.<name>`.
+                const objective = if (score.objective) |name| try std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ self.namespace, name }) else self.namespace;
                 const holder: Value = .{ .compound = try self.gpa.dupe(Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
                 return .{ .compound = try self.gpa.dupe(Value.Entry, &.{.{ .key = "score", .value = holder }}) };
             },
@@ -3196,7 +3197,7 @@ test "selectors as values, text parts and events" {
         \\var $stats = {maxHp: 20};
         \\mcfun tellraw(target, message) { /tellraw {{target}} {{message}}; }
         \\mcfun load() { onEvent("deathCount", playerDied); }
-        \\mcfun playerDied() { tellraw(@a, ["HP ", text(#hp), text($stats.maxHp), text(@s.$CustomName)]); }
+        \\mcfun playerDied() { var #left = 3; tellraw(@a, ["HP ", text(#hp), text($stats.maxHp), text(@s.$CustomName), text(#left)]); }
         \\mcfun greet(target) { /say {{target}}; }
         \\mcfun main() { greet(@p); }
     );
@@ -3204,7 +3205,8 @@ test "selectors as values, text parts and events" {
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\function ns:tellraw {target:"@a",message:["HP ",{score:{name:"#global",objective:"ns.hp"}},{storage:"ns:data",nbt:"stats.maxHp"},{entity:"@s",nbt:"CustomName"}]}
+        \\scoreboard players set #left_playerDied ns 3
+        \\function ns:tellraw {target:"@a",message:["HP ",{score:{name:"#global",objective:"ns.hp"}},{storage:"ns:data",nbt:"stats.maxHp"},{entity:"@s",nbt:"CustomName"},{score:{name:"#left_playerDied",objective:"ns"}}]}
         \\
     , try renderForTest(arena.allocator(), program, "playerDied"));
     try std.testing.expectEqualStrings("function ns:greet {target:\"@p\"}\n", try renderForTest(arena.allocator(), program, "main"));

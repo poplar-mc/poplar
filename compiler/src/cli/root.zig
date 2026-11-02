@@ -8,6 +8,7 @@ const check = @import("check.zig");
 const watch = @import("watch.zig");
 const lsp = @import("lsp.zig");
 const Config = @import("../Config.zig");
+const Output = @import("Output.zig");
 
 pub fn register(init_options: zli.InitOptions) !*zli.Command {
     const root = try zli.Command.init(init_options, .{
@@ -47,10 +48,28 @@ pub fn fail(ctx: zli.CommandContext) noreturn {
     std.process.exit(1);
 }
 
-// The folder of the standard library, which `main` passes to every command.
+// What `main` passes to every command.
+pub const Shared = struct {
+    // The folder of the standard library, which `import "std";` loads.
+    std_path: []const u8,
+    color: bool,
+};
+
+fn shared(ctx: zli.CommandContext) *const Shared {
+    return @ptrCast(@alignCast(ctx.data.?));
+}
+
 pub fn stdPath(ctx: zli.CommandContext) []const u8 {
-    const path: *const []const u8 = @ptrCast(@alignCast(ctx.data.?));
-    return path.*;
+    return shared(ctx).std_path;
+}
+
+pub fn output(ctx: zli.CommandContext) Output {
+    return .{ .writer = ctx.writer, .color = shared(ctx).color };
+}
+
+// `1 ms`, for the time a build takes.
+pub fn elapsedMilliseconds(ctx: zli.CommandContext, started: std.Io.Timestamp) i64 {
+    return started.untilNow(ctx.io, .awake).toMilliseconds();
 }
 
 // The project folder: the optional `dir` argument, or the current folder.

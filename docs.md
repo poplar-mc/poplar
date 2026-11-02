@@ -85,7 +85,13 @@ mcfun load() {
 }
 ```
 
-`mcfun load` in the entry file runs every time the pack loads. `poplar build` writes the datapack to `poplar-out/hello_pack/`. Copy that folder into the `datapacks` folder of a world, open the world and run `/reload`.
+`mcfun load` in the entry file runs every time the pack loads. `poplar build` writes the datapack to `poplar-out/hello_pack/`, and the same pack as `poplar-out/hello_pack.zip` to share:
+
+```
+✓ Built hello_pack in 20 ms → poplar-out/hello_pack (1 function, zip)
+```
+
+Copy the folder (or the zip) into the `datapacks` folder of a world, open the world and run `/reload`.
 
 While you work, let `poplar watch` build and copy the pack for you:
 
@@ -683,7 +689,7 @@ my_pack/
 │   └── *.poplar         other source files
 └── poplar-out/
     ├── <zipName>/       the datapack
-    └── <zipName>.zip    the same datapack as a zip, if "zip" is true
+    └── <zipName>.zip    the same datapack as a zip
 ```
 
 Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is optional:
@@ -696,7 +702,6 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 | `minFormat` | the targeted version | the lowest pack format: a number or `[major, minor]`, at least `88` (1.21.9) |
 | `maxFormat` | `minFormat` | the highest pack format |
 | `entry` | `src/main.poplar` | the entry file, inside `src/` |
-| `zip` | `false` | also write `poplar-out/<zipName>.zip` |
 | `$schema` | | ignored by the compiler; lets editors check the file |
 
 **Costs and caveats**
@@ -715,7 +720,14 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 | `poplar lsp` | the language server, over stdin and stdout |
 | `poplar --version` | the Poplar and Minecraft versions |
 
-`new` and `init` never overwrite a file. A failing command prints `path:line:column: message` and exits with code 1. `--world` needs a folder with `level.dat`; it only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
+`new` and `init` never overwrite a file. A failing command lists its errors, one per line, and exits with code 1:
+
+```
+✗ src/main.poplar:2:21  unknown mob_effect 'poision'. Did you mean 'poison'?
+✗ 1 error, nothing was written
+```
+
+The output has colors in a terminal; set `NO_COLOR` to turn them off. Errors go to stderr. `--world` needs a folder with `level.dat`; it only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
 
 **Costs and caveats**
 

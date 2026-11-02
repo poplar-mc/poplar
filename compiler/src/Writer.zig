@@ -427,7 +427,6 @@ test "writes functions and tags" {
         .min_format = .{ .major = 121 },
         .max_format = .{ .major = 121 },
         .entry = "main.poplar",
-        .zip = true,
     };
     try writeDatapack(io, arena.allocator(), tmp.dir, config, program);
 

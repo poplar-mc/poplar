@@ -1,0 +1,9 @@
+// A few /trigger tools, split over several files. Imports are flat: every file sees every name.
+import "std";
+import "items.poplar";
+import "numbers.poplar";
+
+mcfun load() {
+    onTrigger("held", describeHeld);
+    onTrigger("fib", showFibonacci);
+}

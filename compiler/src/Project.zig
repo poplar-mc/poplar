@@ -13,6 +13,8 @@ pub const out_dir_name = "poplar-out";
 pub const Output = enum { write, check };
 
 pub const Summary = struct {
+    // `zipName`, the name of the pack.
+    name: []const u8,
     function_count: usize,
     // `poplar-out/<zipName>`, or null for `.check`.
     pack_path: ?[]const u8 = null,
@@ -86,7 +88,7 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
     const cwd = std.Io.Dir.cwd();
 
     const project_real_path = cwd.realPathFileAlloc(io, project_path, arena) catch |err| switch (err) {
-        error.FileNotFound => return onlyDiagnostic(arena, "", 0, null, try std.fmt.allocPrint(arena, "{s} not found", .{project_path})),
+        error.FileNotFound => return onlyDiagnostic(arena, "", 0, null, try std.fmt.allocPrint(arena, "the project folder {s} does not exist", .{project_path})),
         else => return err,
     };
 
@@ -100,7 +102,7 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
     };
 
     var src_dir = project_dir.openDir(io, "src", .{}) catch |err| switch (err) {
-        error.FileNotFound => return onlyDiagnostic(arena, "", 0, null, try std.fmt.allocPrint(arena, "{s} has no src/ folder", .{project_path})),
+        error.FileNotFound => return onlyDiagnostic(arena, "", 0, null, try std.fmt.allocPrint(arena, "the folder {s} is not a Poplar project: it has no src/ folder", .{project_path})),
         else => return err,
     };
     defer src_dir.close(io);
@@ -141,7 +143,7 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
         return result;
     }
 
-    var summary: Summary = .{ .function_count = ir_program.functions.len };
+    var summary: Summary = .{ .name = config.zip_name, .function_count = ir_program.functions.len };
     if (options.output == .write) {
         try project_dir.deleteTree(io, out_dir_name);
         var out_dir = try project_dir.createDirPathOpen(io, out_dir_name, .{});
@@ -152,11 +154,9 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
         try Writer.writeDatapack(io, arena, pack_dir, config, ir_program);
         summary.pack_path = try std.fs.path.join(arena, &.{ out_dir_name, config.zip_name });
 
-        if (config.zip) {
-            const zip_file_name = try std.fmt.allocPrint(arena, "{s}.zip", .{config.zip_name});
-            try Writer.writeZip(io, arena, pack_dir, out_dir, zip_file_name);
-            summary.zip_path = try std.fs.path.join(arena, &.{ out_dir_name, zip_file_name });
-        }
+        const zip_file_name = try std.fmt.allocPrint(arena, "{s}.zip", .{config.zip_name});
+        try Writer.writeZip(io, arena, pack_dir, out_dir, zip_file_name);
+        summary.zip_path = try std.fs.path.join(arena, &.{ out_dir_name, zip_file_name });
     }
     result.summary = summary;
     return result;
@@ -164,23 +164,6 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
 
 fn onlyDiagnostic(arena: std.mem.Allocator, path: []const u8, line: usize, column: ?usize, message: []const u8) !Result {
     return .{ .diagnostics = try arena.dupe(Diagnostic, &.{.{ .path = path, .line = line, .column = column, .message = message }}) };
-}
-
-// `src/main.poplar:3:5: message`, or the message alone when it has no position.
-pub fn printDiagnostics(diagnostics: []const Diagnostic) void {
-    for (diagnostics) |diagnostic| {
-        if (diagnostic.line == 0) {
-            if (diagnostic.path.len > 0) {
-                std.debug.print("{s}: {s}\n", .{ diagnostic.path, diagnostic.message });
-            } else {
-                std.debug.print("{s}\n", .{diagnostic.message});
-            }
-        } else if (diagnostic.column) |column| {
-            std.debug.print("{s}:{d}:{d}: {s}\n", .{ diagnostic.path, diagnostic.line, column, diagnostic.message });
-        } else {
-            std.debug.print("{s}:{d}: {s}\n", .{ diagnostic.path, diagnostic.line, diagnostic.message });
-        }
-    }
 }
 
 // Where `zig build` installs the standard library: `lib/poplar/std` next to the `bin` folder of the binary.
@@ -228,7 +211,7 @@ const Loader = struct {
                 if (file.imported_by) |site| {
                     try loader.addError(site.path, site.line, site.column, "cannot find '{s}'", .{display_path});
                 } else {
-                    try loader.addError("", 0, null, "{s} not found (it is the entry point)", .{display_path});
+                    try loader.addError("", 0, null, "the entry file {s} does not exist", .{display_path});
                 }
                 has_errors = true;
                 continue;

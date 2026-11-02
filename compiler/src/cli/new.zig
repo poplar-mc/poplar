@@ -26,12 +26,15 @@ fn run(ctx: zli.CommandContext) !void {
 
     var entries = dir.iterate();
     if (try entries.next(ctx.io) != null) {
-        std.debug.print("{s} is not empty\n", .{path});
+        const out = root.output(ctx);
+        out.failure("{s}{s}{s} is not empty", .{ out.bold(), path, out.reset() });
         root.fail(ctx);
     }
 
     var arena: std.heap.ArenaAllocator = .init(ctx.allocator);
     defer arena.deinit();
     try Project.writeNewProject(arena.allocator(), ctx.io, dir, std.fs.path.basename(path));
-    try ctx.writer.print("made {s}. Build it with: poplar build \"{s}\"\n", .{ path, path });
+    const out = root.output(ctx);
+    try out.success("Made {s}{s}{s}", .{ out.bold(), path, out.reset() });
+    try ctx.writer.print("  {s}Next: cd \"{s}\" && poplar build{s}\n", .{ out.dim(), path, out.reset() });
 }

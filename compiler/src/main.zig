@@ -18,10 +18,13 @@ pub fn main(init: std.process.Init) !void {
         .reader = &stdin_reader.interface,
     });
     // `zig build run` and the e2e harness run a cached copy of the binary, so they point to `std/` with `POPLAR_STD`.
-    var std_path = init.environ_map.get("POPLAR_STD") orelse try Project.installedStdPath(init.arena.allocator(), io);
+    var shared: cli.Shared = .{
+        .std_path = init.environ_map.get("POPLAR_STD") orelse try Project.installedStdPath(init.arena.allocator(), io),
+        .color = init.environ_map.get("NO_COLOR") == null and (std.Io.File.stdout().isTty(io) catch false),
+    };
     // The allocator form works on every platform; Windows and WASI have no plain `iterate`.
     var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
-    root.runAndExit(&args, .{ .data = @ptrCast(&std_path) });
+    root.runAndExit(&args, .{ .data = @ptrCast(&shared) });
 }
 
 test {

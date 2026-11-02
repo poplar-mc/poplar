@@ -1,6 +1,7 @@
 const std = @import("std");
 const zli = @import("zli");
 const Project = @import("../Project.zig");
+const Output = @import("Output.zig");
 const root = @import("root.zig");
 
 pub fn register(init_options: zli.InitOptions) !*zli.Command {
@@ -16,12 +17,22 @@ fn run(ctx: zli.CommandContext) !void {
     var arena: std.heap.ArenaAllocator = .init(ctx.allocator);
     defer arena.deinit();
 
+    const out = root.output(ctx);
+    const started = std.Io.Timestamp.now(ctx.io, .awake);
     const result = try Project.compile(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .output = .write });
-    Project.printDiagnostics(result.diagnostics);
-    try printSummary(ctx.writer, result.summary orelse root.fail(ctx));
+    out.diagnostics(result.diagnostics);
+    const summary = result.summary orelse {
+        out.errorCount(result.diagnostics.len, ", nothing was written");
+        root.fail(ctx);
+    };
+    try printBuilt(out, summary, root.elapsedMilliseconds(ctx, started));
 }
 
-pub fn printSummary(writer: *std.Io.Writer, summary: Project.Summary) !void {
-    try writer.print("wrote {d} {s} to {s}\n", .{ summary.function_count, summary.functionsText(), summary.pack_path.? });
-    if (summary.zip_path) |zip_path| try writer.print("wrote {s}\n", .{zip_path});
+// `✓ Built hello in 18 ms → poplar-out/hello (7 functions, zip)`
+pub fn printBuilt(out: Output, summary: Project.Summary, milliseconds: i64) !void {
+    try out.success("Built {s}{s}{s} in {d} ms {s}→ {s} ({d} {s}, zip){s}", .{
+        out.bold(),        summary.name, out.reset(),               milliseconds,
+        out.dim(),         summary.pack_path.?, summary.function_count, summary.functionsText(),
+        out.reset(),
+    });
 }
