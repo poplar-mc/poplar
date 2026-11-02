@@ -61,6 +61,10 @@ Publish a release on GitHub with a tag such as `v0.1.0`. The release workflow th
 
 The grammar's generated parser (`editors/tree-sitter-poplar/src/`) is committed, because editors compile it and do not generate it. After a change to `grammar.js`, run `tree-sitter generate` in that folder.
 
+## License
+
+Poplar is [MIT](LICENSE) licensed. The standard library (`compiler/std/`) is [MIT-0](compiler/std/LICENSE), so the packs you build with it need no license notice.
+
 ## AI disclosure
 
 The language design and the engineering decisions in Poplar are made by Jordan Baron. The code, tests and documentation are written by Claude, an AI model by Anthropic, following those decisions. Every change is built and tested before it is committed: unit tests, and end-to-end tests that run the packs on a real Minecraft server.
