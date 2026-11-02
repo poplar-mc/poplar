@@ -16,7 +16,13 @@ try {
 
     New-Item -ItemType Directory -Force -Path (Join-Path $prefix 'bin'), (Join-Path $prefix 'lib\poplar') | Out-Null
     Remove-Item -Recurse -Force (Join-Path $prefix 'lib\poplar\std') -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $temp 'bin\poplar.exe') (Join-Path $prefix 'bin')
+    # Windows locks a running poplar.exe (for example `poplar lsp`), but it can be renamed. The old copy is removed when it is free.
+    $exe = Join-Path $prefix 'bin\poplar.exe'
+    $old = "$exe.old"
+    Remove-Item -Force $old -ErrorAction SilentlyContinue
+    if (Test-Path $exe) { Move-Item -Force $exe $old }
+    Copy-Item (Join-Path $temp 'bin\poplar.exe') $exe
+    Remove-Item -Force $old -ErrorAction SilentlyContinue
     Copy-Item -Recurse (Join-Path $temp 'lib\poplar\std') (Join-Path $prefix 'lib\poplar\std')
 } finally {
     Remove-Item -Recurse -Force $temp
