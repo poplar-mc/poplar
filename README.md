@@ -1,3 +1,5 @@
+<img src="poplar-logo.svg" alt="Poplar logo" width="128">
+
 # Poplar
 
 Poplar is a programming language that compiles to Minecraft Java datapacks.
