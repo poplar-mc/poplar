@@ -37,7 +37,7 @@ irm https://raw.githubusercontent.com/poplar-mc/poplar/main/install.ps1 | iex
 
 The scripts download the latest [release](https://github.com/poplar-mc/poplar/releases) for your platform and install `poplar` with its standard library: in `~/.local` on Linux and macOS, and in `%LOCALAPPDATA%\Programs\poplar` on Windows. Set `POPLAR_PREFIX` to install somewhere else. Read [install.sh](install.sh) or [install.ps1](install.ps1) before you run them, if you like.
 
-Then `poplar new my_pack` makes a project, and `poplar build` writes the datapack to `poplar-out/`. See [docs.md](docs.md) for the language.
+Then `poplar new my_pack` makes a project, and `poplar build` writes the datapack to `poplar-out/`. Later, `poplar update` installs a newer release. See [docs.md](docs.md) for the language.
 
 ## Repository
 | Folder | What it is |

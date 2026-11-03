@@ -926,6 +926,7 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 | `poplar build [dir]` | compiles into `poplar-out/` |
 | `poplar check [dir]` | prints the errors, writes nothing |
 | `poplar watch [dir] [--world <world>]` | builds again on every change; with a world, copies each build into the world's `datapacks/` |
+| `poplar update [--yes]` | updates Poplar to the latest release, after asking |
 | `poplar lsp` | the language server, over stdin and stdout |
 | `poplar --version` | the Poplar and Minecraft versions |
 
@@ -940,11 +941,22 @@ The output has colors in a terminal; set `NO_COLOR` to turn them off. Errors go 
 
 `watch` takes the world from `--world`, else from the `POPLAR_WORLD` environment variable, else from `POPLAR_WORLD` in the project's `.env`. The first copy line names the source when it is not `--world`. With no world, `watch` still builds, but it prints a warning and copies nothing. A `.env` has `KEY=VALUE` lines, `#` comments, an optional `export ` and optional quotes; there is no variable expansion. A leading `~/` in `POPLAR_WORLD` is your home folder. The world must be a folder with `level.dat`. `watch` only replaces a pack folder that it copied itself (it contains a `.poplar-watch` file), so your own folders are left alone.
 
+`update` asks GitHub for the latest release. If it is newer, it shows the release and asks before it runs the install script, with `POPLAR_PREFIX` set to the folder that holds this `poplar`, so the copy you run is the one that is replaced:
+
+```
+You have poplar 0.3.0. 0.4.0 is available: https://github.com/poplar-mc/poplar/releases/tag/v0.4.0
+Update now? [y/N]
+```
+
+`--yes` updates without asking. Without a terminal and without `--yes`, it only says that an update is available.
+
 **Costs and caveats**
 
 - **`poplar watch` polls** the files every 300 ms.
 - **The language server compiles the whole project on each change.**
 - **Go to definition jumps to the start of the line.**
+- **`poplar update` needs the network,** and `curl` and `sh` (PowerShell on Windows), the same as the install command. The install scripts come from the `main` branch.
+- **`poplar update` replaces the binary that you run,** also a development build in `zig-out/`.
 
 ## Pack output
 

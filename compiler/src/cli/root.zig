@@ -6,6 +6,7 @@ const init = @import("init.zig");
 const build = @import("build.zig");
 const check = @import("check.zig");
 const watch = @import("watch.zig");
+const update = @import("update.zig");
 const lsp = @import("lsp.zig");
 const Config = @import("../Config.zig");
 const Output = @import("Output.zig");
@@ -29,6 +30,7 @@ pub fn register(init_options: zli.InitOptions) !*zli.Command {
         try build.register(init_options),
         try check.register(init_options),
         try watch.register(init_options),
+        try update.register(init_options),
         try lsp.register(init_options),
     });
     return root;
