@@ -45,12 +45,21 @@ pub fn init(gpa: std.mem.Allocator, lexer: Lexer) ParseError!Self {
 }
 
 pub fn parseProgram(self: *Self) ParseError!Ast.Program {
+    var namespace: ?Ast.Import = null;
+    if (self.currentIs(.namespace)) {
+        namespace = try self.parseNamespaceStatement();
+        try self.nextToken();
+    }
     var imports: std.ArrayList(Ast.Import) = .empty;
     var functions: std.ArrayList(Ast.Function) = .empty;
     var globals: std.ArrayList(Ast.Global) = .empty;
+    var data_files: std.ArrayList(Ast.DataFile) = .empty;
 
     while (!self.currentIs(.eof)) {
-        if (self.currentIs(.import)) {
+        if (self.currentIs(.namespace)) {
+            try self.addError("'namespace' must be the first statement of the file", .{});
+            try self.skipToDeclaration();
+        } else if (self.currentIs(.import)) {
             if (try self.parseImport()) |import| {
                 try imports.append(self.gpa, import);
             } else {
@@ -64,6 +73,12 @@ pub fn parseProgram(self: *Self) ParseError!Ast.Program {
             } else {
                 try self.skipToDeclaration();
             }
+        } else if (self.currentIs(.identifier)) {
+            if (try self.parseDataFile()) |data_file| {
+                try data_files.append(self.gpa, data_file);
+            } else {
+                try self.skipToDeclaration();
+            }
         } else if (try self.parseFunction()) |function| {
             try functions.append(self.gpa, function);
         } else {
@@ -73,26 +88,89 @@ pub fn parseProgram(self: *Self) ParseError!Ast.Program {
     }
 
     return .{
+        .namespace = namespace,
         .imports = try imports.toOwnedSlice(self.gpa),
         .functions = try functions.toOwnedSlice(self.gpa),
         .globals = try globals.toOwnedSlice(self.gpa),
+        .data_files = try data_files.toOwnedSlice(self.gpa),
     };
 }
 
+// `import magic;`
 fn parseImport(self: *Self) ParseError!?Ast.Import {
     const line = self.current.line;
     const column = self.current.column;
-
-    if (!try self.expectPeek(.string)) return null;
-    const path = try self.decodeString(self.current.literal) orelse return null;
+    if (self.peekIs(.string)) {
+        try self.addError("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/", .{});
+        return null;
+    }
+    if (!try self.expectPeek(.identifier)) return null;
+    const name = try self.parseNamespaceName() orelse return null;
     if (!try self.expectPeek(.semicolon)) return null;
+    return .{ .name = name, .line = line, .column = column };
+}
 
-    return .{ .path = path, .line = line, .column = column };
+// `namespace combat;`
+fn parseNamespaceStatement(self: *Self) ParseError!?Ast.Import {
+    const line = self.current.line;
+    const column = self.current.column;
+    if (!try self.expectPeek(.identifier)) return null;
+    const name = try self.parseNamespaceName() orelse return null;
+    if (!try self.expectPeek(.semicolon)) return null;
+    return .{ .name = name, .line = line, .column = column };
+}
+
+// `bs.math`: identifiers joined by `.`, starting at the current token.
+fn parseNamespaceName(self: *Self) ParseError!?[]const u8 {
+    var name: std.ArrayList(u8) = .empty;
+    try name.appendSlice(self.gpa, self.current.literal);
+    while (self.peekIs(.dot)) {
+        try self.nextToken();
+        if (!try self.expectPeek(.identifier)) return null;
+        try name.print(self.gpa, ".{s}", .{self.current.literal});
+    }
+    return name.items;
+}
+
+// `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie" { ... }`. The Compiler checks the type word.
+fn parseDataFile(self: *Self) ParseError!?Ast.DataFile {
+    const type_word = self.current.literal;
+    const line = self.current.line;
+    const column = self.current.column;
+
+    try self.nextToken();
+    const name: Ast.DataFile.Name = switch (self.current.type) {
+        .identifier => .{ .identifier = self.current.literal },
+        .string => .{ .id = try self.decodeString(self.current.literal) orelse return null },
+        else => {
+            try self.addError("expected a name after '{s}', found '{s}'", .{ type_word, describe(self.current) });
+            return null;
+        },
+    };
+    if (!self.peekIs(.json_body)) {
+        if (self.peekIs(.unclosed)) {
+            try self.addError("the JSON of {s} '{s}' is not closed", .{ type_word, describe(self.current) });
+        } else {
+            try self.addError("expected the JSON of {s} '{s}' (an object or a list), found '{s}'", .{ type_word, describe(self.current), describe(self.peek) });
+        }
+        return null;
+    }
+    try self.nextToken();
+
+    return .{
+        .type_word = type_word,
+        .name = name,
+        .json = self.current.literal,
+        .line = line,
+        .column = column,
+        .json_line = self.current.line,
+        .json_column = self.current.column,
+    };
 }
 
 fn parseFunction(self: *Self) ParseError!?Ast.Function {
     if (!self.currentIs(.mcfun)) {
-        try self.addError("expected 'import', 'var' or 'mcfun', found '{s}'", .{describe(self.current)});
+        try self.addError("expected 'import', 'var', 'mcfun' or a data file, found '{s}'", .{describe(self.current)});
         return null;
     }
     const line = self.current.line;
@@ -427,6 +505,11 @@ fn parsePrefix(self: *Self) ParseError!?*Ast.Expr {
             const operand = try self.parseExpression(.prefix) orelse return null;
             break :blk .{ .prefix = .{ .op = op, .operand = operand } };
         },
+        .self => {
+            try self.addError("'self:' is only for ids in commands and checks. In code, a plain name already means this namespace", .{});
+            return null;
+        },
+        .condition_text => .{ .minecraft_check = try self.parseCommandParts(self.current.literal) orelse return null },
         .left_paren => return self.parseGroupedExpression(),
         else => {
             try self.addError("expected an expression, found '{s}'", .{describe(self.current)});
@@ -577,6 +660,7 @@ fn nextToken(self: *Self) ParseError!void {
 
 // Reads `x`, `#x`, `$x`, an entity score such as `@s.#mana`, or entity data such as `@s.$Health`.
 fn parseIdentifier(self: *Self) ParseError!?Ast.Identifier {
+    if (self.currentIs(.identifier) and (self.peekIs(.colon) or self.peekIs(.dot))) return self.parseQualifiedName();
     if (!self.currentIs(.selector)) return self.currentIdentifier();
 
     const selector = self.current.literal;
@@ -587,7 +671,16 @@ fn parseIdentifier(self: *Self) ParseError!?Ast.Identifier {
     if (!try self.expectPeek(.dot)) return null;
     if (!try self.expectPeek(.score_identifier)) return null;
 
-    return .{ .name = self.current.literal, .storage = .score, .selector = selector };
+    const name, const namespace = splitNamespace(self.current.literal);
+    return .{ .name = name, .storage = .score, .selector = selector, .namespace = namespace };
+}
+
+// `magic:heal` or `bs.math:clamp` as a value or a callee.
+fn parseQualifiedName(self: *Self) ParseError!?Ast.Identifier {
+    const namespace = try self.parseNamespaceName() orelse return null;
+    if (!try self.expectPeek(.colon)) return null;
+    if (!try self.expectPeek(.identifier)) return null;
+    return .{ .name = self.current.literal, .storage = .compile_time, .namespace = namespace };
 }
 
 fn currentIdentifier(self: *Self) ?Ast.Identifier {
@@ -598,7 +691,16 @@ fn currentIdentifier(self: *Self) ?Ast.Identifier {
         else => return null,
     };
 
-    return .{ .name = self.current.literal, .storage = storage };
+    const name, const namespace = splitNamespace(self.current.literal);
+    return .{ .name = name, .storage = storage, .namespace = namespace };
+}
+
+// The lexer keeps `magic:` on a `#` or `$` name: `magic:item.count` → `item.count` in `magic`.
+fn splitNamespace(literal: []const u8) struct { []const u8, ?[]const u8 } {
+    const colon = std.mem.indexOfScalar(u8, literal, ':') orelse return .{ literal, null };
+    const path_start = std.mem.indexOfAny(u8, literal, "[\"") orelse literal.len;
+    if (colon > path_start) return .{ literal, null };
+    return .{ literal[colon + 1 ..], literal[0..colon] };
 }
 
 fn currentIs(self: *Self, token_type: Token.TokenType) bool {
@@ -837,4 +939,25 @@ test "decodes string escapes" {
 
     const result = try parseForTest(arena.allocator(), "mcfun f() { g(\"bad \\q\"); }");
     try std.testing.expectEqualStrings("unknown escape '\\q' in string. Only \\\" and \\\\ are allowed", result.errors[0].message);
+}
+
+test "reads namespace, imports and names of other namespaces" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const program = try parseValidForTest(arena.allocator(),
+        \\namespace combat;
+        \\import bs.math;
+        \\mcfun f() { bs.math:clamp(#magic:mana, $magic:item.count); }
+    );
+    try std.testing.expectEqualStrings("combat", program.namespace.?.name);
+    try std.testing.expectEqualStrings("bs.math", program.imports[0].name);
+    const call = firstStatement(program).kind.expression.kind.call;
+    try std.testing.expectEqualStrings("bs.math", call.callee.kind.identifier.namespace.?);
+    try std.testing.expectEqualStrings("clamp", call.callee.kind.identifier.name);
+    try std.testing.expectEqualStrings("magic", call.args[0].kind.identifier.namespace.?);
+    try std.testing.expectEqualStrings("item.count", call.args[1].kind.identifier.name);
+
+    const late = try parseForTest(arena.allocator(), "mcfun f() {}\nnamespace late;\n");
+    try std.testing.expectEqualStrings("'namespace' must be the first statement of the file", late.errors[0].message);
 }

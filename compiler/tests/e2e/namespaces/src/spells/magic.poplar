@@ -1,0 +1,17 @@
+namespace magic;
+
+var #mana = 0;
+var #order = 0;
+
+mcfun load() {
+    #order = 1;
+}
+
+mcfun heal() {
+    #mana = #mana + 1;
+    /say magic heal {{#mana}};
+}
+
+mcfun castSpell() {
+    /say spell;
+}

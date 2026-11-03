@@ -1,13 +1,17 @@
 const Token = @import("Token.zig");
 
 pub const Program = struct {
+    // `namespace combat;`, the first statement of every file. Null when it is missing.
+    namespace: ?Import,
     imports: []const Import,
     functions: []const Function,
     globals: []const Global,
+    data_files: []const DataFile,
 };
 
+// `import magic;` or `namespace magic;`: a namespace name and where it is written.
 pub const Import = struct {
-    path: []const u8,
+    name: []const u8,
     line: usize,
     column: usize,
 };
@@ -16,6 +20,24 @@ pub const Global = struct {
     decl: VarDecl,
     line: usize,
     column: usize,
+};
+
+// `predicate isSneaking { json }`: a JSON file in the pack.
+pub const DataFile = struct {
+    pub const Name = union(enum) {
+        // `isSneaking`: the file `is_sneaking`, and a constant with its id.
+        identifier: []const u8,
+        // `"minecraft:entities/zombie"`: the resource id as written.
+        id: []const u8,
+    };
+
+    type_word: []const u8,
+    name: Name,
+    json: []const u8,
+    line: usize,
+    column: usize,
+    json_line: usize,
+    json_column: usize,
 };
 
 pub const Function = struct {
@@ -54,6 +76,8 @@ pub const NumberType = enum { byte, short, int, long, float, double };
 pub const Identifier = struct {
     name: []const u8,
     storage: Storage,
+    // `magic` in `magic:heal()` or `#magic:mana`. Null means the namespace of the file.
+    namespace: ?[]const u8 = null,
     // Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
     selector: ?[]const u8 = null,
 };
@@ -133,6 +157,8 @@ pub const Expr = struct {
         compound: []const Entry,
         // `@a` on its own, as a value: `actionBar(@a, "hi")`.
         selector: []const u8,
+        // `block ~ ~-1 ~ stone` in a condition: the text after `execute if`, with `{{...}}` inserts.
+        minecraft_check: []const CommandPart,
     };
 };
 

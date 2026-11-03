@@ -3,7 +3,9 @@
 Poplar is a programming language that compiles to Minecraft Java datapacks (1.21.9 and newer).
 
 ```poplar
-import "std";
+namespace demo;
+
+import std;
 
 var #deaths = 0;
 
@@ -13,7 +15,7 @@ mcfun load() {
 
 mcfun playerDied() {
     #deaths = #deaths + 1;
-    tellraw(@a, ["Deaths: ", text(#deaths)]);
+    std:tellraw(@a, ["Deaths: ", text(#deaths)]);
 }
 ```
 
@@ -31,8 +33,9 @@ Every `mcfun` is a normal Minecraft function, so other datapacks can call it wit
 - [Loops and return](#loops-and-return)
 - [Functions](#functions)
 - [Commands](#commands)
-- [Imports](#imports)
+- [Namespaces](#namespaces)
 - [Events](#events)
+- [Data files](#data-files)
 - [Standard library](#standard-library)
 - [Project](#project)
 - [CLI](#cli)
@@ -73,19 +76,21 @@ poplar build
 hello_pack/
 ├── poplar.json          the project config
 ├── poplar.schema.json   lets your editor check poplar.json
-├── src/main.poplar      the entry file
+├── src/main.poplar      starts with `namespace hello_pack;`
 └── .gitignore           ignores poplar-out/
 ```
 
 `src/main.poplar` has one function:
 
 ```poplar
+namespace hello_pack;
+
 mcfun load() {
     /say Hello from hello_pack!;
 }
 ```
 
-`mcfun load` in the entry file runs every time the pack loads. `poplar build` writes the datapack to `poplar-out/hello_pack/`, and the same pack as `poplar-out/hello_pack.zip` to share:
+`mcfun load` runs every time the pack loads. `poplar build` writes the datapack to `poplar-out/hello_pack/`, and the same pack as `poplar-out/hello_pack.zip` to share:
 
 ```
 ✓ Built hello_pack in 20 ms → poplar-out/hello_pack (1 function, zip)
@@ -111,6 +116,8 @@ POPLAR_WORLD="~/.minecraft/saves/My World"
 ## Variables
 
 ```poplar
+namespace demo;
+
 var #deaths = 0;          // a score
 var $lastWinner = "Steve"; // NBT data in storage
 
@@ -147,6 +154,8 @@ A `#` or `$` variable declared at the top level of a file is **global**: every f
 A `#` or `$` variable declared inside a function is **local**:
 
 ```poplar
+namespace demo;
+
 var #total = 0;
 
 mcfun countdown() {
@@ -179,6 +188,8 @@ In the game, a local is named `<name>_<function>`: `#i` above is the fake player
 ## Scores
 
 ```poplar
+namespace demo;
+
 var #mana = 0;
 
 mcfun regen() {
@@ -215,6 +226,8 @@ To **read** an entity score, the selector must name one entity: `@s`, `@p`, `@r`
 ## Data
 
 ```poplar
+namespace demo;
+
 var $stats = {hp: 20, name: "Steve"};
 var $names = [];
 var #kills = 0;
@@ -273,6 +286,8 @@ A literal can contain game values. `$pos = [#x, #y, 0];` writes `[0,0,0]`, then 
 ### Strings
 
 ```poplar
+namespace demo;
+
 var $id = "";
 var #kills = 0;
 
@@ -329,6 +344,8 @@ The game reads some NBT fields as one type: an entity's `Health` is a float. `as
 ## Entities
 
 ```poplar
+namespace demo;
+
 var #hp = 0;
 
 mcfun check() {
@@ -386,8 +403,36 @@ A condition works the same as `execute if` in Minecraft:
 | `@s.$OnGround == true` | `if data entity @s {OnGround:1b}` |
 | `$name == "Steve"` | `if data storage <ns>:data {name:"Steve"}` |
 | `$ratio == (5 as float)` | `if data storage <ns>:data {ratio:5f}` |
+| `block ~ ~-1 ~ #minecraft:logs` | `if block ~ ~-1 ~ #minecraft:logs` |
+| `items entity @s weapon.mainhand #self:swords` | `if items entity @s weapon.mainhand #<ns>:swords` |
+| `!entity @s[type=#minecraft:undead]` | `unless entity @s[type=#minecraft:undead]` |
+| `predicate self:isSitting` | `if predicate <ns>:is_sitting` |
 
 Combine conditions with `and`, `or` and `!`. `as` binds loosest, so put it in brackets inside a comparison: `$ratio == (5 as float)`.
+
+A condition that starts with an `execute if` subcommand is Minecraft text, the same as inside `execute (...)`: `biome`, `block`, `blocks`, `data`, `dimension`, `entity`, `function`, `items`, `loaded`, `predicate`, `score`, `slots` or `stopwatch`, followed by a space. The text ends at `and`, `or` or the closing `)`. It is checked against the command tree, `self:name` is an id in your pack ([ids in commands](#ids-in-commands)), and `{{...}}` inserts a constant or a parameter:
+
+```poplar
+namespace demo;
+
+itemTag swords { "values": ["#minecraft:swords"] }
+
+var #mana = 0;
+
+mcfun tick() {
+    if (block ~ ~-1 ~ #minecraft:logs and #mana > 5) {
+        /say on a log;
+    } else if (items entity @s weapon.mainhand #self:swords) {
+        /say sword;
+    }
+}
+```
+
+```mcfunction
+# tick
+execute if block ~ ~-1 ~ #minecraft:logs if score #global demo.mana matches 6.. run return run say on a log
+execute if items entity @s weapon.mainhand #demo:swords run return run say sword
+```
 
 A bare data path tests that the path exists, whatever its value. A bool always exists (`0b` or `1b`), so test it with `== true` or `== false`. Comparing data with a string, bool, list, compound or `as` number is an NBT match; comparing it with a plain number reads it into a score.
 
@@ -399,6 +444,9 @@ A body with one command goes inline after `run`. A longer body becomes its own f
 
 - **A body with more than one command is a function call.**
 - **`else`, `else if` and `or` use one wrapper function.**
+- **A Minecraft check is raw text.** Ids in your own namespace and tags are not checked, the same as in commands. A word `and` or `or` ends the text unless it is inside brackets or quotes.
+- **`function` runs code.** `if (function #demo:checks)` runs every function in the tag to get the result.
+- **No game values in a Minecraft check yet.** `{{#x}}` or `{{$x}}` in one is an error; use `execute (if ...) { }`.
 - **`==` with data only works on key paths for now.** `$stats.name == "x"` works; `$list[0] == "x"` is an error. Two game values that are not numbers cannot be compared yet.
 
 ## Loops and return
@@ -456,6 +504,8 @@ execute (as @e[type=zombie] at @s) {
 ## Functions
 
 ```poplar
+namespace demo;
+
 var #hp = 0;
 
 mcfun heal(amount) {
@@ -476,12 +526,12 @@ Every `mcfun` is one `.mcfunction` file. Minecraft function names cannot contain
 
 ### `load` and `tick`
 
-| In the entry file | Runs |
+| In any namespace | Runs |
 |---|---|
 | `mcfun load()` | every time the pack loads, after Poplar sets up its scores and storage |
 | `mcfun tick()` | every tick |
 
-In other files they are normal functions. Neither can have parameters.
+Each [namespace](#namespaces) can have its own. They run in import order: a namespace's `load` runs after the `load` of every namespace it imports. Neither can have parameters.
 
 ### Parameters
 
@@ -521,6 +571,8 @@ An `mcfun` can call itself. A recursive call would overwrite the temporary score
 ## Commands
 
 ```poplar
+namespace demo;
+
 var #hp = 20;
 var $item = "diamond";
 
@@ -541,6 +593,52 @@ src/main.poplar:2:21: unknown mob_effect 'poision'. Did you mean 'poison'?
 
 Tags, `*`, `$(x)` and ids in other namespaces are not checked. There is no `say(...)` built-in; use `/say`.
 
+### Ids in commands
+
+```poplar
+namespace demo;
+
+predicate isSitting { "type": "minecraft:random_chance", "chance": 0.5 }
+entityTypeTag undead { "values": ["minecraft:zombie", "minecraft:skeleton"] }
+
+mcfun tick() {
+    if (predicate self:isSitting) { /function self:healPlayer; }
+    /execute as @e[type=#self:undead] run say grr;
+}
+
+mcfun healPlayer() {
+    /effect give @s minecraft:instant_health;
+}
+```
+
+```mcfunction
+# tick, for the namespace demo
+execute if predicate demo:is_sitting run function demo:heal_player
+execute as @e[type=#demo:undead] run say grr
+```
+
+Minecraft needs a full id, `namespace:path`. In commands, `execute (...)` and conditions, refer to an `mcfun` or a [data file](#data-files) of your pack by its name in the source:
+
+| You write | Means |
+|---|---|
+| `self:healPlayer` | `healPlayer` in this file's namespace: `demo:heal_player` |
+| `magic:castSpell` | `castSpell` in the namespace `magic`, which the file imports: `magic:cast_spell` |
+| `magic:cast_spell` | the real id, kept as it is |
+| `std:clamp` | the standard library's `clamp`: `demo:std/clamp` (see [Standard library](#standard-library)) |
+| `minecraft:stone`, `otherpack:thing` | not one of your namespaces: kept as it is |
+| `self:boss` in `/bossbar add self:boss "Boss"` | an id that is not a function or data file (a storage, a bossbar): only the namespace is filled in, `demo:boss` |
+
+The compiler writes the file name (`healPlayer` → `heal_player`), so the code does not change when a namespace is renamed. Only ids where Minecraft expects a function or a data file (`function`, `predicate`, `loot`, `item modify`, tags, selector values such as `type=`) are checked and converted; the command tree says which kind each argument is. A data file declared with a string is named by that string: `self:checks/rare` for `predicate "checks/rare"`. It works wherever Minecraft expects an id, with `#` for a tag, and in selector values such as `type=#self:undead`. Chat text and other text are not changed: `/say self:x` says `self:x`.
+
+The compiler checks the name: `'self:isSiting' is not a data file or mcfun of namespace 'demo'. Did you mean 'isSitting'?`. `self:` only takes the name from the source: `'self:is_sitting' is a file name. Use the name from the source: 'self:isSitting'`.
+
+**Costs and caveats**
+
+- **No game cost.** The full id is written into the command.
+- **Not in data file JSON.** A JSON body is written as it is, so ids there are written in full (`"#demo:handles"`).
+- **The check does not look at the type.** `predicate self:healPlayer` passes the check because `healPlayer` is an mcfun; the game then finds no predicate with that name.
+- **`self` is only for commands.** In Poplar code a plain name already means this namespace: write `healPlayer()`, not `self:healPlayer()`.
+
 ### Inserts with `{{...}}`
 
 | Insert | Written as |
@@ -559,22 +657,69 @@ A line with a game value moves into a helper function, `poplar/<mcfun>/macro_<n>
 - **Only whole `$` variables are free.** Every other game value costs one command to copy.
 - **Scores and math are inserted as integers.**
 
-## Imports
+## Namespaces
 
 ```poplar
-// src/main.poplar
-import "std";
-import "lib/stats.poplar";
+// src/combat.poplar
+namespace combat;
+
+import magic;
+
+var #mana = 0;
+
+mcfun tick() {
+    magic:heal();
+    #magic:mana = #mana;
+    /execute as @a run function magic:castSpell;
+}
 ```
 
-`import` adds another file. The path is relative to the importing file and must stay inside `src/`. All files share one set of names, so a function or variable from any file can be used in every other file; a duplicate name is an error. Each file is loaded once, so files can import each other. A file that nothing imports is not compiled.
+```poplar
+// src/spells/magic.poplar
+namespace magic;
 
-`import "std";` loads the [standard library](#standard-library). A name that both your project and the standard library define is an error in your file: `function 'clamp' is already defined in std/math.poplar:30. Rename yours`.
+var #mana = 0;
+
+mcfun heal() {
+    #mana = #mana + 1;
+}
+
+mcfun castSpell() {
+    /say whoosh;
+}
+```
+
+Every file starts with `namespace <name>;`. Every `.poplar` file in `src/` is part of the pack, wherever it is: folders are only for you. Files with the same namespace share their names. A plain name (`heal()`, `#mana`, `$item`) is in the file's namespace. A name in another namespace is written `magic:heal()`, `#magic:mana`, `$magic:item`, `@s.#magic:mana`, and the file must `import magic;` first.
+
+Two namespaces can use the same names, because each one has its own files and state:
+
+| In `namespace combat;` | Written as |
+|---|---|
+| `mcfun heal` | `data/combat/function/heal.mcfunction`, `combat:heal` |
+| its helpers, temps and locals | `combat:poplar/heal/...`, the objective `combat` |
+| `var #mana` | the objective `combat.mana` |
+| `var $item` | the key `item` in the storage `combat:data` |
+| `predicate isSitting` | `data/combat/predicate/is_sitting.json` |
+
+Poplar's own functions (`poplar/load`, `poplar/tick`, the event checks) and the [standard library](#standard-library) go into the pack namespace, `"namespace"` in `poplar.json`. Use that name in a file to share it.
+
+Each namespace can have [`load` and `tick`](#load-and-tick). They run in import order: if `combat` imports `magic`, `magic:load` runs first, so its state is ready. Namespaces that import each other run in alphabetical order.
+
+A namespace name uses `a-z`, `0-9`, `_` and `.` (`bs.math`). Minecraft also allows `-`, but in Poplar code `-` is the minus sign.
+
+**Costs and caveats**
+
+- **No game cost.** A namespace only decides where files and scores go.
+- **Each namespace adds one objective** for its temps and locals, set up in `poplar/load`.
+- **A renamed namespace has new scores and storage.** A world keeps the old values under the old name.
+- **`namespace minecraft;` writes into vanilla's namespace.** It can replace vanilla functions and data; Minecraft's own `load` and `tick` tags are Poplar's, so they cannot be written that way.
 
 ## Events
 
 ```poplar
-import "std";
+namespace demo;
+
+import std;
 
 var #deaths = 0;
 
@@ -588,11 +733,11 @@ mcfun playerDied() {
 }
 
 mcfun threwSnowball() {
-    tellraw(@s, {text: "Nice throw"});
+    std:tellraw(@s, {text: "Nice throw"});
 }
 ```
 
-`onEvent(criteria, callback)` runs the `mcfun` `callback` as a player, at the player, each time the [scoreboard criteria](https://minecraft.wiki/w/Scoreboard#Criteria) counts for that player. Call it in `mcfun load()` of the entry file, outside any runtime `if`, `while` or `execute`. The callback cannot have parameters.
+`onEvent(criteria, callback)` runs the `mcfun` `callback` as a player, at the player, each time the [scoreboard criteria](https://minecraft.wiki/w/Scoreboard#Criteria) counts for that player. Call it in `mcfun load()` of any namespace, outside any runtime `if`, `while` or `execute`. The callback cannot have parameters.
 
 Each event gets an objective, `<namespace>.event_<n>`, and `poplar/tick` checks it every tick:
 
@@ -606,12 +751,14 @@ execute as @a[scores={demo.event_0=1..}] at @s run function demo:poplar/event_0
 
 - **One check per event every tick,** over all players.
 - **The score is reset on each run.** A counting criteria (`deathCount`, `minecraft.used:...`) fires once per occurrence; a value criteria (`health`, `food`) fires every tick while it is above 0.
-- **Only in the entry file's `load`.**
+- **Only in `load`.**
 - **The criteria is not checked.** A wrong one makes `scoreboard objectives add` fail in the game.
 
 ### Triggers
 
 ```poplar
+namespace demo;
+
 mcfun load() {
     onTrigger("showoff", show);
 }
@@ -641,9 +788,66 @@ function demo:show
 - **The name has no namespace.** Two packs that use the same trigger name share it. The name can only have letters, 0-9, `_`, `-`, `.` and `+`.
 - **Any value counts once.** `/trigger showoff set 5` runs the callback once, like `/trigger showoff`. The callback cannot read the value, because the score is reset first.
 
+## Data files
+
+```poplar
+namespace demo;
+
+predicate lucky { "type": "minecraft:random_chance", "chance": 0.25 }
+
+itemTag handles { "values": ["minecraft:stick", "minecraft:blaze_rod"] }
+
+lootTable "minecraft:entities/zombie" {
+  "type": "minecraft:entity",
+  "pools": [{ "rolls": 1, "entries": [{ "type": "minecraft:item", "name": "minecraft:diamond" }] }]
+}
+
+mcfun tick() {
+    if (predicate self:lucky) { /say lucky; }
+}
+```
+
+Recipes, predicates, loot tables, advancements, tags and worldgen are JSON files in the pack. A data file declaration puts one there: the type word picks the folder, the name picks the file, and the body is the JSON: an object, or a list for the few types that are one (`blockTransformer`). The body is written as it is, so output from a generator such as [misode](https://misode.github.io) pastes in without changes. Floats, `null` and JSON escapes all work.
+
+The example writes:
+
+```
+data/demo/predicate/lucky.json
+data/demo/tags/item/handles.json
+data/minecraft/loot_table/entities/zombie.json
+```
+
+The name is an identifier or a string:
+
+| Name | File | Id |
+|---|---|---|
+| `lucky` | `data/demo/predicate/lucky.json` (snake_case, like an `mcfun`) | `demo:lucky`, or `self:lucky` in commands |
+| `"checks/rare"` | `data/demo/predicate/checks/rare.json` | none; type `demo:checks/rare` |
+| `"minecraft:entities/zombie"` | `data/minecraft/loot_table/entities/zombie.json` | none; it replaces the vanilla file |
+
+In commands and conditions, refer to a data file by its name: `if (predicate self:lucky)` ([ids in commands](#ids-in-commands)). An identifier name is also a constant that holds the full id, for `{{...}}`. Inside JSON, write ids out (`"#demo:handles"`, `"demo:first_trident"` for an `mcfun firstTrident`).
+
+The type word is the folder name in camelCase. Worldgen types drop `worldgen/`, and a tag is the registry name followed by `Tag`:
+
+| Type words | Folder |
+|---|---|
+| `advancement`, `recipe`, `predicate`, `lootTable`, `itemModifier`, `enchantment`, `damageType`, `dialog`, `jukeboxSong`, `trimMaterial`, ... | the same name in snake_case: `loot_table`, `item_modifier`, ... |
+| `biome`, `feature`, `placedFeature`, `noiseSettings`, `densityFunction`, `structure`, `templatePool`, ... | `worldgen/<name>` |
+| `itemTag`, `blockTag`, `entityTypeTag`, `functionTag`, `biomeTag`, ... | `tags/item`, `tags/block`, `tags/entity_type`, `tags/function`, `tags/worldgen/biome` |
+
+The type words are only special at the top level of a file, so you can still use `recipe` as a name inside an `mcfun`. A wrong word is an error with a suggestion: `unknown data file type 'recpie'. Did you mean 'recipe'?`.
+
+**Costs and caveats**
+
+- **No game cost.** A data file runs no commands.
+- **Only the JSON syntax is checked.** The game checks the contents on `/reload` and skips a file it cannot read, with an error in the log. Generators produce JSON for one game version, so pick the version your pack targets.
+- **No comments or inserts in the body.** It is plain JSON, so `//` and `{{...}}` are not read as Poplar.
+- **A string id can replace a vanilla file,** such as a loot table. A tag adds to the vanilla tag unless it has `"replace": true`.
+- **The `minecraft:load` and `minecraft:tick` function tags are Poplar's.** Use `mcfun load` and `mcfun tick` instead.
+
 ## Standard library
 
-`import "std";` loads the standard library. It is written in Poplar and installed next to the compiler (`lib/poplar/std/`), so you can read it. Only the functions your code can reach are written into the pack.
+`import std;` loads the standard library, the namespace `std`: call its functions as `std:clamp(...)`. It is written in Poplar and installed next to the compiler (`lib/poplar/std/`), so you can read it. Only the functions your code can reach are written into the pack, as a copy in the pack namespace: `std:clamp` is the function `<pack namespace>:std/clamp`. Two packs built with different Poplar versions each have their own copy, so they cannot overwrite each other. A `std:name` in a command, such as `/function std:clamp {x:5,low:0,high:3};`, counts as a use too.
 
 ### Math
 
@@ -692,8 +896,7 @@ A game value cannot be passed as the message directly; wrap it in `text()`: `tel
 my_pack/
 ├── poplar.json          the project config (optional)
 ├── src/
-│   ├── main.poplar      the entry file
-│   └── *.poplar         other source files
+│   └── **/*.poplar      every source file, each starting with `namespace <name>;`
 └── poplar-out/
     ├── <zipName>/       the datapack
     └── <zipName>.zip    the same datapack as a zip
@@ -704,11 +907,10 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 | Field | Default | Description |
 |---|---|---|
 | `zipName` | the folder name | the name of the pack folder and the zip; no `/` or `\` |
-| `namespace` | the folder name | the namespace of functions, objectives and storage: `a-z 0-9 _ . -` |
+| `namespace` | the folder name | the pack namespace, for Poplar's own files and the standard library: `a-z 0-9 _ . -` |
 | `description` | `zipName` | the pack description, any JSON text component |
 | `minFormat` | the targeted version | the lowest pack format: a number or `[major, minor]`, at least `88` (1.21.9) |
 | `maxFormat` | `minFormat` | the highest pack format |
-| `entry` | `src/main.poplar` | the entry file, inside `src/` |
 | `$schema` | | ignored by the compiler; lets editors check the file |
 
 **Costs and caveats**
@@ -746,28 +948,33 @@ The output has colors in a terminal; set `NO_COLOR` to turn them off. Errors go 
 
 ## Pack output
 
-For the namespace `demo`:
+For the pack namespace `demo` and a second namespace `combat`:
 
 ```
 poplar-out/<zipName>/
 ├── pack.mcmeta
 └── data/
     ├── minecraft/tags/function/   load.json, tick.json
+    ├── combat/
+    │   ├── function/              combat's mcfuns, and poplar/<mcfun>/ helpers
+    │   └── <folder>/              combat's data files, such as predicate/lucky.json
     └── demo/function/
         ├── <name>.mcfunction      one per mcfun, in snake_case
+        ├── std/                   the standard library functions that the pack uses
         └── poplar/
-            ├── load.mcfunction    sets up scores and storage, then runs demo:load
-            ├── tick.mcfunction    event checks, then demo:tick (only with events)
+            ├── load.mcfunction    sets up scores and storage, then runs each namespace's load
+            ├── tick.mcfunction    event checks, then each tick (only with events)
             ├── event_<n>.mcfunction
             └── <mcfun>/           if_<n>, while_<n>, execute_<n>, macro_<n>
 ```
 
 | Name | Use |
 |---|---|
-| objective `demo.<name>` | one per global `#` variable |
-| objective `demo` | locals (`#<name>_<mcfun>`), temporary scores, constants |
-| objective `demo.event_<n>` | one per `onEvent` |
-| storage `demo:data` | `$` variables, globals and locals |
+| objective `combat.<name>` | one per global `#` variable of `combat` |
+| objective `combat` | `combat`'s locals (`#<name>_<mcfun>`) and temporary scores |
+| objective `demo` | the pack namespace's locals and temps, and the constants |
+| objective `<ns>.event_<n>` | one per `onEvent`, in the namespace that registers it |
+| storage `combat:data` | `combat`'s `$` variables, globals and locals |
 | storage `demo:poplar` | `args`, `macro` and the recursion `stack` |
 
 The optimizer computes math on known values, removes writes that nothing reads, folds `data get` and a multiplication into one scaled `data get`, writes results straight into their destination, puts one-command generated functions where they are called (and a helper that is the last command of its function, such as the `if`/`else` wrapper), and removes unused constants.

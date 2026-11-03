@@ -1,6 +1,7 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const Commands = @import("Commands.zig");
+const DataFile = @import("DataFile.zig");
 const Config = @import("Config.zig");
 const Environment = @import("Environment.zig");
 const Ir = @import("Ir.zig");
@@ -25,16 +26,27 @@ const Located = struct {
     path: []const u8,
     function: *const Ast.Function,
     origin: Origin,
+    // The namespace of the file, and the namespaces it imports.
+    namespace: []const u8,
+    imports: []const Ast.Import,
+    // The name in the IR: `combat:heal`, or `heal` in the pack namespace.
+    ir_name: []const u8,
 };
 
-// Where a source file comes from. `load` and `tick` are special only in the entry file.
-pub const Origin = enum { entry, project, std };
+// Where a source file comes from: the project's `src/` or the standard library.
+pub const Origin = enum { project, std };
+
+// The namespace of the standard library. Its files are written into the pack namespace, under `std/`.
+const std_namespace = "std";
 
 // `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the callback.
 // `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run `/trigger <name>`.
 const Event = struct {
     criteria: []const u8,
+    // The IR name of the callback mcfun.
     callback: []const u8,
+    // The output namespace of the `load` that registered it. The objective is `<namespace>.event_<n>`.
+    namespace: ?[]const u8,
     // The objective name of `onTrigger`. A trigger is disabled after each use, so `poplar/tick` enables it again.
     trigger: ?[]const u8 = null,
 };
@@ -48,6 +60,9 @@ const GlobalScore = struct {
     path: []const u8,
     line: usize,
     initial_value: i32,
+    name: []const u8,
+    // Null for the pack namespace.
+    output_namespace: ?[]const u8,
 };
 
 const CommandText = struct {
@@ -98,6 +113,9 @@ const GlobalData = struct {
     line: usize,
     // The initial value as SNBT: `20`, `20f` for `20 as float`, `{hp:20}`.
     initial_snbt: []const u8,
+    name: []const u8,
+    // Null for the pack namespace.
+    output_namespace: ?[]const u8,
 };
 
 // Checks in OR-of-ANDs form: the condition is true if every check in one clause passes.
@@ -121,13 +139,23 @@ errors: std.ArrayList(Error) = .empty,
 generated: std.ArrayList(Ir.McFunction) = .empty,
 temp_count: usize = 0,
 generated_count: usize = 0,
+// The mcfun being compiled, as it appears in generated names: `heal`, or `std.clamp` for std.
 current_mcfun: []const u8 = "",
+// The IR name of that mcfun (`combat:heal`), and its key (`combat:heal`, with the source namespace).
+current_mcfun_name: []const u8 = "",
+current_mcfun_key: []const u8 = "",
+// The source namespace of the file or mcfun being compiled, its imports, and where its files go (null: the pack).
+current_namespace: []const u8 = "ns",
+current_imports: []const Ast.Import = &.{},
+current_output_namespace: ?[]const u8 = null,
 current_path: []const u8 = "",
 current_line: usize = 0,
 current_column: ?usize = null,
-// Set when the entry file defines `mcfun load` or `mcfun tick`.
-has_load: bool = false,
-has_tick: bool = false,
+// The imports of each namespace, from all its files. They decide the order of the `load` and `tick` functions.
+namespace_imports: std.StringArrayHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
+// The namespaces with an `mcfun load` or `mcfun tick`.
+load_namespaces: std.StringArrayHashMapUnmanaged(void) = .empty,
+tick_namespaces: std.StringArrayHashMapUnmanaged(void) = .empty,
 // For each mcfun, the mcfuns that its body calls.
 mcfun_calls: std.StringHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
 // Set when a recursive call saves temps, so that `poplar/load` clears the stack.
@@ -141,11 +169,9 @@ current_loop: ?[]const u8 = null,
 return_through_body: bool = false,
 // The namespace of the pack. `text(#hp)` writes it into a text component.
 namespace: []const u8 = "ns",
-// True while the entry file's `mcfun load` is compiled. Only there `onEvent` is allowed.
-in_entry_load: bool = false,
+// True while a namespace's `mcfun load` is compiled. Only there `onEvent` is allowed.
+in_load: bool = false,
 events: std.ArrayList(Event) = .empty,
-// A `load` with only `onEvent` lines has no commands, so `poplar/load` does not call it.
-load_is_empty: bool = false,
 // Removes every data local of the current mcfun. It runs at each exit, so no value is left for the next call.
 current_cleanup: []const Ir.Command = &.{},
 // The locals that are visible at the statement being compiled. A recursive call saves them.
@@ -154,27 +180,69 @@ live_locals: std.ArrayList(Environment.Local) = .empty,
 local_names: std.StringHashMapUnmanaged(LocalOrigin) = .empty,
 // Every local declaration, for the language server.
 locals: std.ArrayList(LocalVariable) = .empty,
+data_files: std.ArrayList(Ir.DataFile) = .empty,
+// `data/<ns>/<folder>/<path>.json` → where it is declared, so two declarations cannot write one file.
+data_file_paths: std.StringHashMapUnmanaged([]const u8) = .empty,
+// For each namespace, `isSneaking` → `"<ns>:is_sneaking"`. Every mcfun scope of the namespace is inside it.
+data_file_ids: std.StringHashMapUnmanaged(*Environment) = .empty,
+// What `self:name` or `ns:name` can name in Minecraft text, keyed `ns:name`: `combat:isSitting` → `is_sitting`,
+// and `combat:checks/never` → itself. An mcfun is looked up in `functions`.
+relative_names: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+// The data files with an identifier name, for the language server.
+named_data_files: std.StringArrayHashMapUnmanaged(NamedDataFile) = .empty,
 
 pub fn init(gpa: std.mem.Allocator, command_tree: *const Commands) Self {
     return .{ .gpa = gpa, .command_tree = command_tree };
 }
 
-// Only in the entry file are `mcfun load` and `mcfun tick` run by the game.
+// `mcfun load` and `mcfun tick` of each namespace are run by the game. A program without a `namespace` line
+// (in tests) is in the pack namespace.
 pub fn addProgram(self: *Self, path: []const u8, program: Ast.Program, origin: Origin) CompileError!void {
+    self.current_path = path;
+    self.current_namespace = if (program.namespace) |namespace| namespace.name else self.namespace;
+    self.current_imports = program.imports;
+    self.current_output_namespace = self.outputNamespace(self.current_namespace);
+    if (program.namespace) |namespace| {
+        self.current_line = namespace.line;
+        self.current_column = namespace.column;
+        if (!isValidNamespace(namespace.name)) return self.addError("namespace '{s}' must only use a-z, 0-9, '_' and '.'", .{namespace.name});
+        if (origin == .project and std.mem.eql(u8, namespace.name, std_namespace)) return self.addError("the namespace 'std' belongs to the standard library", .{});
+    }
+
+    const imports = try self.namespace_imports.getOrPut(self.gpa, self.current_namespace);
+    if (!imports.found_existing) imports.value_ptr.* = .empty;
+    for (program.imports) |import| {
+        self.current_line = import.line;
+        self.current_column = import.column;
+        if (std.mem.eql(u8, import.name, self.current_namespace)) {
+            try self.addError("a file does not import its own namespace '{s}'", .{import.name});
+            continue;
+        }
+        try imports.value_ptr.put(self.gpa, import.name, {});
+    }
+
     for (program.functions) |*function| {
-        if (origin == .entry) {
-            if (std.mem.eql(u8, function.name, "load")) self.has_load = true;
-            if (std.mem.eql(u8, function.name, "tick")) self.has_tick = true;
+        if (origin == .project) {
+            if (std.mem.eql(u8, function.name, "load")) try self.load_namespaces.put(self.gpa, self.current_namespace, {});
+            if (std.mem.eql(u8, function.name, "tick")) try self.tick_namespaces.put(self.gpa, self.current_namespace, {});
         }
 
         if (isBuiltin(function.name)) {
+            self.current_line = function.line;
             try self.addError("'{s}' is a built-in function, so it cannot be defined", .{function.name});
             continue;
         }
 
-        const entry = try self.functions.getOrPut(self.gpa, function.name);
+        const entry = try self.functions.getOrPut(self.gpa, try self.qualifiedKey(self.current_namespace, function.name));
 
-        const located: Located = .{ .path = path, .function = function, .origin = origin };
+        const located: Located = .{
+            .path = path,
+            .function = function,
+            .origin = origin,
+            .namespace = self.current_namespace,
+            .imports = program.imports,
+            .ir_name = try self.functionName(self.current_namespace, function.name),
+        };
         if (entry.found_existing) {
             try self.addDuplicateError(entry.value_ptr.*, located);
             continue;
@@ -188,7 +256,176 @@ pub fn addProgram(self: *Self, path: []const u8, program: Ast.Program, origin: O
         self.current_column = global.column;
         try self.addGlobal(global.decl);
     }
+
+    for (program.data_files) |data_file| {
+        self.current_path = path;
+        self.current_line = data_file.line;
+        self.current_column = data_file.column;
+        try self.addDataFile(data_file);
+    }
 }
+
+// `combat:heal`: how declarations are keyed in the compiler.
+fn qualifiedKey(self: *Self, namespace: []const u8, name: []const u8) CompileError![]const u8 {
+    return std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ namespace, name });
+}
+
+// Where the files of a namespace go. Null is the pack namespace, which std is written into.
+fn outputNamespace(self: *const Self, namespace: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, namespace, std_namespace) or std.mem.eql(u8, namespace, self.namespace)) return null;
+    return namespace;
+}
+
+// The IR name of an mcfun: `combat:heal`, `heal` in the pack namespace, `std/clamp` for std.
+fn functionName(self: *Self, namespace: []const u8, name: []const u8) CompileError![]const u8 {
+    const path = if (std.mem.eql(u8, namespace, std_namespace)) try std.fmt.allocPrint(self.gpa, "std/{s}", .{name}) else name;
+    const output = self.outputNamespace(namespace) orelse return path;
+    return std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ output, path });
+}
+
+// The namespace that a name refers to: its own `magic:`, which the file must import, or the current one.
+fn resolveNamespace(self: *Self, namespace: ?[]const u8) CompileError!?[]const u8 {
+    const name = namespace orelse return self.current_namespace;
+    if (std.mem.eql(u8, name, self.current_namespace) or self.isImported(name)) return name;
+    try self.addError("namespace '{s}' is not imported. Add 'import {s};'", .{ name, name });
+    return null;
+}
+
+fn isImported(self: *const Self, namespace: []const u8) bool {
+    for (self.current_imports) |import| {
+        if (std.mem.eql(u8, import.name, namespace)) return true;
+    }
+    return false;
+}
+
+fn isValidNamespace(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |ch| {
+        if (!std.ascii.isLower(ch) and !std.ascii.isDigit(ch) and ch != '_' and ch != '.') return false;
+    }
+    return true;
+}
+
+// The constants of the data file names of a namespace, made when the namespace has its first data file.
+fn dataFileIds(self: *Self, namespace: []const u8) CompileError!*Environment {
+    const entry = try self.data_file_ids.getOrPut(self.gpa, namespace);
+    if (!entry.found_existing) {
+        entry.value_ptr.* = try self.gpa.create(Environment);
+        entry.value_ptr.*.* = .{};
+    }
+    return entry.value_ptr.*;
+}
+
+fn addDataFile(self: *Self, data_file: Ast.DataFile) CompileError!void {
+    const folder = DataFile.folders.get(data_file.type_word) orelse
+        try DataFile.tagFolder(self.gpa, data_file.type_word, &self.command_tree.registries.map) orelse
+        return self.addError("unknown data file type '{s}'{f}", .{ data_file.type_word, Suggestion{ .closest = Commands.closestId(DataFile.folders.keys(), data_file.type_word) } });
+
+    var namespace = self.current_output_namespace orelse self.namespace;
+    var file_path: []const u8 = undefined;
+    switch (data_file.name) {
+        .identifier => |name| {
+            file_path = try std.fmt.allocPrint(self.gpa, "{f}", .{Writer.functionPath(name)});
+            if (!Config.isValidResourceName(file_path)) {
+                return self.addError("data file name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{name});
+            }
+        },
+        .id => |id| {
+            if (std.mem.indexOfScalar(u8, id, ':')) |colon| {
+                namespace = id[0..colon];
+                file_path = id[colon + 1 ..];
+            } else {
+                file_path = id;
+            }
+            var segments = std.mem.splitScalar(u8, file_path, '/');
+            const is_valid = while (segments.next()) |segment| {
+                if (!Config.isValidResourceName(segment)) break false;
+            } else Config.isValidResourceName(namespace);
+            if (!is_valid) return self.addError("data file id '{s}' must only use a-z, 0-9, '_', '.', '-' and '/', with one ':' after the namespace", .{id});
+        },
+    }
+
+    const is_hook_tag = std.mem.eql(u8, folder, "tags/function") and std.mem.eql(u8, namespace, "minecraft") and
+        (std.mem.eql(u8, file_path, "load") or std.mem.eql(u8, file_path, "tick"));
+    if (is_hook_tag) return self.addError("Poplar writes the minecraft:{s} function tag. Use 'mcfun {s}'", .{ file_path, file_path });
+
+    const full_path = try std.fmt.allocPrint(self.gpa, "data/{s}/{s}/{s}.json", .{ namespace, folder, file_path });
+    const location = try std.fmt.allocPrint(self.gpa, "{s}:{d}", .{ self.current_path, data_file.line });
+    const path_entry = try self.data_file_paths.getOrPut(self.gpa, full_path);
+    if (path_entry.found_existing) return self.addError("{s} '{s}:{s}' is already declared at {s}", .{ data_file.type_word, namespace, file_path, path_entry.value_ptr.* });
+    path_entry.value_ptr.* = location;
+
+    // A data file in the namespace of its file can be named in Minecraft text: `self:isSitting`.
+    const is_own = std.mem.eql(u8, namespace, self.current_output_namespace orelse self.namespace);
+    if (is_own) {
+        const name = switch (data_file.name) {
+            .identifier => |identifier| identifier,
+            .id => file_path,
+        };
+        try self.relative_names.put(self.gpa, try self.qualifiedKey(self.current_namespace, name), file_path);
+    }
+
+    if (data_file.name == .identifier) {
+        const id = try std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ namespace, file_path });
+        const ids = try self.dataFileIds(self.current_namespace);
+        if (!try ids.declare(self.gpa, data_file.name.identifier, .{ .string = id })) {
+            return self.addError("'{s}' is already the name of another data file", .{data_file.name.identifier});
+        }
+        try self.named_data_files.put(self.gpa, try self.qualifiedKey(self.current_namespace, data_file.name.identifier), .{ .type_word = data_file.type_word, .id = id, .path = self.current_path, .line = data_file.line });
+    }
+
+    if (try self.jsonError(data_file)) |position| {
+        self.current_line = position.line;
+        self.current_column = position.column;
+        return self.addError("invalid JSON in {s} '{s}'", .{ data_file.type_word, file_path });
+    }
+
+    try self.data_files.append(self.gpa, .{
+        .namespace = namespace,
+        .folder = folder,
+        .path = file_path,
+        .json = try std.fmt.allocPrint(self.gpa, "{s}\n", .{data_file.json}),
+    });
+}
+
+pub const NamedDataFile = struct {
+    type_word: []const u8,
+    id: []const u8,
+    path: []const u8,
+    line: usize,
+};
+
+const JsonPosition = struct { line: usize, column: usize };
+
+// Where the JSON body stops being valid, as a line and column in the source file.
+fn jsonError(self: *Self, data_file: Ast.DataFile) CompileError!?JsonPosition {
+    var scanner: std.json.Scanner = .initCompleteInput(self.gpa, data_file.json);
+    defer scanner.deinit();
+    var diagnostics: std.json.Diagnostics = .{};
+    scanner.enableDiagnostics(&diagnostics);
+    while (true) {
+        const token = scanner.next() catch |err| switch (err) {
+            error.SyntaxError, error.UnexpectedEndOfInput => break,
+            error.OutOfMemory => |e| return e,
+            error.BufferUnderrun => unreachable,
+        };
+        if (token == .end_of_document) return null;
+    }
+    const json_line: usize = @intCast(diagnostics.getLine());
+    const column: usize = @intCast(diagnostics.getColumn());
+    return .{
+        .line = data_file.json_line + json_line - 1,
+        .column = if (json_line == 1) data_file.json_column + column - 1 else column,
+    };
+}
+
+const Suggestion = struct {
+    closest: ?[]const u8,
+
+    pub fn format(self: Suggestion, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.closest) |closest| try writer.print(". Did you mean '{s}'?", .{closest});
+    }
+};
 
 // A name that the project and std both define is reported in the project file, where it can be renamed.
 // Otherwise the later definition is reported.
@@ -204,6 +441,7 @@ fn addDuplicateError(self: *Self, existing: Located, later: Located) CompileErro
 }
 
 fn addGlobal(self: *Self, decl: Ast.VarDecl) CompileError!void {
+    if (decl.target.namespace) |namespace| return self.addError("'{s}:' cannot be declared here. Declare it in a file with 'namespace {s};'", .{ namespace, namespace });
     switch (decl.target.storage) {
         .score => {},
         .compile_time => return self.addError("only score (#) and data ($) variables can be declared at the top level", .{}),
@@ -215,7 +453,7 @@ fn addGlobal(self: *Self, decl: Ast.VarDecl) CompileError!void {
     const value = try self.evaluate(decl.value, &env) orelse return;
     const initial_value = try self.toScoreValue(value) orelse return;
 
-    const entry = try self.globals.getOrPut(self.gpa, decl.target.name);
+    const entry = try self.globals.getOrPut(self.gpa, try self.qualifiedKey(self.current_namespace, decl.target.name));
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
         return self.addError("score '#{s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.line });
@@ -225,6 +463,8 @@ fn addGlobal(self: *Self, decl: Ast.VarDecl) CompileError!void {
         .path = self.current_path,
         .line = self.current_line,
         .initial_value = initial_value,
+        .name = decl.target.name,
+        .output_namespace = self.current_output_namespace,
     };
 }
 
@@ -238,7 +478,7 @@ fn addDataGlobal(self: *Self, decl: Ast.VarDecl) CompileError!void {
     if (value == .null) return self.addError("a data variable cannot start as null", .{});
     const initial_snbt = try self.castSnbt(value, cast_type) orelse return;
 
-    const entry = try self.data_globals.getOrPut(self.gpa, decl.target.name);
+    const entry = try self.data_globals.getOrPut(self.gpa, try self.qualifiedKey(self.current_namespace, decl.target.name));
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
         return self.addError("data '${s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.line });
@@ -248,6 +488,8 @@ fn addDataGlobal(self: *Self, decl: Ast.VarDecl) CompileError!void {
         .path = self.current_path,
         .line = self.current_line,
         .initial_snbt = initial_snbt,
+        .name = decl.target.name,
+        .output_namespace = self.current_output_namespace,
     };
 }
 
@@ -257,14 +499,15 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
     const used = try self.reachableFromProject();
     var paths: std.StringHashMapUnmanaged([]const u8) = .empty;
 
-    for (self.functions.values()) |located| {
+    for (self.functions.keys(), self.functions.values()) |function_key, located| {
         const function = located.function;
-        // `import "std";` costs nothing for the std mcfuns that the project never calls.
-        if (located.origin == .std and !used.contains(function.name)) continue;
+        // `import std;` costs nothing for the std mcfuns that the project never calls.
+        if (located.origin == .std and !used.contains(function_key)) continue;
 
         self.current_path = located.path;
         self.current_line = function.line;
         self.current_column = null;
+        self.enterNamespace(located);
 
         // The file name is the snake_case of the name (`playerDied` → `player_died`), so both must be valid and unique.
         const path = try std.fmt.allocPrint(self.gpa, "{f}", .{Writer.functionPath(function.name)});
@@ -272,30 +515,36 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
             try self.addError("mcfun name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{function.name});
             continue;
         }
-        const path_entry = try paths.getOrPut(self.gpa, path);
+        const path_entry = try paths.getOrPut(self.gpa, try self.functionName(located.namespace, path));
         if (path_entry.found_existing) {
             try self.addError("mcfun '{s}' and '{s}' have the same file name '{s}.mcfunction'", .{ path_entry.value_ptr.*, function.name, path });
             continue;
         }
         path_entry.value_ptr.* = function.name;
 
-        const is_hook = (self.has_load and std.mem.eql(u8, function.name, "load")) or
-            (self.has_tick and std.mem.eql(u8, function.name, "tick"));
+        const is_hook = located.origin == .project and (std.mem.eql(u8, function.name, "load") or std.mem.eql(u8, function.name, "tick"));
         if (is_hook and function.params.len > 0) {
             try self.addError("mcfun '{s}' is run by the game and cannot have parameters", .{function.name});
             continue;
         }
 
-        self.current_mcfun = function.name;
+        self.current_mcfun = if (located.origin == .std) try std.fmt.allocPrint(self.gpa, "std.{s}", .{function.name}) else function.name;
+        self.current_mcfun_name = located.ir_name;
+        self.current_mcfun_key = function_key;
         self.generated_count = 0;
         self.live_locals.clearRetainingCapacity();
         self.current_cleanup = try self.localCleanup(function.body);
-        self.in_entry_load = located.origin == .entry and std.mem.eql(u8, function.name, "load");
+        self.in_load = located.origin == .project and std.mem.eql(u8, function.name, "load");
 
-        var env: Environment = .{};
+        const data_file_ids = try self.dataFileIds(located.namespace);
+        var env: Environment = .{ .outer = data_file_ids };
         var forwarded: std.ArrayList(u8) = .empty;
         for (function.params, 0..) |param, index| {
-            if (!try env.declare(self.gpa, param.name, .param)) try self.addError("param '{s}' is declared more than once", .{param.name});
+            if (data_file_ids.store.contains(param.name)) {
+                try self.addError("param '{s}' has the name of a data file. Rename one of them", .{param.name});
+            } else if (!try env.declare(self.gpa, param.name, .param)) {
+                try self.addError("param '{s}' is declared more than once", .{param.name});
+            }
             try forwarded.appendSlice(self.gpa, if (index == 0) "{" else ",");
             try forwarded.print(self.gpa, "{s}:\"$({s})\"", .{ param.name, param.name });
         }
@@ -307,7 +556,7 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
         if (function.body.len == 0 or !isJump(function.body[function.body.len - 1].kind)) try commands.appendSlice(self.gpa, self.current_cleanup);
 
         try mc_functions.append(self.gpa, .{
-            .name = function.name,
+            .name = located.ir_name,
             .commands = try commands.toOwnedSlice(self.gpa),
         });
     }
@@ -320,26 +569,64 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
 
     // Only the tick tag calls these, so they come after the inline pass, which removes functions that nothing calls.
     var functions: std.ArrayList(Ir.McFunction) = .fromOwnedSlice(@constCast(optimized));
-    try self.appendEventFunctions(&functions);
-    self.load_is_empty = for (functions.items) |function| {
-        if (std.mem.eql(u8, function.name, "load")) break function.commands.len == 0;
-    } else true;
+    const ticks = try self.hookNames(self.tick_namespaces, "tick");
+    try self.appendEventFunctions(&functions, ticks);
 
-    const needs_load = self.globals.count() + self.data_globals.count() > 0 or self.has_load or self.uses_stack or self.events.items.len > 0;
+    const needs_load = self.globals.count() + self.data_globals.count() > 0 or self.load_namespaces.count() > 0 or self.uses_stack or self.events.items.len > 0;
     const program_functions = try functions.toOwnedSlice(self.gpa);
     return .{
         .functions = program_functions,
         .load = if (needs_load) try self.buildLoadFunction(program_functions) else null,
-        .tick = if (self.events.items.len > 0) "poplar/tick" else if (self.has_tick) "tick" else null,
+        .tick = if (self.events.items.len > 0) try self.gpa.dupe([]const u8, &.{"poplar/tick"}) else ticks,
+        .data_files = self.data_files.items,
     };
+}
+
+fn enterNamespace(self: *Self, located: Located) void {
+    self.current_namespace = located.namespace;
+    self.current_imports = located.imports;
+    self.current_output_namespace = self.outputNamespace(located.namespace);
+}
+
+// The IR names of `load` or `tick` of each namespace that has one. A namespace comes after the namespaces it
+// imports. Namespaces that import each other are in alphabetical order.
+fn hookNames(self: *Self, namespaces: std.StringArrayHashMapUnmanaged(void), hook: []const u8) CompileError![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    for (try self.namespaceOrder()) |namespace| {
+        if (namespaces.contains(namespace)) try names.append(self.gpa, try self.functionName(namespace, hook));
+    }
+    return names.items;
+}
+
+fn namespaceOrder(self: *Self) CompileError![]const []const u8 {
+    const sorted = try self.gpa.dupe([]const u8, self.namespace_imports.keys());
+    std.mem.sort([]const u8, sorted, {}, lessThanString);
+    var order: std.ArrayList([]const u8) = .empty;
+    var visited: std.StringHashMapUnmanaged(void) = .empty;
+    for (sorted) |namespace| try self.visitNamespace(namespace, &visited, &order);
+    return order.items;
+}
+
+fn visitNamespace(self: *Self, namespace: []const u8, visited: *std.StringHashMapUnmanaged(void), order: *std.ArrayList([]const u8)) CompileError!void {
+    if ((try visited.getOrPut(self.gpa, namespace)).found_existing) return;
+    if (self.namespace_imports.get(namespace)) |imports| {
+        const sorted = try self.gpa.dupe([]const u8, imports.keys());
+        std.mem.sort([]const u8, sorted, {}, lessThanString);
+        for (sorted) |imported| try self.visitNamespace(imported, visited, order);
+    }
+    try order.append(self.gpa, namespace);
+}
+
+fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
 }
 
 // The mcfuns that a project mcfun can call, directly or through others. Event callbacks count as calls from `load`.
 fn reachableFromProject(self: *Self) CompileError!std.StringHashMapUnmanaged(void) {
     var reached: std.StringHashMapUnmanaged(void) = .empty;
     var pending: std.ArrayList([]const u8) = .empty;
-    for (self.functions.values()) |located| {
-        if (located.origin != .std) try pending.append(self.gpa, located.function.name);
+    for (self.functions.keys(), self.functions.values()) |function_key, located| {
+        if (located.origin != .std) try pending.append(self.gpa, function_key);
     }
     while (pending.pop()) |name| {
         const entry = try reached.getOrPut(self.gpa, name);
@@ -352,7 +639,7 @@ fn reachableFromProject(self: *Self) CompileError!std.StringHashMapUnmanaged(voi
 
 // For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
 // `poplar/tick` runs it for every player with a count, then the user's `tick`.
-fn appendEventFunctions(self: *Self, functions: *std.ArrayList(Ir.McFunction)) CompileError!void {
+fn appendEventFunctions(self: *Self, functions: *std.ArrayList(Ir.McFunction), ticks: []const []const u8) CompileError!void {
     if (self.events.items.len == 0) return;
 
     var tick: std.ArrayList(Ir.Command) = .empty;
@@ -369,12 +656,12 @@ fn appendEventFunctions(self: *Self, functions: *std.ArrayList(Ir.McFunction)) C
         const trigger = event.trigger orelse continue;
         try tick.append(self.gpa, .{ .raw = try std.fmt.allocPrint(self.gpa, "scoreboard players enable @a {s}", .{trigger}) });
     }
-    if (self.has_tick) try tick.append(self.gpa, .{ .function = "tick" });
+    for (ticks) |name| try tick.append(self.gpa, .{ .function = name });
     try functions.append(self.gpa, .{ .name = "poplar/tick", .commands = try tick.toOwnedSlice(self.gpa) });
 }
 
 fn eventObjective(self: *Self, event: Event, index: usize) CompileError![]const u8 {
-    return event.trigger orelse std.fmt.allocPrint(self.gpa, "{s}.event_{d}", .{ self.namespace, index });
+    return event.trigger orelse std.fmt.allocPrint(self.gpa, "{s}.event_{d}", .{ event.namespace orelse self.namespace, index });
 }
 
 // The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
@@ -398,9 +685,9 @@ fn isScoreRead(functions: []const Ir.McFunction, score: Ir.Score) bool {
 
 // A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text part such as
 // `text(#mana)` names `#global` in the command text, so that counts as a use too.
-fn isGlobalValueUsed(self: *Self, functions: []const Ir.McFunction, name: []const u8) CompileError!bool {
-    const score = globalScore(name);
-    const objective = try std.fmt.allocPrint(self.gpa, "\"{s}.{s}\"", .{ self.namespace, name });
+fn isGlobalValueUsed(self: *Self, functions: []const Ir.McFunction, global: GlobalScore) CompileError!bool {
+    const score = globalScore(global);
+    const objective = try std.fmt.allocPrint(self.gpa, "\"{s}.{s}\"", .{ global.output_namespace orelse self.namespace, global.name });
     for (functions) |function| {
         for (function.commands) |command| {
             if (Optimizer.readsScore(command, score) or mentionsGlobalHolder(command, objective)) return true;
@@ -428,8 +715,9 @@ fn buildLoadFunction(self: *Self, functions: []const Ir.McFunction) CompileError
 
     // A run that stopped in the middle of a recursive call can leave frames behind.
     if (self.uses_stack) try commands.append(self.gpa, .stack_clear);
-    try commands.append(self.gpa, .{ .add_objective = null });
-    for (self.globals.keys()) |name| try commands.append(self.gpa, .{ .add_objective = name });
+    try commands.append(self.gpa, .{ .add_objective = .{} });
+    for (try self.outputNamespaces()) |namespace| try commands.append(self.gpa, .{ .add_objective = .{ .namespace = namespace } });
+    for (self.globals.values()) |global| try commands.append(self.gpa, .{ .add_objective = .{ .namespace = global.output_namespace, .name = global.name } });
     for (self.events.items, 0..) |event, index| {
         const add = try std.fmt.allocPrint(self.gpa, "scoreboard objectives add {s} {s}", .{ try self.eventObjective(event, index), event.criteria });
         try commands.append(self.gpa, .{ .raw = add });
@@ -442,22 +730,27 @@ fn buildLoadFunction(self: *Self, functions: []const Ir.McFunction) CompileError
         } });
     }
 
-    for (self.globals.keys(), self.globals.values()) |name, global| {
-        if (!try self.isGlobalValueUsed(functions, name)) continue;
+    for (self.globals.values()) |global| {
+        if (!try self.isGlobalValueUsed(functions, global)) continue;
         try commands.append(self.gpa, .{ .score_set_if_unset = .{
-            .score = globalScore(name),
+            .score = globalScore(global),
             .value = global.initial_value,
         } });
     }
 
-    for (self.data_globals.keys(), self.data_globals.values()) |name, global| {
-        try commands.append(self.gpa, .{ .data_set_if_unset = .{
-            .target = .inStorage(.data, name),
-            .snbt = global.initial_snbt,
-        } });
+    for (self.data_globals.values()) |global| {
+        var target: Ir.DataPath = .inStorage(.data, global.name);
+        target.namespace = global.output_namespace;
+        try commands.append(self.gpa, .{ .data_set_if_unset = .{ .target = target, .snbt = global.initial_snbt } });
     }
 
-    if (self.has_load and !self.load_is_empty) try commands.append(self.gpa, .{ .function = "load" });
+    // A `load` with only `onEvent` lines has no commands, so `poplar/load` does not call it.
+    for (try self.hookNames(self.load_namespaces, "load")) |name| {
+        const is_empty = for (functions) |function| {
+            if (std.mem.eql(u8, function.name, name)) break function.commands.len == 0;
+        } else true;
+        if (!is_empty) try commands.append(self.gpa, .{ .function = name });
+    }
 
     return .{ .name = "poplar/load", .commands = try commands.toOwnedSlice(self.gpa) };
 }
@@ -521,12 +814,8 @@ fn compileStatement(self: *Self, statement: Ast.Stmt, env: *Environment, command
 
 // `text_column` is the column where the command text starts, after the `/`.
 fn compileCommand(self: *Self, command: Ast.Command, text_column: usize, env: *Environment, commands: *std.ArrayList(Ir.Command)) CompileError!void {
-    const command_text = try self.buildCommandText(command.parts, env) orelse return;
-
-    if (try self.command_tree.check(self.gpa, command_text.text)) |failure| {
-        const column = text_column + sourceOffset(command.parts, command_text.text_starts, failure.at);
-        return self.addErrorAt(column, "{s}", .{failure.message});
-    }
+    var command_text = try self.buildCommandText(command.parts, env) orelse return;
+    command_text.text = try self.checkMinecraftText(command.parts, command_text, text_column, "", "") orelse return;
 
     if (!command_text.is_macro) return commands.append(self.gpa, .{ .raw = command_text.text });
 
@@ -603,19 +892,12 @@ fn onBodyReturn(self: *Self, body_name: []const u8) CompileError!Ir.Command {
 
 // The value of a `return` inside a `while` or `execute (...)` body, on its way out.
 fn resultScore(self: *Self) CompileError!Ir.Score {
-    return .{ .holder = try std.fmt.allocPrint(self.gpa, "#poplar.{s}.result", .{self.current_mcfun}) };
+    return .{ .holder = try std.fmt.allocPrint(self.gpa, "#poplar.{s}.result", .{self.current_mcfun}), .namespace = self.current_output_namespace };
 }
 
 fn compileExecute(self: *Self, execute: Ast.Execute, env: *Environment, commands: *std.ArrayList(Ir.Command)) CompileError!void {
-    const subcommands = try self.buildCommandText(execute.subcommands, env) orelse return;
-
-    const prefix = "execute ";
-    const check_text = try std.fmt.allocPrint(self.gpa, prefix ++ "{s} run say x", .{subcommands.text});
-    if (try self.command_tree.check(self.gpa, check_text)) |failure| {
-        const at = @min(failure.at -| prefix.len, subcommands.text.len);
-        const column = execute.subcommands_column + sourceOffset(execute.subcommands, subcommands.text_starts, at);
-        return self.addErrorAt(column, "{s}", .{failure.message});
-    }
+    var subcommands = try self.buildCommandText(execute.subcommands, env) orelse return;
+    subcommands.text = try self.checkMinecraftText(execute.subcommands, subcommands, execute.subcommands_column, "execute ", " run say x") orelse return;
 
     const can_return = containsReturn(execute.body);
     if (can_return) {
@@ -766,7 +1048,8 @@ fn declareLocal(self: *Self, kind: Environment.Local.Kind, var_decl: Ast.VarDecl
     if (kind == .data and pathRoot(name).len != name.len) {
         return self.addError("'var' declares a whole variable. Set '${s}' after it", .{name});
     }
-    const is_global = if (kind == .score) self.globals.contains(name) else self.data_globals.contains(name);
+    const global_key = try self.qualifiedKey(self.current_namespace, name);
+    const is_global = if (kind == .score) self.globals.contains(global_key) else self.data_globals.contains(global_key);
     const key = try std.fmt.allocPrint(self.gpa, "{c}{s}", .{ sigil, name });
     if (is_global or env.get(key) != null) return self.addError("'{s}' is already declared", .{key});
 
@@ -781,13 +1064,13 @@ fn declareLocal(self: *Self, kind: Environment.Local.Kind, var_decl: Ast.VarDecl
     }
     name_entry.value_ptr.* = origin;
 
-    const local: Environment.Local = .{ .kind = kind, .generated_name = generated_name, .owner = self.current_mcfun };
+    const local: Environment.Local = .{ .kind = kind, .generated_name = generated_name, .owner = self.current_mcfun_name };
     switch (kind) {
         .score => {
             self.temp_count = 0;
-            try self.compileInto(.{ .holder = generated_name, .owner = self.current_mcfun }, var_decl.value, env, commands);
+            try self.compileInto(.{ .holder = generated_name, .owner = self.current_mcfun_name, .namespace = self.current_output_namespace }, var_decl.value, env, commands);
         },
-        .data => try self.compileDataAssign(.inStorage(.data, generated_name), var_decl.value, env, commands),
+        .data => try self.compileDataAssign(self.dataLocal(generated_name), var_decl.value, env, commands),
     }
 
     _ = try env.declare(self.gpa, key, .{ .local = local });
@@ -813,7 +1096,7 @@ fn localCleanup(self: *Self, body: []const Ast.Stmt) CompileError![]const Ir.Com
     var cleanup: std.ArrayList(Ir.Command) = .empty;
     for (names.keys()) |name| {
         const generated_name = try std.fmt.allocPrint(self.gpa, "{s}_{s}", .{ name, self.current_mcfun });
-        try cleanup.append(self.gpa, .{ .data_remove = .inStorage(.data, generated_name) });
+        try cleanup.append(self.gpa, .{ .data_remove = self.dataLocal(generated_name) });
     }
     return cleanup.toOwnedSlice(self.gpa);
 }
@@ -847,8 +1130,8 @@ fn compileAssign(self: *Self, assign: Ast.Assign, env: *Environment, commands: *
         .compile_time => {},
         .score => return self.compileScoreAssign(assign.target, assign.value, env, commands),
         .data => {
-            const key = try self.dataKey(assign.target.name, env) orelse return;
-            return self.compileDataAssign(.inStorage(.data, key), assign.value, env, commands);
+            const target = try self.dataPath(assign.target, env) orelse return;
+            return self.compileDataAssign(target, assign.value, env, commands);
         },
         .entity_data => {
             const target = try self.entityDataPath(assign.target) orelse return;
@@ -859,6 +1142,10 @@ fn compileAssign(self: *Self, assign: Ast.Assign, env: *Environment, commands: *
     if (self.containsRuntimeValue(assign.value, env)) return self.addError("a runtime value cannot be stored in a compile-time variable", .{});
 
     const value = try self.evaluate(assign.value, env) orelse return;
+    // Names cannot be shadowed, so this name is the data file's.
+    if ((try self.dataFileIds(self.current_namespace)).store.contains(assign.target.name)) {
+        return self.addError("'{s}' is the id of a data file and cannot change", .{assign.target.name});
+    }
     switch (env.assign(assign.target.name, value)) {
         .assigned => {},
         .not_found => try self.addError("unknown name '{s}'", .{assign.target.name}),
@@ -1036,8 +1323,7 @@ fn numberSnbt(self: *Self, value: Value, target_type: Ast.NumberType) CompileErr
 // A `#` variable in `<ns>:data`, or the NBT path of one entity.
 fn dataPathOf(self: *Self, identifier: Ast.Identifier, env: *const Environment) CompileError!?Ir.DataPath {
     if (identifier.storage == .entity_data) return self.entityDataPath(identifier);
-    const key = try self.dataKey(identifier.name, env) orelse return null;
-    return .inStorage(.data, key);
+    return self.dataPath(identifier, env);
 }
 
 fn entityDataPath(self: *Self, identifier: Ast.Identifier) CompileError!?Ir.DataPath {
@@ -1087,14 +1373,14 @@ fn compileInto(self: *Self, target: Ir.Score, expression: *const Ast.Expr, env: 
             if (isBuiltinCall(call, "len")) return self.compileLength(target, call, env, commands);
             if (isStringCall(call)) return self.addError("'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'", .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name });
             if (isStringTest(call)) return self.addError("'{s}' is a condition. Use it in 'if' or 'while'", .{call.callee.kind.identifier.name});
-            const function = try self.findMcfn(call) orelse return;
+            const found = try self.findMcfn(call) orelse return;
             // Temps made after this point hold arguments. They are not needed after the call.
             const live_count = self.temp_count;
-            const run = try self.compileMcfnCall(call, function, env, commands) orelse return;
+            const run = try self.compileMcfnCall(call, found.located, env, commands) orelse return;
             self.temp_count = live_count;
             const store: Ir.Command = .{ .store_result = .{ .target = .{ .score = target }, .run = try self.createCommand(run) } };
 
-            if (!try self.canReach(function.name, self.current_mcfun)) return commands.append(self.gpa, store);
+            if (!try self.canReach(found.key, self.current_mcfun_key)) return commands.append(self.gpa, store);
             try self.appendWithSavedValues(store, target, live_count, commands);
         },
         .cast => try self.addError(cast_error, .{}),
@@ -1103,23 +1389,37 @@ fn compileInto(self: *Self, target: Ir.Score, expression: *const Ast.Expr, env: 
 }
 
 // The mcfun whose return value is used, for example `double` in `#y = double();`.
-fn findMcfn(self: *Self, call: Ast.Call) CompileError!?*const Ast.Function {
-    if (call.callee.kind == .identifier) {
-        if (self.functions.get(call.callee.kind.identifier.name)) |located| return located.function;
-        try self.addError("unknown function '{s}'", .{call.callee.kind.identifier.name});
-        return null;
-    }
+fn findMcfn(self: *Self, call: Ast.Call) CompileError!?FoundMcfun {
+    if (call.callee.kind == .identifier) return self.findFunction(call.callee.kind.identifier);
     try self.addError("only an mcfun call can be used as a runtime value", .{});
     return null;
 }
 
+const FoundMcfun = struct {
+    // `combat:heal`, the key in `functions` and `mcfun_calls`.
+    key: []const u8,
+    located: Located,
+};
+
+// `heal` in this namespace or `magic:heal` in an imported one. Null after an error.
+fn findFunction(self: *Self, identifier: Ast.Identifier) CompileError!?FoundMcfun {
+    const namespace = try self.resolveNamespace(identifier.namespace) orelse return null;
+    const function_key = try self.qualifiedKey(namespace, identifier.name);
+    const located = self.functions.get(function_key) orelse {
+        try self.addError("unknown function '{s}'", .{identifier.name});
+        return null;
+    };
+    return .{ .key = function_key, .located = located };
+}
+
 // Returns the command that calls an mcfun. Commands that prepare runtime arguments go into `commands` first.
-fn compileMcfnCall(self: *Self, call: Ast.Call, function: *const Ast.Function, env: *Environment, commands: *std.ArrayList(Ir.Command)) CompileError!?Ir.Command {
+fn compileMcfnCall(self: *Self, call: Ast.Call, located: Located, env: *Environment, commands: *std.ArrayList(Ir.Command)) CompileError!?Ir.Command {
+    const function = located.function;
     if (call.args.len != function.params.len) {
         try self.addError("mcfun '{s}' expects {d} arguments, found {d}", .{ function.name, function.params.len, call.args.len });
         return null;
     }
-    if (function.params.len == 0) return .{ .function = function.name };
+    if (function.params.len == 0) return .{ .function = located.ir_name };
 
     var has_runtime_argument = false;
     for (call.args) |arg| {
@@ -1133,7 +1433,7 @@ fn compileMcfnCall(self: *Self, call: Ast.Call, function: *const Ast.Function, e
             try compound.print(self.gpa, "{s}:{s}", .{ param.name, try self.argumentSnbt(arg, env) orelse return null });
         }
         try compound.append(self.gpa, '}');
-        return .{ .function_with = .{ .name = function.name, .arguments = .{ .compound = try compound.toOwnedSlice(self.gpa) } } };
+        return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(self.gpa) } } };
     }
 
     // Math is computed before any argument is written, so a call inside an argument cannot overwrite them.
@@ -1170,7 +1470,7 @@ fn compileMcfnCall(self: *Self, call: Ast.Call, function: *const Ast.Function, e
             try commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
         }
     }
-    return .{ .function_with = .{ .name = function.name, .arguments = .args_storage } };
+    return .{ .function_with = .{ .name = located.ir_name, .arguments = .args_storage } };
 }
 
 // A compile-time argument as SNBT. A forwarded parameter is `"$(name)"`.
@@ -1241,13 +1541,14 @@ fn resolveScore(self: *Self, identifier: Ast.Identifier, env: *const Environment
             try self.addError("'#{s}' is local, so it has no entity values. Declare it at the top level", .{identifier.name});
             return null;
         }
-        return .{ .holder = local.generated_name, .owner = local.owner };
+        return .{ .holder = local.generated_name, .owner = local.owner, .namespace = self.current_output_namespace };
     }
-    if (!self.globals.contains(identifier.name)) {
+    const namespace = try self.resolveNamespace(identifier.namespace) orelse return null;
+    const global = self.globals.get(try self.qualifiedKey(namespace, identifier.name)) orelse {
         try self.addError("unknown score '#{s}'", .{identifier.name});
         return null;
-    }
-    return .{ .holder = identifier.selector orelse global_holder, .objective = identifier.name };
+    };
+    return .{ .holder = identifier.selector orelse global_holder, .objective = global.name, .namespace = global.output_namespace };
 }
 
 fn checkSingleEntity(self: *Self, identifier: Ast.Identifier) CompileError!bool {
@@ -1268,14 +1569,27 @@ fn isSingleEntitySelector(selector: []const u8) bool {
 }
 
 // Checks that the root of a `$` path is declared, and gives the path in `<ns>:data`.
-fn dataKey(self: *Self, name: []const u8, env: *const Environment) CompileError!?[]const u8 {
+fn dataPath(self: *Self, identifier: Ast.Identifier, env: *const Environment) CompileError!?Ir.DataPath {
+    const name = identifier.name;
     const root = pathRoot(name);
-    if (localOf(env, '$', root)) |local| return try std.mem.concat(self.gpa, u8, &.{ local.generated_name, name[root.len..] });
-    if (!self.data_globals.contains(root)) {
+    if (identifier.namespace == null) {
+        if (localOf(env, '$', root)) |local| return self.dataLocal(try std.mem.concat(self.gpa, u8, &.{ local.generated_name, name[root.len..] }));
+    }
+    const namespace = try self.resolveNamespace(identifier.namespace) orelse return null;
+    const global = self.data_globals.get(try self.qualifiedKey(namespace, root)) orelse {
         try self.addError("unknown data '${s}'", .{root});
         return null;
-    }
-    return name;
+    };
+    var path: Ir.DataPath = .inStorage(.data, name);
+    path.namespace = global.output_namespace;
+    return path;
+}
+
+// A data local in `<ns>:data` of the mcfun's namespace.
+fn dataLocal(self: *const Self, key_name: []const u8) Ir.DataPath {
+    var path: Ir.DataPath = .inStorage(.data, key_name);
+    path.namespace = self.current_output_namespace;
+    return path;
 }
 
 // `stats.inventory[0]` → `stats_inventory_0_`: a name that a macro line can use.
@@ -1299,8 +1613,17 @@ fn toScoreValue(self: *Self, value: Value) CompileError!?i32 {
     };
 }
 
-fn globalScore(name: []const u8) Ir.Score {
-    return .{ .holder = global_holder, .objective = name };
+fn globalScore(global: GlobalScore) Ir.Score {
+    return .{ .holder = global_holder, .objective = global.name, .namespace = global.output_namespace };
+}
+
+// The namespaces other than the pack namespace that have mcfuns: each one gets its main objective for temps and locals.
+fn outputNamespaces(self: *Self) CompileError![]const []const u8 {
+    var namespaces: std.StringArrayHashMapUnmanaged(void) = .empty;
+    for (self.functions.values()) |located| {
+        if (self.outputNamespace(located.namespace)) |namespace| try namespaces.put(self.gpa, namespace, {});
+    }
+    return namespaces.keys();
 }
 
 fn constantScore(self: *Self, value: i32) CompileError!Ir.Score {
@@ -1315,7 +1638,7 @@ fn newTemp(self: *Self) CompileError!Ir.Score {
 
 // Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.
 fn tempScore(self: *Self, index: usize) CompileError!Ir.Score {
-    return .{ .holder = try std.fmt.allocPrint(self.gpa, "#poplar.{s}.t{d}", .{ self.current_mcfun, index }) };
+    return .{ .holder = try std.fmt.allocPrint(self.gpa, "#poplar.{s}.t{d}", .{ self.current_mcfun, index }), .namespace = self.current_output_namespace };
 }
 
 // A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
@@ -1355,11 +1678,19 @@ fn frameSlot(self: *Self, name: []const u8) CompileError!Ir.DataPath {
 }
 
 fn buildCallGraph(self: *Self) CompileError!void {
-    for (self.functions.values()) |located| {
+    for (self.functions.keys(), self.functions.values()) |function_key, located| {
+        self.enterNamespace(located);
         var calls: std.StringArrayHashMapUnmanaged(void) = .empty;
         try self.collectCalls(located.function.body, &calls);
-        try self.mcfun_calls.put(self.gpa, located.function.name, calls);
+        try self.mcfun_calls.put(self.gpa, function_key, calls);
     }
+}
+
+// The key of a called name, without errors: the compile step reports a missing import or name.
+fn calledKey(self: *Self, identifier: Ast.Identifier) CompileError!?[]const u8 {
+    const namespace = identifier.namespace orelse self.current_namespace;
+    const function_key = try self.qualifiedKey(namespace, identifier.name);
+    return if (self.functions.contains(function_key)) function_key else null;
 }
 
 // Finds the mcfun calls in a body. This can find calls that a compile-time branch removes later. That only adds saves.
@@ -1392,16 +1723,30 @@ fn collectCalls(
     };
 }
 
-// `/say {{double(2)}};` calls `double` too.
+// `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
 fn collectInsertCalls(
     self: *Self,
     parts: []const Ast.CommandPart,
     calls: *std.StringArrayHashMapUnmanaged(void),
 ) CompileError!void {
     for (parts) |part| switch (part.content) {
-        .text => {},
+        .text => |text| try self.collectStdIds(text, calls),
         .insert => |expression| try self.collectExpressionCalls(expression, calls),
     };
+}
+
+// A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
+fn collectStdIds(self: *Self, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+    const prefix = std_namespace ++ ":";
+    var index: usize = 0;
+    while (std.mem.indexOfPos(u8, text, index, prefix)) |start| {
+        index = start + prefix.len;
+        if (start > 0 and isNamespaceChar(text[start - 1])) continue;
+        var end = index;
+        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
+        const function_key = try self.qualifiedKey(std_namespace, text[index..end]);
+        if (self.functions.contains(function_key)) try calls.put(self.gpa, function_key, {});
+    }
 }
 
 fn collectExpressionCalls(
@@ -1416,16 +1761,17 @@ fn collectExpressionCalls(
             try self.collectExpressionCalls(infix.right, calls);
         },
         .cast => |cast| try self.collectExpressionCalls(cast.value, calls),
+        .minecraft_check => |parts| try self.collectInsertCalls(parts, calls),
         .call => |call| {
             for (call.args) |arg| try self.collectExpressionCalls(arg, calls);
             if (call.callee.kind != .identifier) return;
 
             // An event callback is called from `load`, as far as the call graph is concerned.
             if ((isBuiltinCall(call, "onEvent") or isBuiltinCall(call, "onTrigger")) and call.args.len == 2 and call.args[1].kind == .identifier) {
-                try calls.put(self.gpa, call.args[1].kind.identifier.name, {});
+                if (try self.calledKey(call.args[1].kind.identifier)) |callback| try calls.put(self.gpa, callback, {});
             }
-            const located = self.functions.get(call.callee.kind.identifier.name) orelse return;
-            try calls.put(self.gpa, located.function.name, {});
+            const called = try self.calledKey(call.callee.kind.identifier) orelse return;
+            try calls.put(self.gpa, called, {});
         },
         else => {},
     }
@@ -1461,6 +1807,7 @@ fn scoreOperator(op: Token.TokenType) ?Ir.Operator {
 fn containsRuntimeValue(self: *const Self, expression: *const Ast.Expr, env: *const Environment) bool {
     return switch (expression.kind) {
         .identifier => |identifier| identifier.storage != .compile_time or isParam(expression, env),
+        .minecraft_check => true,
         .prefix => |prefix| self.containsRuntimeValue(prefix.operand, env),
         .infix => |infix| self.containsRuntimeValue(infix.left, env) or self.containsRuntimeValue(infix.right, env),
         .cast => |cast| self.containsRuntimeValue(cast.value, env),
@@ -1719,6 +2066,7 @@ fn lowerCondition(self: *Self, expression: *const Ast.Expr, env: *Environment, n
             else => {},
         },
         .call => |call| if (isStringTest(call)) return self.stringTest(call, env, negated, setup),
+        .minecraft_check => |parts| return self.minecraftCheck(parts, expression.column, env, negated),
         // `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs `== true`.
         .identifier => |identifier| if (identifier.storage == .data or identifier.storage == .entity_data) {
             const path = try self.dataPathOf(identifier, env) orelse return null;
@@ -1733,6 +2081,130 @@ fn lowerCondition(self: *Self, expression: *const Ast.Expr, env: *Environment, n
     }
     try self.addError("a condition must be a comparison, a data path, or 'and', 'or' and '!' of those", .{});
     return null;
+}
+
+// `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of `execute (...)`.
+fn minecraftCheck(self: *Self, parts: []const Ast.CommandPart, column: usize, env: *Environment, negated: bool) CompileError!?Condition {
+    const check = try self.buildCommandText(parts, env) orelse return null;
+    if (check.is_macro) {
+        try self.addError("a game value in a Minecraft check is not supported yet. Use 'execute (if ...) {{ }}'", .{});
+        return null;
+    }
+
+    const text = try self.checkMinecraftText(parts, check, column, "execute if ", " run say x") orelse return null;
+    return try self.singleCheck(.{ .negated = negated, .score_test = .{ .raw = text } });
+}
+
+// Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each relative id
+// `./name` into `<ns>:name`. `column` is where the text starts in the source. Null after an error.
+fn checkMinecraftText(self: *Self, parts: []const Ast.CommandPart, built: CommandText, column: usize, comptime prefix: []const u8, comptime suffix: []const u8) CompileError!?[]const u8 {
+    const full_text = try std.fmt.allocPrint(self.gpa, prefix ++ "{s}" ++ suffix, .{built.text});
+    const checked = try self.command_tree.checkText(self.gpa, full_text);
+    if (checked.failure) |failure| {
+        const at = @min(failure.at -| prefix.len, built.text.len);
+        try self.addErrorAt(column + sourceOffset(parts, built.text_starts, at), "{s}", .{failure.message});
+        return null;
+    }
+    if (checked.ids.len == 0) return built.text;
+
+    const ids = try self.gpa.dupe(Commands.Id, checked.ids);
+    std.mem.sort(Commands.Id, ids, {}, idBefore);
+    var resolved: std.ArrayList(u8) = .empty;
+    var copied: usize = 0;
+    for (ids) |text_id| {
+        const start = text_id.at - prefix.len;
+        var colon = start;
+        while (colon < built.text.len and isNamespaceChar(built.text[colon])) colon += 1;
+        if (colon >= built.text.len or built.text[colon] != ':') continue;
+        const written = built.text[start..colon];
+
+        // A storage or bossbar id is not a Poplar declaration: `self:` only gives it the namespace.
+        if (!text_id.names_declaration) {
+            if (!std.mem.eql(u8, written, "self")) continue;
+            try resolved.print(self.gpa, "{s}{s}", .{ built.text[copied..start], self.current_output_namespace orelse self.namespace });
+            copied = colon;
+            continue;
+        }
+        const namespace = try self.sourceNamespaceOf(written) orelse continue;
+
+        var end = colon + 1;
+        while (end < built.text.len and isIdChar(built.text[end])) end += 1;
+        const name = built.text[colon + 1 .. end];
+        const id = try self.idOf(namespace, name) orelse {
+            // `magic:heal_player`, the real id, stays as it is. `self:` only takes the name from the source.
+            const is_self = std.mem.eql(u8, written, "self");
+            if (!is_self and try self.declarationWithFileName(namespace, name) != null) continue;
+            try self.addErrorAt(column + sourceOffset(parts, built.text_starts, start), "{s}", .{try self.unknownIdMessage(written, namespace, name)});
+            return null;
+        };
+        try resolved.print(self.gpa, "{s}{s}", .{ built.text[copied..start], id });
+        copied = end;
+    }
+    try resolved.appendSlice(self.gpa, built.text[copied..]);
+    return resolved.items;
+}
+
+fn idBefore(_: void, a: Commands.Id, b: Commands.Id) bool {
+    return a.at < b.at;
+}
+
+fn isNamespaceChar(ch: u8) bool {
+    return std.ascii.isLower(ch) or std.ascii.isDigit(ch) or ch == '_' or ch == '.' or ch == '-';
+}
+
+fn isIdChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or std.mem.indexOfScalar(u8, "_-./", ch) != null;
+}
+
+// The namespace whose Poplar names an id in Minecraft text uses: `self:`, or a namespace of the pack that the file
+// imports. Null for any other id, such as `minecraft:stone`, which is left as it is.
+fn sourceNamespaceOf(self: *Self, written: []const u8) CompileError!?[]const u8 {
+    if (std.mem.eql(u8, written, "self")) return self.current_namespace;
+    if (!self.namespace_imports.contains(written)) return null;
+    if (std.mem.eql(u8, written, self.current_namespace) or self.isImported(written)) return written;
+    return null;
+}
+
+// `combat:healPlayer` → `combat:heal_player`, `std:clamp` → `<pack>:std/clamp`, `combat:isSitting` → `combat:is_sitting`.
+fn idOf(self: *Self, namespace: []const u8, name: []const u8) CompileError!?[]const u8 {
+    const output = self.outputNamespace(namespace) orelse self.namespace;
+    const name_key = try self.qualifiedKey(namespace, name);
+    if (self.relative_names.get(name_key)) |path| return try std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ output, path });
+    if (!self.functions.contains(name_key)) return null;
+    const prefix = if (std.mem.eql(u8, namespace, std_namespace)) "std/" else "";
+    return try std.fmt.allocPrint(self.gpa, "{s}:{s}{f}", .{ output, prefix, Writer.functionPath(name) });
+}
+
+// The source names of the data files and mcfuns of a namespace.
+fn declaredNames(self: *Self, namespace: []const u8) CompileError![]const []const u8 {
+    const key_prefix = try self.qualifiedKey(namespace, "");
+    var names: std.ArrayList([]const u8) = .empty;
+    for ([_][]const []const u8{ self.relative_names.keys(), self.functions.keys() }) |keys| {
+        for (keys) |declared| {
+            if (std.mem.startsWith(u8, declared, key_prefix)) try names.append(self.gpa, declared[key_prefix.len..]);
+        }
+    }
+    return names.items;
+}
+
+// The source name whose file is `file_name`: `healPlayer` for `heal_player`.
+fn declarationWithFileName(self: *Self, namespace: []const u8, file_name: []const u8) CompileError!?[]const u8 {
+    for (try self.declaredNames(namespace)) |declared| {
+        const declared_id = (try self.idOf(namespace, declared)).?;
+        var declared_file = declared_id[std.mem.lastIndexOfScalar(u8, declared_id, ':').? + 1 ..];
+        if (std.mem.eql(u8, namespace, std_namespace)) declared_file = declared_file["std/".len..];
+        if (std.mem.eql(u8, declared_file, file_name)) return declared;
+    }
+    return null;
+}
+
+fn unknownIdMessage(self: *Self, written: []const u8, namespace: []const u8, name: []const u8) CompileError![]const u8 {
+    // `self:heal_player` is the file name of `healPlayer`: point to the name in the source.
+    if (try self.declarationWithFileName(namespace, name)) |declared| {
+        return std.fmt.allocPrint(self.gpa, "'{s}:{s}' is a file name. Use the name from the source: '{s}:{s}'", .{ written, name, written, declared });
+    }
+    const names = try self.declaredNames(namespace);
+    return std.fmt.allocPrint(self.gpa, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, Suggestion{ .closest = Commands.closestId(names, name) } });
 }
 
 // `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
@@ -1908,7 +2380,9 @@ fn flipCompare(op: Ir.CompareOp) Ir.CompareOp {
 
 fn newGeneratedName(self: *Self, kind: []const u8) CompileError![]const u8 {
     defer self.generated_count += 1;
-    return std.fmt.allocPrint(self.gpa, "poplar/{s}/{s}_{d}", .{ self.current_mcfun, kind, self.generated_count });
+    const path = try std.fmt.allocPrint(self.gpa, "poplar/{s}/{s}_{d}", .{ self.current_mcfun, kind, self.generated_count });
+    const namespace = self.current_output_namespace orelse return path;
+    return std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ namespace, path });
 }
 
 fn createExpr(self: *Self, expression: Ast.Expr) CompileError!*const Ast.Expr {
@@ -2094,12 +2568,12 @@ fn compileCall(self: *Self, call: Ast.Call, env: *Environment, commands: *std.Ar
     if (isBuiltinCall(call, "onEvent")) return self.compileEvent(call, "onEvent", env);
     if (isBuiltinCall(call, "onTrigger")) return self.compileEvent(call, "onTrigger", env);
     if (isStringCall(call) or isStringTest(call)) return self.addError("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
-    if (isBuiltin(name)) return self.compileListBuiltin(name, call, env, commands);
-    const callee = self.functions.get(name) orelse return self.addError("unknown function '{s}'", .{name});
+    if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return self.compileListBuiltin(name, call, env, commands);
+    const callee = try self.findFunction(call.callee.kind.identifier) orelse return;
 
     self.temp_count = 0;
-    const command = try self.compileMcfnCall(call, callee.function, env, commands) orelse return;
-    if (self.live_locals.items.len > 0 and try self.canReach(name, self.current_mcfun)) return self.appendWithSavedValues(command, null, 0, commands);
+    const command = try self.compileMcfnCall(call, callee.located, env, commands) orelse return;
+    if (self.live_locals.items.len > 0 and try self.canReach(callee.key, self.current_mcfun_key)) return self.appendWithSavedValues(command, null, 0, commands);
     try commands.append(self.gpa, command);
 }
 
@@ -2109,7 +2583,7 @@ pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove"
 // at compile time and writes no command.
 fn compileEvent(self: *Self, call: Ast.Call, builtin: []const u8, env: *Environment) CompileError!void {
     const is_trigger = std.mem.eql(u8, builtin, "onTrigger");
-    if (!self.in_entry_load) return self.addError("'{s}' must be in 'mcfun load' of the entry file", .{builtin});
+    if (!self.in_load) return self.addError("'{s}' must be in 'mcfun load'", .{builtin});
     if (isInRuntimeBranch(env)) return self.addError("'{s}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'", .{builtin});
     const first = if (is_trigger) "name" else "criteria";
     if (call.args.len != 2) return self.addError("'{s}' expects 2 arguments ({s}, callback), found {d}", .{ builtin, first, call.args.len });
@@ -2129,13 +2603,14 @@ fn compileEvent(self: *Self, call: Ast.Call, builtin: []const u8, env: *Environm
     defer self.restorePosition(outer_position);
     if (callback.kind != .identifier or callback.kind.identifier.storage != .compile_time) return self.addError("the callback of '{s}' must be the name of an mcfun", .{builtin});
     const name = callback.kind.identifier.name;
-    const located = self.functions.get(name) orelse return self.addError("unknown mcfun '{s}'", .{name});
-    if (located.function.params.len > 0) return self.addError("the callback '{s}' is run by the game, so it cannot have parameters", .{name});
+    const found = try self.findFunction(callback.kind.identifier) orelse return;
+    if (found.located.function.params.len > 0) return self.addError("the callback '{s}' is run by the game, so it cannot have parameters", .{name});
 
+    const callback_name = found.located.ir_name;
     if (is_trigger) {
-        try self.events.append(self.gpa, .{ .criteria = "trigger", .callback = name, .trigger = value.string });
+        try self.events.append(self.gpa, .{ .criteria = "trigger", .callback = callback_name, .namespace = self.current_output_namespace, .trigger = value.string });
     } else {
-        try self.events.append(self.gpa, .{ .criteria = value.string, .callback = name });
+        try self.events.append(self.gpa, .{ .criteria = value.string, .callback = callback_name, .namespace = self.current_output_namespace });
     }
 }
 
@@ -2156,14 +2631,15 @@ fn textComponent(self: *Self, argument: *const Ast.Expr, env: *Environment) Comp
             .score => {
                 const score = try self.resolveScore(identifier, env) orelse return null;
                 // A local score is in the main objective `<ns>`, a global one in `<ns>.<name>`.
-                const objective = if (score.objective) |name| try std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ self.namespace, name }) else self.namespace;
+                const score_namespace = score.namespace orelse self.namespace;
+                const objective = if (score.objective) |name| try std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ score_namespace, name }) else score_namespace;
                 const holder: Value = .{ .compound = try self.gpa.dupe(Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
                 return .{ .compound = try self.gpa.dupe(Value.Entry, &.{.{ .key = "score", .value = holder }}) };
             },
             .data => {
-                const path = try self.dataKey(identifier.name, env) orelse return null;
-                const storage = try std.fmt.allocPrint(self.gpa, "{s}:data", .{self.namespace});
-                return .{ .compound = try self.gpa.dupe(Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path } } }) };
+                const path = try self.dataPath(identifier, env) orelse return null;
+                const storage = try std.fmt.allocPrint(self.gpa, "{s}:data", .{path.namespace orelse self.namespace});
+                return .{ .compound = try self.gpa.dupe(Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path.path } } }) };
             },
             .entity_data => return .{ .compound = try self.gpa.dupe(Value.Entry, &.{ .{ .key = "entity", .value = .{ .string = identifier.selector.? } }, .{ .key = "nbt", .value = .{ .string = identifier.name } } }) },
             .compile_time => {},
@@ -2457,6 +2933,10 @@ fn evaluate(self: *Self, expression: *const Ast.Expr, env: *Environment) Compile
             try self.addError(cast_error, .{});
             return null;
         },
+        .minecraft_check => {
+            try self.addError("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition", .{});
+            return null;
+        },
         .string => |text| .{ .string = text },
         .number => |number| .{ .number = number },
         .boolean => |boolean| .{ .boolean = boolean },
@@ -2714,7 +3194,7 @@ fn compileForTest(arena: std.mem.Allocator, source: []const u8) !Self {
     command_tree.* = try .load(arena);
 
     var compiler = Self.init(arena, command_tree);
-    try compiler.addProgram("main.poplar", program, .entry);
+    try compiler.addProgram("main.poplar", program, .project);
     return compiler;
 }
 
@@ -3219,7 +3699,7 @@ test "selectors as values, text parts and events" {
         \\execute as @a[scores={ns.event_0=1..}] at @s run function ns:poplar/event_0
         \\
     , try renderForTest(arena.allocator(), program, "poplar/tick"));
-    try std.testing.expectEqualStrings("poplar/tick", program.tick.?);
+    try std.testing.expectEqualDeep(&[_][]const u8{"poplar/tick"}, program.tick);
 
     const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
     try std.testing.expect(std.mem.indexOf(u8, load, "scoreboard objectives add ns.event_0 deathCount\n") != null);
@@ -3244,11 +3724,11 @@ test "onEvent errors" {
     const errors = compiler.errors.items;
     try std.testing.expectEqual(3, errors.len);
     try std.testing.expectEqualStrings("the callback 'withParam' is run by the game, so it cannot have parameters", errors[0].message);
-    try std.testing.expectEqualStrings("unknown mcfun 'missing'", errors[1].message);
-    try std.testing.expectEqualStrings("'onEvent' must be in 'mcfun load' of the entry file", errors[2].message);
+    try std.testing.expectEqualStrings("unknown function 'missing'", errors[1].message);
+    try std.testing.expectEqualStrings("'onEvent' must be in 'mcfun load'", errors[2].message);
 }
 
-test "load and tick run only from the entry file" {
+test "load and tick of a project namespace are run by the game, std's are not" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
@@ -3264,14 +3744,14 @@ test "load and tick run only from the entry file" {
         \\function ns:load
         \\
     , try Writer.renderFunction(arena.allocator(), "ns", program.load.?));
-    try std.testing.expectEqualStrings("tick", program.tick.?);
+    try std.testing.expectEqualDeep(&[_][]const u8{"tick"}, program.tick);
 
     var parser = try Parser.init(arena.allocator(), Lexer.init("mcfun load() {} mcfun tick() {}"));
     var library = Self.init(arena.allocator(), compiler.command_tree);
-    try library.addProgram("lib.poplar", try parser.parseProgram(), .project);
+    try library.addProgram("lib.poplar", try parser.parseProgram(), .std);
     const library_program = try library.compile();
     try std.testing.expectEqual(null, library_program.load);
-    try std.testing.expectEqual(null, library_program.tick);
+    try std.testing.expectEqual(0, library_program.tick.len);
 }
 
 test "return values, mcfun calls as values and while" {
@@ -3586,4 +4066,103 @@ test "string helpers use set string, and run in the compiler on constants" {
         \\execute if data storage ns:poplar {string_test:"_sword"} run say sword
         \\
     , try renderForTest(arena.allocator(), program, "main"));
+}
+
+test "data files go to their folder, and a name is a constant with the id" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try compileForTest(arena.allocator(),
+        \\predicate isSneaking { "condition": "minecraft:entity_properties" }
+        \\lootTable "minecraft:entities/zombie" { "pools": [{ "rolls": 0.5 }] }
+        \\biomeTag hot { "values": [] }
+        \\recpie a {}
+        \\recipe b {
+        \\  "a": [1,]
+        \\}
+        \\recipe "b" {}
+        \\mcfun main() { /say {{isSneaking}}; }
+    );
+    const program = try compiler.compile();
+    const errors = compiler.errors.items;
+    try std.testing.expectEqual(3, errors.len);
+    try std.testing.expectEqualStrings("unknown data file type 'recpie'. Did you mean 'recipe'?", errors[0].message);
+    try std.testing.expectEqualStrings("invalid JSON in recipe 'b'", errors[1].message);
+    try std.testing.expectEqual(6, errors[1].line);
+    try std.testing.expectEqualStrings("recipe 'ns:b' is already declared at main.poplar:5", errors[2].message);
+
+    try std.testing.expectEqualStrings("say ns:is_sneaking", program.functions[0].commands[0].raw);
+    const files = program.data_files;
+    try std.testing.expectEqualStrings("predicate", files[0].folder);
+    try std.testing.expectEqualStrings("is_sneaking", files[0].path);
+    try std.testing.expectEqualStrings("minecraft", files[1].namespace);
+    try std.testing.expectEqualStrings("entities/zombie", files[1].path);
+    try std.testing.expectEqualStrings("tags/worldgen/biome", files[2].folder);
+}
+
+test "Minecraft checks in conditions mix with score checks" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try compileForTest(arena.allocator(),
+        \\predicate isSitting { "type": "minecraft:random_chance", "chance": 0.5 }
+        \\var #mana = 0;
+        \\mcfun main() {
+        \\    if (block ~ ~-1 ~ #minecraft:logs and #mana > 5) { /say log; }
+        \\    if (!predicate self:isSitting or entity @s[type=pig]) { /say hi; }
+        \\    if (block ~ ~ ~ stoen) { /say typo; }
+        \\}
+    );
+    const program = try compiler.compile();
+    try std.testing.expectEqual(1, compiler.errors.items.len);
+    try std.testing.expectEqualStrings("unknown block 'stoen'. Did you mean 'stone'?", compiler.errors.items[0].message);
+    try std.testing.expectEqual(21, compiler.errors.items[0].column);
+
+    try std.testing.expectEqualStrings(
+        \\execute if block ~ ~-1 ~ #minecraft:logs if score #global ns.mana matches 6.. run say log
+        \\execute unless predicate ns:is_sitting run return run say hi
+        \\execute if entity @s[type=pig] run return run say hi
+        \\
+    , try renderForTest(arena.allocator(), program, "main"));
+}
+
+test "two namespaces keep their own names, files and scores" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const command_tree = try arena.allocator().create(Commands);
+    command_tree.* = try .load(arena.allocator());
+    var compiler = Self.init(arena.allocator(), command_tree);
+
+    const sources = [_][]const u8{
+        \\namespace ns;
+        \\import magic;
+        \\var #mana = 0;
+        \\mcfun load() { #mana = 1; }
+        \\mcfun heal() { magic:heal(); /function magic:castSpell; /function self:heal; /give @s minecraft:stone; }
+        ,
+        \\namespace magic;
+        \\var #mana = 0;
+        \\mcfun load() { #mana = 2; }
+        \\mcfun heal() { #mana = #mana + 1; }
+        \\mcfun castSpell() { ns:heal(); }
+    };
+    for (sources) |source| {
+        var parser = try Parser.init(arena.allocator(), Lexer.init(source));
+        try compiler.addProgram("main.poplar", try parser.parseProgram(), .project);
+    }
+    const program = try compiler.compile();
+    try std.testing.expectEqual(1, compiler.errors.items.len);
+    try std.testing.expectEqualStrings("namespace 'ns' is not imported. Add 'import ns;'", compiler.errors.items[0].message);
+
+    try std.testing.expectEqualStrings(
+        \\function magic:heal
+        \\function magic:cast_spell
+        \\function ns:heal
+        \\give @s minecraft:stone
+        \\
+    , try renderForTest(arena.allocator(), program, "heal"));
+    try std.testing.expectEqualStrings("scoreboard players add #global magic.mana 1\n", try renderForTest(arena.allocator(), program, "magic:heal"));
+
+    const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
+    try std.testing.expect(std.mem.endsWith(u8, load, "function magic:load\nfunction ns:load\n"));
 }

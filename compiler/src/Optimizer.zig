@@ -323,7 +323,9 @@ fn mentionsInText(command: Ir.Command, name: []const u8) bool {
     return switch (command) {
         .raw, .macro => |text| std.mem.indexOf(u8, text, name) != null,
         .function_with => |call| call.arguments == .compound and std.mem.indexOf(u8, call.arguments.compound, name) != null,
-        .execute => |execute| mentionsInText(execute.run.*, name),
+        .execute => |execute| for (execute.checks) |check| {
+            if (check.score_test == .raw and std.mem.indexOf(u8, check.score_test.raw, name) != null) break true;
+        } else mentionsInText(execute.run.*, name),
         .execute_raw => |execute| std.mem.indexOf(u8, execute.subcommands, name) != null or mentionsInText(execute.run.*, name),
         .store_result => |store| mentionsInText(store.run.*, name),
         .return_run => |run| mentionsInText(run.*, name),
@@ -371,7 +373,7 @@ fn isSetBeforeUse(commands: []const Ir.Command, score: Ir.Score) bool {
 fn runsOtherCode(command: Ir.Command) bool {
     return switch (command) {
         .function, .function_with, .macro, .raw, .execute_raw => true,
-        .execute => |execute| checkedFunction(execute) != null or runsOtherCode(execute.run.*),
+        .execute => |execute| checkedFunction(execute) != null or runsCheckedCode(execute) or runsOtherCode(execute.run.*),
         .store_result => |store| runsOtherCode(store.run.*),
         .return_run => |run| runsOtherCode(run.*),
         else => false,
@@ -543,6 +545,14 @@ fn callsTempReader(command: Ir.Command, temp: Ir.Score) bool {
     return readsTempsOf(name, temp);
 }
 
+// `if function ...` written by the user runs code as part of the check.
+fn runsCheckedCode(execute: Ir.Execute) bool {
+    for (execute.checks) |check| {
+        if (check.score_test == .raw and std.mem.startsWith(u8, check.score_test.raw, "function ")) return true;
+    }
+    return false;
+}
+
 // The function of an `execute if function ...` check.
 fn checkedFunction(execute: Ir.Execute) ?[]const u8 {
     for (execute.checks) |check| {
@@ -555,16 +565,39 @@ fn readsTempsOf(name: []const u8, temp: Ir.Score) bool {
     // A `macro_<n>` helper holds one user command, so it never reads a temp.
     if (std.mem.startsWith(u8, std.fs.path.basenamePosix(name), "macro_")) return false;
 
-    const owner = temp.owner orelse temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?];
+    const function_namespace, const path = splitName(name);
+    // A local knows its mcfun (`combat:heal`). A temp names it in its holder (`#poplar.heal.t0`), in its namespace.
+    const owner_namespace, const owner = if (temp.owner) |owner| splitName(owner) else .{ temp.namespace, temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?] };
+    if (!optionalEql(function_namespace, owner_namespace)) return false;
+
+    // The generated functions of `std/clamp` are in `poplar/std.clamp/`.
+    var folder_buffer: [256]u8 = undefined;
+    if (owner.len > folder_buffer.len) return true;
+    const folder = folder_buffer[0..owner.len];
+    _ = std.mem.replace(u8, owner, "/", ".", folder);
+
     const generated_prefix = "poplar/";
-    return std.mem.startsWith(u8, name, generated_prefix) and
-        std.mem.startsWith(u8, name[generated_prefix.len..], owner) and
-        name.len > generated_prefix.len + owner.len and name[generated_prefix.len + owner.len] == '/';
+    return std.mem.startsWith(u8, path, generated_prefix) and
+        std.mem.startsWith(u8, path[generated_prefix.len..], folder) and
+        path.len > generated_prefix.len + folder.len and path[generated_prefix.len + folder.len] == '/';
+}
+
+// `combat:poplar/heal/if_0` → `combat` and `poplar/heal/if_0`. A name without `:` is in the pack namespace.
+fn splitName(name: []const u8) struct { ?[]const u8, []const u8 } {
+    const colon = std.mem.indexOfScalar(u8, name, ':') orelse return .{ null, name };
+    return .{ name[0..colon], name[colon + 1 ..] };
+}
+
+fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
 }
 
 fn checkReads(check: Ir.Check, score: Ir.Score) bool {
     return switch (check.score_test) {
         .data_test, .function_returns => false,
+        // `score @s ...` in a check written by the user can name any score.
+        .raw => |raw| std.mem.indexOf(u8, raw, score.holder) != null,
         .matches => |matches| matches.score.eql(score),
         .compare => |compare| compare.left.eql(score) or compare.right.eql(score),
     };

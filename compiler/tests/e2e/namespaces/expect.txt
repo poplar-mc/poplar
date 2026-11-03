@@ -1,0 +1,10 @@
+load order 123
+combat heal
+magic heal 1
+combat heal
+spell
+spell
+combat reports 7
+magic heal 2
+clamp 20
+lucky

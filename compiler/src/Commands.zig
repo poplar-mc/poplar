@@ -6,7 +6,7 @@ const commands_json = @embedFile("commands.json");
 const registries_json = @embedFile("registries.json");
 
 // The ids of each registry, without `minecraft:`: `mob_effect` → `absorption`, `bad_omen`, ...
-const Registries = std.json.ArrayHashMap([]const []const u8);
+pub const Registries = std.json.ArrayHashMap([]const []const u8);
 
 pub const Node = struct {
     pub const Kind = enum { root, literal, argument };
@@ -40,12 +40,32 @@ pub fn load(arena: std.mem.Allocator) !Self {
     return .{ .root = root, .registries = registries };
 }
 
-pub fn check(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!?Failure {
-    var walk: Walk = .{ .root = &self.root, .registries = &self.registries, .text = text };
-    if (walk.matchChildren(&self.root, 0)) return null;
+pub const Checked = struct {
+    failure: ?Failure = null,
+    // Each id in an id position (after a `#`), such as `self:heal` in `function self:heal` or `magic:undead`
+    // in `@e[type=#magic:undead]`. Text arguments, such as the message of `say`, have none.
+    ids: []const Id = &.{},
+};
 
-    const failure = walk.furthest orelse return .{ .message = "invalid command", .at = 0 };
-    return .{ .message = try failure.describe(gpa, text, &self.registries), .at = failure.at };
+pub const Id = struct {
+    at: usize,
+    // True where the id names a function or a data file (`function`, `predicate`, a tag). False for other ids,
+    // such as a storage or a bossbar, which are not declared in Poplar.
+    names_declaration: bool,
+};
+
+pub fn check(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!?Failure {
+    return (try self.checkText(gpa, text)).failure;
+}
+
+pub fn checkText(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!Checked {
+    var walk: Walk = .{ .gpa = gpa, .root = &self.root, .registries = &self.registries, .text = text };
+    const matched = walk.matchChildren(&self.root, 0);
+    if (walk.out_of_memory) return error.OutOfMemory;
+    if (matched) return .{ .ids = walk.ids.items };
+
+    const failure = walk.furthest orelse return .{ .failure = .{ .message = "invalid command", .at = 0 } };
+    return .{ .failure = .{ .message = try failure.describe(gpa, text, &self.registries), .at = failure.at } };
 }
 
 const Walk = struct {
@@ -69,10 +89,14 @@ const Walk = struct {
         }
     };
 
+    gpa: std.mem.Allocator,
     root: *const Node,
     registries: *const Registries,
     text: []const u8,
     furthest: ?Problem = null,
+    // Only filled on the path that matches, because each argument adds its ids after the rest matched.
+    ids: std.ArrayList(Id) = .empty,
+    out_of_memory: bool = false,
 
     fn matchChildren(walk: *Walk, node: *const Node, pos: usize) bool {
         const children = node.children orelse return false;
@@ -91,7 +115,10 @@ const Walk = struct {
         for (children.map.values()) |*child| {
             if (child.type != .argument) continue;
             const end = walk.readArgument(child, pos) orelse continue;
-            if (walk.matchAfter(child, end)) return true;
+            if (walk.matchAfter(child, end)) {
+                walk.addIdStarts(child.parser.?, child.properties orelse .{}, pos, end);
+                return true;
+            }
         }
 
         if (has_literal) walk.fail(.{ .at = pos, .expected = if (node == walk.root) "a command" else "a subcommand" });
@@ -118,6 +145,34 @@ const Walk = struct {
     }
 
     // `execute ... run` has no children, no redirect and is not executable. It continues from the root.
+    // `self:heal` or `#magic:swords` in an id argument, and `type=#magic:undead` in a selector.
+    fn addIdStarts(walk: *Walk, parser: []const u8, properties: Properties, start: usize, end: usize) void {
+        const word = walk.text[start..end];
+        if (isIdParser(parser, properties)) {
+            const offset: usize = if (std.mem.startsWith(u8, word, "#")) 1 else 0;
+            walk.addIdStart(start + offset, !eql(parser, "minecraft:resource_location"));
+        } else if (isEntityParser(parser) and std.mem.startsWith(u8, word, "@")) {
+            var quote: ?u8 = null;
+            for (word, 0..) |ch, index| {
+                if (quote) |q| {
+                    if (ch == q) quote = null;
+                    continue;
+                }
+                if (ch == '"' or ch == '\'') quote = ch;
+                if (ch != '=') continue;
+                var value = index + 1;
+                while (value < word.len and (word[value] == '!' or word[value] == '#')) value += 1;
+                walk.addIdStart(start + value, true);
+            }
+        }
+    }
+
+    fn addIdStart(walk: *Walk, at: usize, names_declaration: bool) void {
+        walk.ids.append(walk.gpa, .{ .at = at, .names_declaration = names_declaration }) catch {
+            walk.out_of_memory = true;
+        };
+    }
+
     fn continuation(walk: *Walk, node: *const Node) ?*const Node {
         if (node.redirect) |path| {
             var target = walk.root;
@@ -165,7 +220,7 @@ const Walk = struct {
                 walk.fail(.{ .at = pos, .expected = describeParser(parser), .out_of_range = true });
                 return null;
             }
-        } else if (eql(parser, "minecraft:entity") or eql(parser, "minecraft:game_profile") or eql(parser, "minecraft:score_holder")) {
+        } else if (isEntityParser(parser)) {
             if (isEntity(word)) return end;
         } else if (eql(parser, "minecraft:block_pos") or eql(parser, "minecraft:vec3")) {
             return walk.readCoordinates(pos, 3);
@@ -266,7 +321,7 @@ fn registryOf(parser: []const u8, properties: Properties) ?[]const u8 {
     return null;
 }
 
-// `minecraft:stone[lit=true]` → `stone`. Null for a tag, `*`, or another namespace.
+// `minecraft:stone[lit=true]` → `stone`. Null for a tag, `*`, or another namespace (the pack's own).
 fn registryId(word: []const u8) ?[]const u8 {
     if (word.len == 0 or word[0] == '#' or word[0] == '*') return null;
     const end = std.mem.indexOfAny(u8, word, "[{") orelse word.len;
@@ -277,7 +332,7 @@ fn registryId(word: []const u8) ?[]const u8 {
 }
 
 // The id with the smallest edit distance, if it is 3 or less.
-fn closestId(ids: []const []const u8, id: []const u8) ?[]const u8 {
+pub fn closestId(ids: []const []const u8, id: []const u8) ?[]const u8 {
     var best: ?[]const u8 = null;
     var best_distance: usize = 4;
     for (ids) |candidate| {
@@ -330,6 +385,19 @@ fn isEntity(word: []const u8) bool {
     return word.len == 2 or (word[2] == '[' and word[word.len - 1] == ']');
 }
 
+fn isIdParser(parser: []const u8, properties: Properties) bool {
+    if (isResourceParser(parser) or registryOf(parser, properties) != null) return true;
+    const loot_parsers = [_][]const u8{ "minecraft:loot_predicate", "minecraft:loot_table", "minecraft:loot_modifier" };
+    for (loot_parsers) |loot_parser| {
+        if (eql(parser, loot_parser)) return true;
+    }
+    return false;
+}
+
+fn isEntityParser(parser: []const u8) bool {
+    return eql(parser, "minecraft:entity") or eql(parser, "minecraft:game_profile") or eql(parser, "minecraft:score_holder");
+}
+
 fn isResourceParser(parser: []const u8) bool {
     const resource_parsers = [_][]const u8{
         "minecraft:resource",
@@ -349,6 +417,13 @@ fn isResourceParser(parser: []const u8) bool {
 fn isResourceLocation(word: []const u8) bool {
     const location = if (std.mem.startsWith(u8, word, "#")) word[1..] else word;
     if (location.len == 0) return false;
+    // `self:healPlayer` names a Poplar declaration with a capital. The compiler changes it into the id.
+    if (std.mem.indexOfScalar(u8, location, ':')) |colon| {
+        for (location[colon + 1 ..]) |ch| {
+            if (!std.ascii.isAlphanumeric(ch) and std.mem.indexOfScalar(u8, "_-./", ch) == null) return false;
+        }
+        return isResourceLocation(location[0..colon]);
+    }
 
     for (location) |ch| {
         const valid = std.ascii.isLower(ch) or std.ascii.isDigit(ch) or std.mem.indexOfScalar(u8, "_-.:/", ch) != null;
@@ -372,6 +447,21 @@ fn describeParser(parser: []const u8) []const u8 {
 
 fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+test "finds ids in id arguments and selectors, not in text" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const tree = try load(arena.allocator());
+
+    const text = "execute as @e[type=#self:undead] if predicate self:isSitting run say self:not_an_id";
+    const checked = try tree.checkText(arena.allocator(), text);
+    try std.testing.expectEqual(null, checked.failure);
+    try std.testing.expectEqual(2, checked.ids.len);
+    for (checked.ids) |id| try std.testing.expect(std.mem.startsWith(u8, text[id.at..], "self:undead") or std.mem.startsWith(u8, text[id.at..], "self:isSitting"));
+
+    const storage = try tree.checkText(arena.allocator(), "data get storage self:data x");
+    try std.testing.expect(!storage.ids[0].names_declaration);
 }
 
 test "checks commands against the tree" {

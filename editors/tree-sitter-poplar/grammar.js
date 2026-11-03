@@ -41,13 +41,27 @@ module.exports = grammar({
   word: $ => $.identifier,
 
   rules: {
-    source_file: $ => repeat(choice(
+    source_file: $ => seq(
+      optional($.namespace_declaration),
+      repeat($._declaration),
+    ),
+
+    _declaration: $ => choice(
       $.import_declaration,
       $.variable_declaration,
       $.function_definition,
-    )),
+      $.data_file,
+    ),
 
-    import_declaration: $ => seq('import', field('path', $.string), ';'),
+    // `namespace combat;`, the first statement of a file.
+    namespace_declaration: $ => seq('namespace', field('name', $.namespace_name), ';'),
+
+    import_declaration: $ => seq('import', field('name', $.namespace_name), ';'),
+
+    namespace_name: $ => seq($.identifier, repeat(seq('.', $.identifier))),
+
+    // `magic:heal` or `bs.math:clamp`: a name in another namespace.
+    qualified_name: $ => seq(field('namespace', $.namespace_name), ':', field('name', $.identifier)),
 
     function_definition: $ => seq(
       'mcfun',
@@ -55,6 +69,19 @@ module.exports = grammar({
       field('parameters', $.parameter_list),
       field('body', $.block),
     ),
+
+    // `predicate isSneaking { ...json... }`: a JSON file in the pack. The compiler checks the type word.
+    data_file: $ => seq(
+      field('type', alias($.identifier, $.data_file_type)),
+      field('name', choice($.identifier, $.string)),
+      field('body', choice($.json_object, $.json_array)),
+    ),
+
+    json_object: $ => seq('{', commaSep($.json_pair), '}'),
+    json_pair: $ => seq(field('key', $.string), ':', field('value', $._json_value)),
+    json_array: $ => seq('[', commaSep($._json_value), ']'),
+    _json_value: $ => choice($.json_object, $.json_array, $.string, $.json_number, $.boolean, $.null),
+    json_number: _ => /-?\d+(\.\d+)?([eE][+-]?\d+)?/,
 
     parameter_list: $ => seq('(', commaSep($.parameter), ')'),
 
@@ -130,7 +157,7 @@ module.exports = grammar({
 
     expression_statement: $ => seq($._expression, ';'),
 
-    _variable: $ => choice($.identifier, $.score_variable, $.data_variable, $.entity_score, $.entity_data),
+    _variable: $ => choice($.identifier, $.qualified_name, $.score_variable, $.data_variable, $.entity_score, $.entity_data),
 
     _expression: $ => choice(
       $._variable,
@@ -146,7 +173,15 @@ module.exports = grammar({
       $.list_literal,
       $.compound_literal,
       $.selector,
+      $.minecraft_check,
     ),
+
+    // `block ~ ~-1 ~ stone` in a condition: an `execute if` subcommand as raw text, up to `and`, `or` or `)`.
+    minecraft_check: $ => prec.right(seq(
+      field('kind', alias(/(biome|block|blocks|data|dimension|entity|function|items|loaded|predicate|score|slots|stopwatch)\s/, $.check_kind)),
+      repeat1(choice($.insert, $.selector, $.check_text)),
+    )),
+    check_text: _ => /[^\s(){}@]+|\{[^{\s)]*/,
 
     list_literal: $ => seq('[', commaSep($._expression), ']'),
     compound_literal: $ => seq('{', commaSep($.compound_entry), '}'),
@@ -167,7 +202,7 @@ module.exports = grammar({
     )),
 
     call_expression: $ => prec(PREC.call, seq(
-      field('function', $.identifier),
+      field('function', choice($.identifier, $.qualified_name)),
       field('arguments', $.argument_list),
     )),
 
@@ -195,10 +230,10 @@ module.exports = grammar({
 
     selector: _ => token(seq('@', /[aeprsn]/, optional(seq('[', /[^\]]*/, ']')))),
 
-    score_variable: _ => /#[A-Za-z_][A-Za-z0-9_]*/,
+    score_variable: _ => /#([a-z0-9_.]+:)?[A-Za-z_][A-Za-z0-9_]*/,
 
     // `$stats`, or a path in it: `$stats.inventory[0].count`
-    data_variable: _ => /\$[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\."[^"\n]*"|\[[^\]\n]*\])*/,
+    data_variable: _ => /\$([a-z0-9_.]+:)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\."[^"\n]*"|\[[^\]\n]*\])*/,
 
     identifier: _ => /[A-Za-z_][A-Za-z0-9_]*/,
 

@@ -8,4 +8,5 @@ Each folder is a complete Poplar project. Build one with `poplar build examples/
 | [mana](mana) | Per-player scores, `tick` with `execute (as @a)`, `onTrigger`, `actionBar` and `text()` |
 | [showoff](showoff) | `/trigger showoff`: NBT data, `if` on a data path, `slice`, and macro parameters in a `tellraw` |
 | [deaths](deaths) | `onEvent("deathCount", ...)`, entity and global scores, std `random` and `max`, `title` and `subtitle` |
-| [toolkit](toolkit) | Several files with `import`, recursion, `while` with locals, and the string helpers |
+| [crafting](crafting) | Data files: a recipe that uses an item tag, a vanilla loot table override, a predicate and an advancement reward |
+| [toolkit](toolkit) | Several files in one namespace, recursion, `while` with locals, and the string helpers |

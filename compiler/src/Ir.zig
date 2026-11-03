@@ -2,11 +2,22 @@ const std = @import("std");
 
 pub const NumberType = @import("Ast.zig").NumberType;
 
+// A function name is `ns:path`, or only `path` in the pack namespace (Poplar's own files and the namespace
+// of `poplar.json`). A score or data path with no namespace is in the pack namespace too.
 pub const Program = struct {
     functions: []const McFunction,
     load: ?McFunction,
-    // The mcfun for the `minecraft:tick` tag.
-    tick: ?[]const u8,
+    // The functions of the `minecraft:tick` tag, in order.
+    tick: []const []const u8 = &.{},
+    data_files: []const DataFile = &.{},
+};
+
+// `data/<namespace>/<folder>/<path>.json`, with the JSON as the user wrote it.
+pub const DataFile = struct {
+    namespace: []const u8,
+    folder: []const u8,
+    path: []const u8,
+    json: []const u8,
 };
 
 pub const McFunction = struct {
@@ -19,7 +30,7 @@ pub const Command = union(enum) {
     // The Writer adds the namespace to this mcfun name.
     function: []const u8,
     // Null is the main objective `<ns>`.
-    add_objective: ?[]const u8,
+    add_objective: Objective,
     score_set: ScoreValue,
     score_set_param: ScoreParam,
     score_set_if_unset: ScoreValue,
@@ -81,6 +92,8 @@ pub const DataPath = struct {
 
     holder: Holder,
     path: []const u8,
+    // The namespace of the `<ns>:data` storage.
+    namespace: ?[]const u8 = null,
 
     pub fn inStorage(storage: Storage, key: []const u8) DataPath {
         return .{ .holder = .{ .storage = storage }, .path = key };
@@ -156,15 +169,27 @@ pub const FunctionWith = struct {
 
 // A holder is a fake player (`$hp`, `#poplar.t0`) or a selector (`@s`).
 // A null objective is the main objective `<ns>`. Otherwise it is `<ns>.<objective>`.
+// `<namespace>` (the main objective) or `<namespace>.<name>`.
+pub const Objective = struct {
+    namespace: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+};
+
 pub const Score = struct {
     holder: []const u8,
     objective: ?[]const u8 = null,
+    // The objective is `<namespace>` or `<namespace>.<objective>`.
+    namespace: ?[]const u8 = null,
     // The mcfun of a local variable. Only that mcfun and its generated functions read it. It is not part of `eql`.
     owner: ?[]const u8 = null,
 
     pub fn eql(a: Score, b: Score) bool {
-        const same_objective = if (a.objective) |objective| b.objective != null and std.mem.eql(u8, objective, b.objective.?) else b.objective == null;
-        return same_objective and std.mem.eql(u8, a.holder, b.holder);
+        return optionalEql(a.objective, b.objective) and optionalEql(a.namespace, b.namespace) and std.mem.eql(u8, a.holder, b.holder);
+    }
+
+    fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
+        if (a == null or b == null) return a == null and b == null;
+        return std.mem.eql(u8, a.?, b.?);
     }
 };
 
@@ -205,6 +230,8 @@ pub const ScoreTest = union(enum) {
     data_test: DataPath,
     // `if function ns:<name>` runs the function and passes when it returns a value that is not 0.
     function_returns: []const u8,
+    // A Minecraft check as the user wrote it, such as `block ~ ~-1 ~ stone`.
+    raw: []const u8,
 };
 
 pub const Matches = struct {

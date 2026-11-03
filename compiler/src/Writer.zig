@@ -23,39 +23,47 @@ pub fn writeDatapack(
     , .{ config.description, min.major, min.minor, max.major, max.minor });
     try out_dir.writeFile(io, .{ .sub_path = "pack.mcmeta", .data = pack_mcmeta });
 
-    const function_dir_path = try std.fmt.allocPrint(gpa, "data/{s}/function", .{config.namespace});
-    try out_dir.createDirPath(io, function_dir_path);
-
     for (program.functions) |function| {
-        try writeFunction(io, gpa, out_dir, function_dir_path, config.namespace, function);
+        try writeFunction(io, gpa, out_dir, config.namespace, function);
     }
 
     if (program.load) |load| {
-        try writeFunction(io, gpa, out_dir, function_dir_path, config.namespace, load);
-        try writeFunctionTag(io, gpa, out_dir, "load", config.namespace, load.name);
+        try writeFunction(io, gpa, out_dir, config.namespace, load);
+        try writeFunctionTag(io, gpa, out_dir, "load", config.namespace, &.{load.name});
     }
 
-    if (program.tick) |tick| try writeFunctionTag(io, gpa, out_dir, "tick", config.namespace, tick);
+    if (program.tick.len > 0) try writeFunctionTag(io, gpa, out_dir, "tick", config.namespace, program.tick);
+
+    for (program.data_files) |data_file| {
+        const path = try std.fmt.allocPrint(gpa, "data/{s}/{s}/{s}.json", .{ data_file.namespace, data_file.folder, data_file.path });
+        try out_dir.createDirPath(io, std.fs.path.dirname(path).?);
+        try out_dir.writeFile(io, .{ .sub_path = path, .data = data_file.json });
+    }
 }
 
-// Writes a `minecraft:<tag_name>` function tag with one function in it.
+// Writes a `minecraft:<tag_name>` function tag with the functions in order.
 fn writeFunctionTag(
     io: std.Io,
     gpa: std.mem.Allocator,
     out_dir: std.Io.Dir,
     comptime tag_name: []const u8,
     namespace: []const u8,
-    function_name: []const u8,
+    function_names: []const []const u8,
 ) !void {
     const tag_dir_path = "data/minecraft/tags/function";
     try out_dir.createDirPath(io, tag_dir_path);
 
+    var values: std.ArrayList(u8) = .empty;
+    for (function_names, 0..) |name, index| {
+        if (index > 0) try values.appendSlice(gpa, ", ");
+        try values.print(gpa, "\"{f}\"", .{functionId(namespace, name)});
+    }
     const tag = try std.fmt.allocPrint(gpa,
         \\{{
-        \\    "values": ["{s}:{f}"]
+        \\    "values": [{s}]
         \\}}
         \\
-    , .{ namespace, functionPath(function_name) });
+    , .{values.items});
     try out_dir.writeFile(io, .{ .sub_path = tag_dir_path ++ "/" ++ tag_name ++ ".json", .data = tag });
 }
 
@@ -146,11 +154,11 @@ fn writeFunction(
     io: std.Io,
     gpa: std.mem.Allocator,
     out_dir: std.Io.Dir,
-    function_dir_path: []const u8,
     namespace: []const u8,
     function: Ir.McFunction,
 ) !void {
-    const path = try std.fmt.allocPrint(gpa, "{s}/{f}.mcfunction", .{ function_dir_path, functionPath(function.name) });
+    const function_namespace, const function_path = splitFunctionName(namespace, function.name);
+    const path = try std.fmt.allocPrint(gpa, "data/{s}/function/{f}.mcfunction", .{ function_namespace, functionPath(function_path) });
     try out_dir.createDirPath(io, std.fs.path.dirname(path).?);
 
     const text = try renderFunction(gpa, namespace, function);
@@ -176,8 +184,8 @@ pub fn renderFunction(gpa: std.mem.Allocator, namespace: []const u8, function: I
 fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, command: Ir.Command) !void {
     switch (command) {
         .raw => |command_text| try text.appendSlice(gpa, command_text),
-        .function => |name| try text.print(gpa, "function {s}:{f}", .{ namespace, functionPath(name) }),
-        .add_objective => |objective| try text.print(gpa, "scoreboard objectives add {f} dummy", .{objectiveText(namespace, objective)}),
+        .function => |name| try text.print(gpa, "function {f}", .{functionId(namespace, name)}),
+        .add_objective => |objective| try text.print(gpa, "scoreboard objectives add {f} dummy", .{objectiveText(objective.namespace orelse namespace, objective.name)}),
         .score_set => |set| try text.print(gpa, "scoreboard players set {f} {d}", .{ scoreText(namespace, set.score), set.value }),
         .score_set_if_unset => |set| {
             const score = scoreText(namespace, set.score);
@@ -231,7 +239,7 @@ fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []
             if (copy.scale != 1) try text.print(gpa, " {d}", .{copy.scale});
         },
         .function_with => |call| {
-            try text.print(gpa, "function {s}:{f}", .{ namespace, functionPath(call.name) });
+            try text.print(gpa, "function {f}", .{functionId(namespace, call.name)});
             switch (call.arguments) {
                 .compound => |compound| try text.print(gpa, " {s}", .{compound}),
                 .data_storage => try text.print(gpa, " with storage {s}:data", .{namespace}),
@@ -284,7 +292,8 @@ fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []co
     try text.appendSlice(gpa, if (check.negated) " unless " else " if ");
     switch (check.score_test) {
         .data_test => |path| return text.print(gpa, "data {f}", .{dataPathText(namespace, path)}),
-        .function_returns => |name| return text.print(gpa, "function {s}:{f}", .{ namespace, functionPath(name) }),
+        .function_returns => |name| return text.print(gpa, "function {f}", .{functionId(namespace, name)}),
+        .raw => |raw| return text.appendSlice(gpa, raw),
         else => {},
     }
     try text.appendSlice(gpa, "score ");
@@ -305,7 +314,7 @@ fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []co
             compareText(compare.op),
             scoreText(namespace, compare.right),
         }),
-        .data_test, .function_returns => unreachable,
+        .data_test, .function_returns, .raw => unreachable,
     }
 }
 
@@ -330,6 +339,26 @@ pub fn functionPath(name: []const u8) FunctionPath {
     return .{ .name = name };
 }
 
+// `combat:healPlayer` → `combat:heal_player`. A name without a namespace is in the pack namespace.
+const FunctionId = struct {
+    pack_namespace: []const u8,
+    name: []const u8,
+
+    pub fn format(self: FunctionId, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        const namespace, const path = splitFunctionName(self.pack_namespace, self.name);
+        try writer.print("{s}:{f}", .{ namespace, functionPath(path) });
+    }
+};
+
+fn functionId(pack_namespace: []const u8, name: []const u8) FunctionId {
+    return .{ .pack_namespace = pack_namespace, .name = name };
+}
+
+fn splitFunctionName(pack_namespace: []const u8, name: []const u8) struct { []const u8, []const u8 } {
+    const colon = std.mem.indexOfScalar(u8, name, ':') orelse return .{ pack_namespace, name };
+    return .{ name[0..colon], name[colon + 1 ..] };
+}
+
 // `storage ns:data hp` or `entity @s Health`, the target of `data` and `execute store`.
 const DataPathText = struct {
     namespace: []const u8,
@@ -339,7 +368,7 @@ const DataPathText = struct {
         const path = self.data_path.path;
         switch (self.data_path.holder) {
             .storage => |storage| switch (storage) {
-                .data => try writer.print("storage {s}:data {s}", .{ self.namespace, path }),
+                .data => try writer.print("storage {s}:data {s}", .{ self.data_path.namespace orelse self.namespace, path }),
                 .args => try writer.print("storage {s}:poplar args.{s}", .{ self.namespace, path }),
                 .frame => try writer.print("storage {s}:poplar stack[-1].{s}", .{ self.namespace, path }),
                 .poplar => try writer.print("storage {s}:poplar {s}", .{ self.namespace, path }),
@@ -376,7 +405,7 @@ const ScoreText = struct {
     score: Ir.Score,
 
     pub fn format(self: ScoreText, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("{s} {f}", .{ self.score.holder, objectiveText(self.namespace, self.score.objective) });
+        try writer.print("{s} {f}", .{ self.score.holder, objectiveText(self.score.namespace orelse self.namespace, self.score.objective) });
     }
 };
 
@@ -418,7 +447,7 @@ test "writes functions and tags" {
             .{ .name = "main", .commands = &.{ .{ .raw = "say hi" }, .{ .function = "other" } } },
         },
         .load = .{ .name = "poplar/load", .commands = &.{.{ .score_set_if_unset = .{ .score = .{ .holder = "$hp" }, .value = 20 } }} },
-        .tick = "main",
+        .tick = &.{"main"},
     };
     const config: Config = .{
         .zip_name = "demo",
@@ -426,7 +455,6 @@ test "writes functions and tags" {
         .description = "\"Demo\"",
         .min_format = .{ .major = 121 },
         .max_format = .{ .major = 121 },
-        .entry = "main.poplar",
     };
     try writeDatapack(io, arena.allocator(), tmp.dir, config, program);
 

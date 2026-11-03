@@ -5,7 +5,9 @@
 Poplar is a programming language that compiles to Minecraft Java datapacks.
 
 ```poplar
-import "std";
+namespace deaths;
+
+import std;
 
 var #deaths = 0;
 
@@ -15,7 +17,7 @@ mcfun load() {
 
 mcfun playerDied() {
     #deaths = #deaths + 1;
-    tellraw(@a, ["Deaths: ", text(#deaths)]);
+    std:tellraw(@a, ["Deaths: ", text(#deaths)]);
 }
 ```
 

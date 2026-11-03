@@ -1,4 +1,3 @@
-// The Poplar standard library. `import "std";` in a project loads this file.
-// An mcfun here is only written into the pack when the project calls it.
-import "math.poplar";
-import "text.poplar";
+// The Poplar standard library. `import std;` in a project loads every file here, and `std:clamp(...)` calls one.
+// An mcfun here is only written into the pack when the project calls it, as `<pack namespace>:std/<name>`.
+namespace std;

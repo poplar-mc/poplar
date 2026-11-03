@@ -6,7 +6,10 @@ const Ast = @import("Ast.zig");
 const Commands = @import("Commands.zig");
 const Compiler = @import("Compiler.zig");
 const Config = @import("Config.zig");
+const DataFile = @import("DataFile.zig");
 const Environment = @import("Environment.zig");
+const Lexer = @import("Lexer.zig");
+const Parser = @import("Parser.zig");
 const Project = @import("Project.zig");
 const Token = @import("Token.zig");
 
@@ -51,8 +54,8 @@ const builtins = [_]Builtin{
     .{ .name = "remove", .signature = "remove($list, index)", .doc = "Removes the value at an index. The index is a compile-time int." },
     .{ .name = "len", .signature = "len(value)", .doc = "The size of a list, compound or string." },
     .{ .name = "text", .signature = "text(value)", .doc = "A text part that names a score or data. The game reads the value when it shows the text." },
-    .{ .name = "onEvent", .signature = "onEvent(criteria, callback)", .doc = "Runs the mcfun `callback` as a player each time the criteria counts for that player. Only in `mcfun load` of the entry file." },
-    .{ .name = "onTrigger", .signature = "onTrigger(name, callback)", .doc = "Makes `/trigger name` run the mcfun `callback` as the player who used it. Only in `mcfun load` of the entry file." },
+    .{ .name = "onEvent", .signature = "onEvent(criteria, callback)", .doc = "Runs the mcfun `callback` as a player each time the criteria counts for that player. Only in `mcfun load`." },
+    .{ .name = "onTrigger", .signature = "onTrigger(name, callback)", .doc = "Makes `/trigger name` run the mcfun `callback` as the player who used it. Only in `mcfun load`." },
     .{ .name = "slice", .signature = "slice(text, start, end)", .doc = "A substring: from `start` (included) to `end` (not included, optional). Negative bounds count from the end. One `data modify ... set string` command." },
     .{ .name = "str", .signature = "str(value)", .doc = "A number, score or math as a string: `$label = str(#kills);`." },
     .{ .name = "startsWith", .signature = "startsWith(text, \"prefix\")", .doc = "A condition: the text starts with a constant prefix." },
@@ -195,7 +198,7 @@ pub fn @"textDocument/hover"(self: *Self, arena: std.mem.Allocator, params: lsp.
     const text = self.documents.get(params.textDocument.uri) orelse return null;
     const word = wordAt(text, lsp.offsets.positionToIndex(text, params.position, self.offset_encoding)) orelse return null;
     const place = try placeOf(arena, analysis, params.textDocument.uri, params.position);
-    const markdown = try self.describe(arena, analysis, word, place) orelse return null;
+    const markdown = try self.describe(arena, analysis, text, word, place) orelse return null;
     return .{ .contents = .{ .markup_content = .{ .kind = .markdown, .value = markdown } } };
 }
 
@@ -211,13 +214,19 @@ pub fn @"textDocument/definition"(self: *Self, arena: std.mem.Allocator, params:
         .data => .data,
         else => null,
     };
-    const local = if (local_kind) |kind| try findLocal(arena, compiler, place, kind, Compiler.pathRoot(word.text)) else null;
+    const local = if (local_kind != null and word.namespace == null) try findLocal(arena, compiler, place, local_kind.?, Compiler.pathRoot(word.text)) else null;
+    const key = try wordKey(arena, compiler, text, word, Compiler.pathRoot(word.text));
 
     const display_path: []const u8, const line: usize = if (local) |found| .{ found.path, found.line } else switch (word.kind) {
-        .score => if (compiler.globals.get(word.text)) |global| .{ global.path, global.line } else return null,
-        .data => if (compiler.data_globals.get(Compiler.pathRoot(word.text))) |global| .{ global.path, global.line } else return null,
+        .score => if (compiler.globals.get(key)) |global| .{ global.path, global.line } else return null,
+        .data => if (compiler.data_globals.get(key)) |global| .{ global.path, global.line } else return null,
         .entity_data => return null,
-        .name => if (compiler.functions.get(word.text)) |located| .{ located.path, located.function.line } else return null,
+        .name => if (compiler.functions.get(key)) |located|
+            .{ located.path, located.function.line }
+        else if (compiler.named_data_files.get(key)) |data_file|
+            .{ data_file.path, data_file.line }
+        else
+            return null,
     };
     const position: lsp.types.Position = .{ .line = @intCast(line -| 1), .character = 0 };
     return .{ .definition = .{ .location = .{
@@ -254,17 +263,31 @@ pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params:
             }
         },
         else => {
+            // A word at the start of a line, with no indent, is likely at the top level.
+            if (start == 0 or text[start - 1] == '\n') {
+                for (DataFile.folders.keys()) |word| try items.append(arena, .{ .label = word, .kind = .Keyword, .detail = "data file" });
+            }
             for (Token.Keywords.keys()) |keyword| try items.append(arena, .{ .label = keyword, .kind = .Keyword });
             for (builtins) |each| try items.append(arena, .{ .label = each.name, .kind = .Function, .detail = each.signature });
             if (compiler) |found| {
+                const own = try std.fmt.allocPrint(arena, "{s}:", .{try documentNamespace(arena, text) orelse found.namespace});
+                var data_files = found.named_data_files.iterator();
+                while (data_files.next()) |entry| {
+                    try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Constant, .detail = entry.value_ptr.id });
+                }
                 var functions = found.functions.iterator();
                 while (functions.next()) |entry| {
-                    try items.append(arena, .{ .label = entry.key_ptr.*, .kind = .Function, .detail = try signature(arena, entry.value_ptr.function) });
+                    try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Function, .detail = try signature(arena, entry.value_ptr.function) });
                 }
             }
         },
     }
     return .{ .completion_items = items.items };
+}
+
+// A name of this namespace without its `ns:`, any other with it: `heal`, `magic:fireball`.
+fn completionLabel(key: []const u8, own_prefix: []const u8) []const u8 {
+    return if (std.mem.startsWith(u8, key, own_prefix)) key[own_prefix.len..] else key;
 }
 
 // The server sends no requests, so no response is expected.
@@ -398,6 +421,8 @@ const Word = struct {
     kind: enum { name, score, data, entity_data },
     // Without the sigil. A data path goes up to the end of the part under the cursor: `stats.maxHp`.
     text: []const u8,
+    // `magic` in `magic:heal` or `#magic:mana`.
+    namespace: ?[]const u8 = null,
 };
 
 // The name under the cursor, with its sigil: `#hp`, `$stats.maxHp`, `@s.$Health` or `clamp`.
@@ -410,12 +435,36 @@ fn wordAt(text: []const u8, index: usize) ?Word {
 
     var path_start = start;
     while (path_start > 0 and isPathChar(text[path_start - 1])) path_start -= 1;
-    if (path_start > 0 and text[path_start - 1] == '$') {
-        const is_entity = path_start > 1 and text[path_start - 2] == '.';
-        return .{ .kind = if (is_entity) .entity_data else .data, .text = text[path_start..end] };
+    const path_namespace, const path_sigil = namespaceBefore(text, path_start);
+    if (path_sigil > 0 and text[path_sigil - 1] == '$') {
+        const is_entity = path_namespace == null and path_sigil > 1 and text[path_sigil - 2] == '.';
+        return .{ .kind = if (is_entity) .entity_data else .data, .text = text[path_start..end], .namespace = path_namespace };
     }
-    if (start > 0 and text[start - 1] == '#') return .{ .kind = .score, .text = text[start..end] };
-    return .{ .kind = .name, .text = text[start..end] };
+    const namespace, const sigil = namespaceBefore(text, start);
+    if (sigil > 0 and text[sigil - 1] == '#') return .{ .kind = .score, .text = text[start..end], .namespace = namespace };
+    return .{ .kind = .name, .text = text[start..end], .namespace = namespace };
+}
+
+// `magic:` right before `start`: the namespace, and where it starts. Otherwise null and `start`.
+fn namespaceBefore(text: []const u8, start: usize) struct { ?[]const u8, usize } {
+    if (start == 0 or text[start - 1] != ':') return .{ null, start };
+    var namespace_start = start - 1;
+    while (namespace_start > 0 and (std.ascii.isLower(text[namespace_start - 1]) or std.ascii.isDigit(text[namespace_start - 1]) or text[namespace_start - 1] == '_' or text[namespace_start - 1] == '.')) namespace_start -= 1;
+    if (namespace_start == start - 1) return .{ null, start };
+    return .{ text[namespace_start .. start - 1], namespace_start };
+}
+
+// The namespace of a document: its `namespace` line.
+fn documentNamespace(arena: std.mem.Allocator, text: []const u8) !?[]const u8 {
+    var parser = try Parser.init(arena, Lexer.init(text));
+    const program = try parser.parseProgram();
+    return if (program.namespace) |namespace| namespace.name else null;
+}
+
+// `combat:heal`: how the compiler keys the declaration that `word` names.
+fn wordKey(arena: std.mem.Allocator, compiler: *const Compiler, text: []const u8, word: Word, name: []const u8) ![]const u8 {
+    const namespace = word.namespace orelse try documentNamespace(arena, text) orelse compiler.namespace;
+    return std.fmt.allocPrint(arena, "{s}:{s}", .{ namespace, name });
 }
 
 fn isNameChar(char: u8) bool {
@@ -470,7 +519,7 @@ fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Pla
 }
 
 // The hover text for a word, in Markdown.
-fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, word: Word, place: Place) !?[]const u8 {
+fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, text: []const u8, word: Word, place: Place) !?[]const u8 {
     if (word.kind == .entity_data) {
         return try std.fmt.allocPrint(arena, "Entity NBT `{s}`. The compiler does not check the path.", .{word.text});
     }
@@ -480,24 +529,28 @@ fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, word: Wo
         }
     }
     const compiler = analysis.result.compiler orelse return null;
+    const key = try wordKey(arena, compiler, text, word, Compiler.pathRoot(word.text));
     switch (word.kind) {
         .score => {
-            if (try findLocal(arena, compiler, place, .score, word.text)) |local| {
-                return try std.fmt.allocPrint(arena, "```poplar\nvar #{s}\n```\nA local in `{s}`: the fake player `{s}` in the objective `{s}`.", .{ word.text, local.local.owner, local.local.generated_name, compiler.namespace });
-            }
-            const global = compiler.globals.get(word.text) orelse return null;
-            return try std.fmt.allocPrint(arena, "```poplar\nvar #{s} = {d};\n```\nA score in the objective `{s}.{s}`.", .{ word.text, global.initial_value, compiler.namespace, word.text });
+            if (word.namespace == null) if (try findLocal(arena, compiler, place, .score, word.text)) |local| {
+                return try std.fmt.allocPrint(arena, "```poplar\nvar #{s}\n```\nA local in `{s}`: the fake player `{s}`.", .{ word.text, local.local.owner, local.local.generated_name });
+            };
+            const global = compiler.globals.get(key) orelse return null;
+            return try std.fmt.allocPrint(arena, "```poplar\nvar #{s} = {d};\n```\nA score in the objective `{s}.{s}`.", .{ word.text, global.initial_value, global.output_namespace orelse compiler.namespace, global.name });
         },
         .data => {
             const root = Compiler.pathRoot(word.text);
-            if (try findLocal(arena, compiler, place, .data, root)) |local| {
-                return try std.fmt.allocPrint(arena, "```poplar\nvar ${s}\n```\nA local in `{s}`: the key `{s}` in the storage `{s}:data`.", .{ root, local.local.owner, local.local.generated_name, compiler.namespace });
-            }
-            const global = compiler.data_globals.get(root) orelse return null;
-            return try std.fmt.allocPrint(arena, "```poplar\nvar ${s} = {s};\n```\nIn the storage `{s}:data`.", .{ root, global.initial_snbt, compiler.namespace });
+            if (word.namespace == null) if (try findLocal(arena, compiler, place, .data, root)) |local| {
+                return try std.fmt.allocPrint(arena, "```poplar\nvar ${s}\n```\nA local in `{s}`: the key `{s}`.", .{ root, local.local.owner, local.local.generated_name });
+            };
+            const global = compiler.data_globals.get(key) orelse return null;
+            return try std.fmt.allocPrint(arena, "```poplar\nvar ${s} = {s};\n```\nIn the storage `{s}:data`.", .{ root, global.initial_snbt, global.output_namespace orelse compiler.namespace });
         },
         .name => {
-            const located = compiler.functions.get(word.text) orelse return null;
+            if (compiler.named_data_files.get(key)) |data_file| {
+                return try std.fmt.allocPrint(arena, "```poplar\n{s} {s}\n```\nThe data file `{s}`.", .{ data_file.type_word, word.text, data_file.id });
+            }
+            const located = compiler.functions.get(key) orelse return null;
             const source = try self.textOf(arena, try analysis.absolutePath(located.path));
             const doc = try docComment(arena, source, located.function.line);
             return try std.fmt.allocPrint(arena, "```poplar\n{s}\n```\n{s}", .{ try signature(arena, located.function), doc });
@@ -651,13 +704,13 @@ test "an open document with an error gets a diagnostic, and loses it when it is 
     var server: Self = .init(std.testing.allocator, io, &transport.transport, "no-std");
     defer server.deinit();
 
-    try server.@"textDocument/didOpen"(arena.allocator(), .{ .textDocument = .{ .uri = uri, .languageId = .{ .custom_value = "poplar" }, .version = 1, .text = "mcfun f() {\n  #nope = 1;\n}\n" } });
-    try std.testing.expect(std.mem.indexOf(u8, transport.written.written(), "\"range\":{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":1,\"character\":7}}") != null);
+    try server.@"textDocument/didOpen"(arena.allocator(), .{ .textDocument = .{ .uri = uri, .languageId = .{ .custom_value = "poplar" }, .version = 1, .text = "namespace test;\nmcfun f() {\n  #nope = 1;\n}\n" } });
+    try std.testing.expect(std.mem.indexOf(u8, transport.written.written(), "\"range\":{\"start\":{\"line\":2,\"character\":2},\"end\":{\"line\":2,\"character\":7}}") != null);
 
     transport.written.clearRetainingCapacity();
     try server.@"textDocument/didChange"(arena.allocator(), .{
         .textDocument = .{ .uri = uri, .version = 2 },
-        .contentChanges = &.{.{ .text_document_content_change_whole_document = .{ .text = "mcfun f() {}\n" } }},
+        .contentChanges = &.{.{ .text_document_content_change_whole_document = .{ .text = "namespace test;\nmcfun f() {}\n" } }},
     });
     try std.testing.expect(std.mem.indexOf(u8, transport.written.written(), "\"diagnostics\":[]") != null);
 }

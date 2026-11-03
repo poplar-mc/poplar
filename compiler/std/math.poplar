@@ -1,3 +1,5 @@
+namespace std;
+
 // Math on ints. Each one is an mcfun, so a call is a real function call.
 // They use parameters and recursion, not global scores, so std adds no objectives to a pack.
 

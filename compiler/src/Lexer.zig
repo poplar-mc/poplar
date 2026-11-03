@@ -11,6 +11,10 @@ line: usize = 1,
 line_start: usize = 0,
 token_start: usize = 0,
 previous_type: ?Token.TokenType = null,
+// The number of `{` that are open, so that a `{` or `[` at the top level after a name starts a data file body.
+brace_depth: usize = 0,
+// The open `(` of an `if` or `while` condition, counted from its first `(`. Zero outside a condition.
+condition_paren_depth: usize = 0,
 
 pub fn init(input: []const u8) Self {
     var l = Self{
@@ -48,12 +52,25 @@ fn readToken(self: *Self) Token {
     switch (self.ch) {
         '(' => {
             if (self.previous_type == .execute) return self.readExecuteSubcommands();
+            const opens_condition = self.previous_type == .@"if" or self.previous_type == .@"while";
+            if (opens_condition or self.condition_paren_depth > 0) self.condition_paren_depth += 1;
             tok = self.newToken(.left_paren, "(");
         },
         '@' => return self.readSelector(),
-        ')' => tok = self.newToken(.right_paren, ")"),
-        '{' => tok = self.newToken(.left_brace, "{"),
-        '}' => tok = self.newToken(.right_brace, "}"),
+        ')' => {
+            self.condition_paren_depth -|= 1;
+            tok = self.newToken(.right_paren, ")");
+        },
+        '{' => {
+            const after_name = self.previous_type == .identifier or self.previous_type == .string;
+            if (self.brace_depth == 0 and after_name) return self.readJsonBody();
+            self.brace_depth += 1;
+            tok = self.newToken(.left_brace, "{");
+        },
+        '}' => {
+            self.brace_depth -|= 1;
+            tok = self.newToken(.right_brace, "}");
+        },
         ',' => tok = self.newToken(.comma, ","),
         '.' => {
             if (self.previous_type == .selector and self.peekChar() == '$') return self.readEntityDataPath();
@@ -65,15 +82,29 @@ fn readToken(self: *Self) Token {
             }
         },
         '|' => tok = self.newToken(.pipe, "|"),
-        '[' => tok = self.newToken(.left_bracket, "["),
+        '[' => {
+            const after_name = self.previous_type == .identifier or self.previous_type == .string;
+            if (self.brace_depth == 0 and after_name) return self.readJsonBody();
+            tok = self.newToken(.left_bracket, "[");
+        },
         ']' => tok = self.newToken(.right_bracket, "]"),
         ':' => tok = self.newToken(.colon, ":"),
         '$', '#' => {
             const token_type: Token.TokenType = if (self.ch == '#') .score_identifier else .data_identifier;
             if (isLetter(self.peekChar())) {
                 self.readChar();
-                if (token_type == .data_identifier) return self.readDataPath(.data_identifier);
-                return self.newToken(token_type, self.readIdentifier());
+                // `#magic:mana` and `$magic:item.count` name a variable of another namespace.
+                const start = self.pos;
+                while (isLetter(self.ch) or std.ascii.isDigit(self.ch) or self.ch == '.') self.readChar();
+                if (self.ch == ':' and isLetter(self.peekChar())) {
+                    self.readChar();
+                } else {
+                    self.readPos = start;
+                    self.readChar();
+                }
+                if (token_type == .data_identifier) return self.readDataPathFrom(start);
+                _ = self.readIdentifier();
+                return self.newToken(token_type, self.input[start..self.pos]);
             }
             tok = self.newToken(.illegal, self.input[self.pos .. self.pos + 1]);
         },
@@ -127,6 +158,7 @@ fn readToken(self: *Self) Token {
         },
         else => {
             if (isLetter(self.ch)) {
+                if (self.startsConditionCheck()) return self.newToken(.condition_text, self.readConditionText());
                 const literal = self.readIdentifier();
                 return self.newToken(Token.Keywords.get(literal) orelse .identifier, literal);
             } else if (std.ascii.isDigit(self.ch)) {
@@ -209,7 +241,15 @@ fn readEntityDataPath(self: *Self) Token {
 // Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not followed
 // by a key ends the path, so `$a..` is still a range.
 fn readDataPath(self: *Self, token_type: Token.TokenType) Token {
-    const start = self.pos;
+    return self.readDataPathAt(token_type, self.pos);
+}
+
+fn readDataPathFrom(self: *Self, start: usize) Token {
+    return self.readDataPathAt(.data_identifier, start);
+}
+
+// `start` is where the token text starts, which can be before the current character (a `ns:` prefix).
+fn readDataPathAt(self: *Self, token_type: Token.TokenType, start: usize) Token {
     var depth: usize = 0;
     var quote: ?u8 = null;
 
@@ -239,6 +279,100 @@ fn readDataPath(self: *Self, token_type: Token.TokenType) Token {
     if (depth > 0) return self.newToken(.unclosed, "]");
     if (self.pos == start) return self.newToken(.illegal, ".$");
     return self.newToken(token_type, self.input[start..self.pos]);
+}
+
+// The `execute if` subcommands of Minecraft 26.3. In a condition, `block ~ ~-1 ~ stone` is raw text.
+const condition_words = std.StaticStringMap(void).initComptime(.{
+    .{"biome"}, .{"block"},   .{"blocks"},    .{"data"},  .{"dimension"}, .{"entity"},    .{"function"},
+    .{"items"}, .{"loaded"},  .{"predicate"}, .{"score"}, .{"slots"},     .{"stopwatch"},
+});
+
+// A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a space and
+// something that is not an operator. So `block == 1` and `(block)` still read `block` as a name.
+fn startsConditionCheck(self: *Self) bool {
+    if (self.condition_paren_depth == 0) return false;
+    const previous = self.previous_type orelse return false;
+    if (previous != .left_paren and previous != .@"and" and previous != .@"or" and previous != .bang) return false;
+
+    var end = self.pos;
+    while (end < self.input.len and isLetter(self.input[end])) end += 1;
+    if (!condition_words.has(self.input[self.pos..end])) return false;
+    if (end >= self.input.len or self.input[end] != ' ') return false;
+    while (end < self.input.len and self.input[end] == ' ') end += 1;
+    if (end >= self.input.len) return false;
+    return std.mem.indexOfScalar(u8, "=<>!)+-*/%,;", self.input[end]) == null;
+}
+
+// Reads to the `)` that closes the condition part, or to an `and` or `or` word, outside brackets and quotes.
+fn readConditionText(self: *Self) []const u8 {
+    const start = self.pos;
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+    while (self.ch != '\n' and self.ch != '\x00') : (self.readChar()) {
+        if (quote) |q| {
+            if (self.ch == '\\') {
+                self.readChar();
+            } else if (self.ch == q) {
+                quote = null;
+            }
+            continue;
+        }
+        switch (self.ch) {
+            '"', '\'' => quote = self.ch,
+            '[', '{', '(' => depth += 1,
+            ']', '}' => depth -|= 1,
+            ')' => if (depth == 0) break else {
+                depth -= 1;
+            },
+            ' ' => if (depth == 0 and (self.isWordAhead("and") or self.isWordAhead("or"))) break,
+            else => {},
+        }
+    }
+    return std.mem.trimEnd(u8, self.input[start..self.pos], " ");
+}
+
+fn isWordAhead(self: *Self, word: []const u8) bool {
+    const start = self.pos + 1;
+    const end = start + word.len;
+    if (end > self.input.len or !std.mem.eql(u8, self.input[start..end], word)) return false;
+    return end == self.input.len or !isLetter(self.input[end]) and !std.ascii.isDigit(self.input[end]);
+}
+
+// Reads `{ ... }` or `[ ... ]` over many lines, to the bracket that closes the first one. Braces in JSON strings do not count.
+fn readJsonBody(self: *Self) Token {
+    const start = self.pos;
+    const start_line = self.line;
+    const start_column = self.token_start - self.line_start + 1;
+    var depth: usize = 0;
+    var in_string = false;
+
+    while (self.ch != '\x00') : (self.readChar()) {
+        if (self.ch == '\n') {
+            self.line += 1;
+            self.line_start = self.pos + 1;
+        }
+        if (in_string) {
+            if (self.ch == '\\') {
+                self.readChar();
+            } else if (self.ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        switch (self.ch) {
+            '"' => in_string = true,
+            '{', '[' => depth += 1,
+            '}', ']' => {
+                depth -|= 1;
+                if (depth == 0) {
+                    self.readChar();
+                    return Token.init(.json_body, self.input[start..self.pos], start_line, start_column);
+                }
+            },
+            else => {},
+        }
+    }
+    return Token.init(.unclosed, "}", start_line, start_column);
 }
 
 // Reads up to `end` outside quotes and brackets, or up to the end of the line.
@@ -336,6 +470,35 @@ fn peekCharAt(self: *Self, distance: usize) u8 {
     if (index >= self.input.len) return '\x00';
 
     return self.input[index];
+}
+
+test "reads a Minecraft check in a condition up to 'and'" {
+    var l = Self.init("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)");
+    try std.testing.expectEqual(.@"if", l.nextToken().type);
+    try std.testing.expectEqual(.left_paren, l.nextToken().type);
+    const check = l.nextToken();
+    try std.testing.expectEqual(.condition_text, check.type);
+    try std.testing.expectEqualStrings("block ~ ~-1 ~ stone[a=b]", check.literal);
+    try std.testing.expectEqual(.@"and", l.nextToken().type);
+    for (0..8) |_| _ = l.nextToken();
+    try std.testing.expectEqual(.identifier, l.nextToken().type);
+}
+
+test "reads a data file body over many lines" {
+    var l = Self.init("predicate p {\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}\nmcfun");
+    try std.testing.expectEqual(.identifier, l.nextToken().type);
+    try std.testing.expectEqual(.identifier, l.nextToken().type);
+    const body = l.nextToken();
+    try std.testing.expectEqual(.json_body, body.type);
+    try std.testing.expectEqualStrings("{\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}", body.literal);
+    const after = l.nextToken();
+    try std.testing.expectEqual(.mcfun, after.type);
+    try std.testing.expectEqual(5, after.line);
+
+    var unclosed = Self.init("recipe r { \"a\": 1");
+    _ = unclosed.nextToken();
+    _ = unclosed.nextToken();
+    try std.testing.expectEqual(.unclosed, unclosed.nextToken().type);
 }
 
 test "skips comments" {

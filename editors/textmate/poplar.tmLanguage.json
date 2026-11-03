@@ -9,6 +9,9 @@
       "include": "#comment"
     },
     {
+      "include": "#data-file"
+    },
+    {
       "include": "#command"
     },
     {
@@ -123,6 +126,70 @@
         }
       ]
     },
+    "data-file": {
+      "comment": "`predicate isSneaking { ...json... }` (or a JSON list) at the top level",
+      "begin": "^([a-z][A-Za-z0-9]*)\\s+([A-Za-z_][A-Za-z0-9_]*|\"[^\"]*\")\\s*([\\{\\[])",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.data-file.poplar"
+        },
+        "2": {
+          "name": "entity.name.constant.poplar"
+        },
+        "3": {
+          "name": "punctuation.section.braces.begin.poplar"
+        }
+      },
+      "end": "[\\}\\]]",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.braces.end.poplar"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#json"
+        }
+      ]
+    },
+    "json": {
+      "patterns": [
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#json"
+            }
+          ]
+        },
+        {
+          "begin": "\\[",
+          "end": "\\]",
+          "patterns": [
+            {
+              "include": "#json"
+            }
+          ]
+        },
+        {
+          "name": "support.type.property-name.json.poplar",
+          "match": "\"(?:[^\"\\\\]|\\\\.)*\"(?=\\s*:)"
+        },
+        {
+          "name": "string.quoted.double.json.poplar",
+          "match": "\"(?:[^\"\\\\]|\\\\.)*\""
+        },
+        {
+          "name": "constant.numeric.json.poplar",
+          "match": "-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?"
+        },
+        {
+          "name": "constant.language.json.poplar",
+          "match": "\\b(?:true|false|null)\\b"
+        }
+      ]
+    },
     "declaration": {
       "begin": "\\b(mcfun)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
       "beginCaptures": {
@@ -162,12 +229,15 @@
           "include": "#string"
         },
         {
+          "include": "#minecraft-check"
+        },
+        {
           "name": "storage.type.poplar",
           "match": "\\b(mcfun|var)\\b"
         },
         {
           "name": "keyword.control.import.poplar",
-          "match": "\\bimport\\b"
+          "match": "\\b(import|namespace)\\b"
         },
         {
           "name": "keyword.control.poplar",
@@ -184,6 +254,11 @@
         {
           "name": "support.type.poplar",
           "match": "(?<=\\bas)\\s*\\b(byte|short|int|long|float|double)\\b"
+        },
+        {
+          "comment": "`magic` in `magic:heal()`, and the name in `namespace combat;` / `import magic;`",
+          "name": "entity.name.namespace.poplar",
+          "match": "\\b[a-z0-9_.]+(?=:[A-Za-z_])|(?<=\\bnamespace |\\bimport )[a-z0-9_.]+"
         },
         {
           "name": "support.function.builtin.poplar",
@@ -206,11 +281,11 @@
         },
         {
           "name": "variable.language.score.poplar",
-          "match": "#[A-Za-z_][A-Za-z0-9_]*"
+          "match": "#(?:[a-z0-9_.]+:)?[A-Za-z_][A-Za-z0-9_]*"
         },
         {
           "name": "variable.other.property.data.poplar",
-          "match": "\\$(?:\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)(?:\\.(?:\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)|\\[[^\\]]*\\])*"
+          "match": "\\$(?:[a-z0-9_.]+:)?(?:\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)(?:\\.(?:\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)|\\[[^\\]]*\\])*"
         },
         {
           "name": "variable.other.property.key.poplar",
@@ -248,6 +323,25 @@
     "selector": {
       "name": "entity.name.tag.selector.poplar",
       "match": "@[aeprsn](?:\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])?"
+    },
+    "minecraft-check": {
+      "comment": "`if (block ~ ~-1 ~ stone and ...)`: an `execute if` subcommand as raw text",
+      "begin": "(?<=[(!]|\\band |\\bor )\\s*\\b(biome|block|blocks|data|dimension|entity|function|items|loaded|predicate|score|slots|stopwatch)\\s+(?=[^\\s=<>!)+*/%.,;])",
+      "beginCaptures": {
+        "1": {
+          "name": "support.function.check.poplar"
+        }
+      },
+      "end": "(?=\\s+(?:and|or)\\b|\\))",
+      "contentName": "string.unquoted.check.poplar",
+      "patterns": [
+        {
+          "include": "#insert"
+        },
+        {
+          "include": "#selector"
+        }
+      ]
     }
   }
 }

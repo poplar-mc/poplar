@@ -1,4 +1,6 @@
-import "std";
+namespace language;
+
+import std;
 
 var #x = 0;
 var #loaded = 0;
@@ -131,14 +133,14 @@ mcfun test() {
     oddSum();
     show("odd sum", #sum);
     show("square", firstSquareOver(50));
-    show("abs", abs(-5));
-    show("clamp", clamp(30, 0, 20));
-    show("sqrt", sqrt(50));
-    show("pow", pow(2, 10));
-    show("random", random(5, 5));
-    #x = random(10, 20);
+    show("abs", std:abs(-5));
+    show("clamp", std:clamp(30, 0, 20));
+    show("sqrt", std:sqrt(50));
+    show("pow", std:pow(2, 10));
+    show("random", std:random(5, 5));
+    #x = std:random(10, 20);
     if (#x >= 10 and #x <= 20) { /say random in range; }
-    show("minmax", min(3, max(1, 2)));
+    show("minmax", std:min(3, std:max(1, 2)));
 
     /summon marker 0 0 0 {Tags:["poplar_e2e"]};
     execute (as @e[type=marker,tag=poplar_e2e]) {
@@ -192,6 +194,12 @@ mcfun test() {
     if (endsWith($sid, "stone")) { /say wrong suffix; }
     var $tiny = "x";
     if (!startsWith($tiny, "minecraft:")) { /say short ok; }
+    /execute if predicate {{alwaysTrue}} run say predicate ok;
+    /execute unless predicate language:checks/never run say string id ok;
+    /function #self:greeters;
+    if (dimension minecraft:overworld and #x > 0) { /say in overworld; }
+    if (!entity @e[tag=poplar_none] or #x > 1000) { /say no entity; }
+    if (dimension minecraft:the_nether) { /say wrong dimension; } else { /say not nether; }
 }
 
 // A failed copy must not leave the value of an earlier call: locals are removed when the mcfun ends.
@@ -206,4 +214,18 @@ mcfun sumDown(n) {
     if (n <= 0) { return 0; }
     var #rest = sumDown(n - 1);
     return #here * 10 + #rest;
+}
+
+// Data files: the server must load them for the predicate and the tag to work.
+predicate alwaysTrue { "type": "minecraft:random_chance", "chance": 1.0 }
+
+predicate "checks/never" {
+  "type": "minecraft:random_chance",
+  "chance": 0.0
+}
+
+functionTag greeters { "values": ["language:greet"] }
+
+mcfun greet() {
+    /say tag ok;
 }

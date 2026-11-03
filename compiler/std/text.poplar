@@ -1,4 +1,6 @@
-// Text for players. Each one is an mcfun, so other packs can call it too: `function <ns>:tellraw {target:"@a",message:"..."}`.
+namespace std;
+
+// Text for players. Each one is an mcfun, so other packs can call it too: `function <pack>:std/tellraw {target:"@a",message:"..."}`.
 // `message` is a text component: a compound or a list of parts, `["HP: ", text(#hp)]`. A plain string is inserted
 // without quotes, as in any macro, so write `{text: "hi"}` or `"\"hi\""`.
 

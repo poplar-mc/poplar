@@ -36,6 +36,10 @@ pub const TokenType = enum {
     command,
     selector,
     execute_subcommands,
+    // `block ~ ~-1 ~ stone` in an `if` or `while` condition: an `execute if` subcommand as raw text.
+    condition_text,
+    // The JSON body of a data file, from `{` or `[` to the matching bracket.
+    json_body,
     string,
     number,
     @"and",
@@ -46,6 +50,8 @@ pub const TokenType = enum {
     execute,
     false,
     mcfun,
+    namespace,
+    self,
     @"for",
     @"if",
     import,
@@ -57,7 +63,7 @@ pub const TokenType = enum {
     @"while",
     eof,
     illegal,
-    // A string, `(` or `[` that is not closed. The literal is the missing character.
+    // A string, `(`, `[` or JSON body that is not closed. The literal is the missing character.
     unclosed,
 };
 
@@ -71,6 +77,8 @@ pub const Keywords = std.StaticStringMap(TokenType).initComptime(.{
     .{ "false", .false },
     .{ "for", .@"for" },
     .{ "mcfun", .mcfun },
+    .{ "namespace", .namespace },
+    .{ "self", .self },
     .{ "if", .@"if" },
     .{ "import", .import },
     .{ "null", .null },

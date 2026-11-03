@@ -48,6 +48,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -57,6 +61,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -100,6 +108,10 @@
           },
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -153,6 +165,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -162,6 +178,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -233,6 +253,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -242,6 +266,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -365,6 +393,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -374,6 +406,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -482,6 +518,10 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "qualified_name",
+            "named": true
           }
         ]
       }
@@ -546,6 +586,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -555,6 +599,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -674,6 +722,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -683,6 +735,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -769,6 +825,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -778,6 +838,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -803,6 +867,50 @@
     "type": "continue_statement",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "data_file",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "json_array",
+            "named": true
+          },
+          {
+            "type": "json_object",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "data_file_type",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "entity_data",
@@ -939,6 +1047,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -948,6 +1060,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -1038,6 +1154,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -1047,6 +1167,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -1112,6 +1236,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -1121,6 +1249,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -1223,12 +1355,12 @@
     "type": "import_declaration",
     "named": true,
     "fields": {
-      "path": {
+      "name": {
         "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "string",
+            "type": "namespace_name",
             "named": true
           }
         ]
@@ -1284,6 +1416,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -1293,6 +1429,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -1312,6 +1452,102 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "json_array",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "json_array",
+          "named": true
+        },
+        {
+          "type": "json_number",
+          "named": true
+        },
+        {
+          "type": "json_object",
+          "named": true
+        },
+        {
+          "type": "null",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "json_object",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "json_pair",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "json_pair",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "boolean",
+            "named": true
+          },
+          {
+            "type": "json_array",
+            "named": true
+          },
+          {
+            "type": "json_number",
+            "named": true
+          },
+          {
+            "type": "json_object",
+            "named": true
+          },
+          {
+            "type": "null",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1363,6 +1599,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -1372,6 +1612,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -1388,6 +1632,71 @@
         },
         {
           "type": "unary_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "minecraft_check",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "check_kind",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "check_text",
+          "named": true
+        },
+        {
+          "type": "insert",
+          "named": true
+        },
+        {
+          "type": "selector",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "namespace_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "namespace_name",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "namespace_name",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
           "named": true
         }
       ]
@@ -1478,6 +1787,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -1487,6 +1800,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -1506,6 +1823,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "qualified_name",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "namespace": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "namespace_name",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1557,6 +1900,10 @@
           "named": true
         },
         {
+          "type": "minecraft_check",
+          "named": true
+        },
+        {
           "type": "null",
           "named": true
         },
@@ -1566,6 +1913,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "qualified_name",
           "named": true
         },
         {
@@ -1597,11 +1948,19 @@
       "required": false,
       "types": [
         {
+          "type": "data_file",
+          "named": true
+        },
+        {
           "type": "function_definition",
           "named": true
         },
         {
           "type": "import_declaration",
+          "named": true
+        },
+        {
+          "type": "namespace_declaration",
           "named": true
         },
         {
@@ -1660,6 +2019,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -1669,6 +2032,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -1730,6 +2097,10 @@
             "named": true
           },
           {
+            "type": "qualified_name",
+            "named": true
+          },
+          {
             "type": "score_variable",
             "named": true
           }
@@ -1780,6 +2151,10 @@
             "named": true
           },
           {
+            "type": "minecraft_check",
+            "named": true
+          },
+          {
             "type": "null",
             "named": true
           },
@@ -1789,6 +2164,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_name",
             "named": true
           },
           {
@@ -1942,6 +2321,14 @@
     "named": false
   },
   {
+    "type": "check_kind",
+    "named": true
+  },
+  {
+    "type": "check_text",
+    "named": true
+  },
+  {
     "type": "command_name",
     "named": true
   },
@@ -1957,6 +2344,10 @@
   {
     "type": "continue",
     "named": false
+  },
+  {
+    "type": "data_file_type",
+    "named": true
   },
   {
     "type": "data_path",
@@ -2007,11 +2398,19 @@
     "named": false
   },
   {
+    "type": "json_number",
+    "named": true
+  },
+  {
     "type": "long",
     "named": false
   },
   {
     "type": "mcfun",
+    "named": false
+  },
+  {
+    "type": "namespace",
     "named": false
   },
   {

@@ -1,4 +1,7 @@
 // `/trigger fib` prints the first Fibonacci numbers. `fib` calls itself; Poplar saves what each call needs.
+namespace toolkit;
+
+import std;
 
 mcfun fib(n) {
     if (n < 2) {
@@ -11,7 +14,7 @@ mcfun showFibonacci() {
     var #i = 0;
     while (#i <= 10) {
         var #value = fib(#i);
-        tellraw(@s, ["fib(", text(#i), ") = ", text(#value)]);
+        std:tellraw(@s, ["fib(", text(#i), ") = ", text(#value)]);
         #i = #i + 1;
     }
 }

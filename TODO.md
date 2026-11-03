@@ -27,6 +27,10 @@
 - [x] Any runtime value in `{{...}}`: scores, math, value calls, entity data
 - [x] Entity NBT (`@s.$path`), reads and writes, and `as <type>` for the NBT type
 - [x] Registry checks for commands (unknown effects, items, blocks) from mcmeta `registries/data.json`, with a suggestion
+- [x] Namespaces: `namespace x;` in every file, `import x;`, `ns:name`, `self:` ids in commands, `load`/`tick` per namespace, std copied into the pack
+- [x] Minecraft checks in `if`/`while` conditions: `if (block ~ ~-1 ~ #minecraft:logs and #mana > 5)`
+- [ ] Game values (`{{#x}}`, `{{$x}}`) in a Minecraft check in a condition
+- [x] Data files: `predicate name { json }`, `lootTable "minecraft:..." { json }`, tags and worldgen, with the JSON written as it is
 
 ## 4. Larger projects
 - [x] CLI with zli: `poplar new`, `init`, `build`, `check`, `watch`, `--version`

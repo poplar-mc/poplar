@@ -47,3 +47,9 @@ str 42
 nested 26
 starts
 short ok
+predicate ok
+string id ok
+tag ok
+in overworld
+no entity
+not nether

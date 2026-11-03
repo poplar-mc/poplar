@@ -1,3 +1,5 @@
+namespace fib;
+
 var #result = 0;
 var $result = 0;
 

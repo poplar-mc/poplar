@@ -34,8 +34,6 @@ namespace: []const u8,
 description: []const u8,
 min_format: PackFormat,
 max_format: PackFormat,
-// Relative to `src/`.
-entry: []const u8,
 
 // The Minecraft version that the command data comes from.
 const McmetaVersion = struct { name: []const u8, data_pack_version: u32, data_pack_version_minor: u32 };
@@ -71,7 +69,6 @@ pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8
     var description: ?[]const u8 = null;
     var min_format: ?PackFormat = null;
     var max_format: ?PackFormat = null;
-    var entry: []const u8 = "src/main.poplar";
 
     if (try reader.next() != .object_begin) return reader.fail("poplar.json must be a JSON object", .{});
     while (true) {
@@ -94,11 +91,11 @@ pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8
         } else if (std.mem.eql(u8, field, "maxFormat")) {
             max_format = try reader.readFormat(field);
         } else if (std.mem.eql(u8, field, "entry")) {
-            entry = try reader.readString(field);
+            return reader.fail("\"entry\" was removed: every .poplar file in src/ is built. Remove the field", .{});
         } else if (std.mem.eql(u8, field, "zip")) {
             return reader.fail("\"zip\" was removed: every build now writes poplar-out/<zipName>.zip. Remove the field", .{});
         } else {
-            return reader.fail("unknown field '{s}'. Fields: zipName, namespace, description, minFormat, maxFormat, entry", .{field});
+            return reader.fail("unknown field '{s}'. Fields: zipName, namespace, description, minFormat, maxFormat", .{field});
         }
     }
 
@@ -108,14 +105,11 @@ pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8
         .description = description orelse try std.json.Stringify.valueAlloc(arena, zip_name orelse folder_name, .{}),
         .min_format = min_format orelse latest,
         .max_format = max_format orelse min_format orelse latest,
-        .entry = entry,
     };
     return config.validate(arena, namespace != null, problem);
 }
 
 fn validate(config: Self, arena: std.mem.Allocator, has_namespace: bool, problem: *Problem) ParseError!Self {
-    var result = config;
-
     if (config.zip_name.len == 0 or std.mem.indexOfAny(u8, config.zip_name, "/\\") != null) {
         return failWithoutPosition(arena, problem, "\"zipName\" '{s}' must not be empty or contain '/' or '\\'", .{config.zip_name});
     }
@@ -131,14 +125,7 @@ fn validate(config: Self, arena: std.mem.Allocator, has_namespace: bool, problem
     if (config.max_format.lessThan(config.min_format)) {
         return failWithoutPosition(arena, problem, "\"maxFormat\" must not be less than \"minFormat\"", .{});
     }
-
-    const source_prefix = "src/";
-    const entry = try std.fs.path.resolvePosix(arena, &.{config.entry});
-    if (!std.mem.startsWith(u8, entry, source_prefix)) {
-        return failWithoutPosition(arena, problem, "\"entry\" '{s}' must be inside src/", .{config.entry});
-    }
-    result.entry = entry[source_prefix.len..];
-    return result;
+    return config;
 }
 
 pub fn isValidResourceName(name: []const u8) bool {
@@ -244,7 +231,6 @@ test "parses poplar.json" {
     try std.testing.expectEqualStrings("hello", defaults.namespace);
     try std.testing.expectEqualStrings("\"hello\"", defaults.description);
     try std.testing.expectEqual(121, defaults.max_format.major);
-    try std.testing.expectEqualStrings("main.poplar", defaults.entry);
 
     const full = try parse(arena.allocator(),
         \\{
@@ -253,14 +239,12 @@ test "parses poplar.json" {
         \\  "namespace": "demo",
         \\  "description": {"text": "Hi", "color": "green"},
         \\  "minFormat": [101, 1],
-        \\  "maxFormat": 121,
-        \\  "entry": "src/game/start.poplar"
+        \\  "maxFormat": 121
         \\}
     , "hello", latest, &problem);
     try std.testing.expectEqualStrings("My Pack", full.zip_name);
     try std.testing.expectEqualStrings("{\"text\":\"Hi\",\"color\":\"green\"}", full.description);
     try std.testing.expectEqual(1, full.min_format.minor);
-    try std.testing.expectEqualStrings("game/start.poplar", full.entry);
 
     try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\"zip\": true}", "hello", latest, &problem));
     try std.testing.expect(std.mem.startsWith(u8, problem.message, "\"zip\" was removed"));

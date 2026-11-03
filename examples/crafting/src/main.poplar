@@ -1,0 +1,37 @@
+// Data files are JSON, so output from a generator such as misode.github.io pastes in as it is.
+namespace crafting;
+
+import std;
+
+// Any stick-like item works in the recipe below.
+itemTag handles { "values": ["minecraft:stick", "minecraft:blaze_rod", "minecraft:breeze_rod"] }
+
+// The name `handles` is the id `crafting:handles`. A tag in a recipe starts with `#`.
+recipe cheapTrident {
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": { "D": "minecraft:diamond", "H": "#crafting:handles" },
+  "pattern": ["  D", " H ", "H  "],
+  "result": { "id": "minecraft:trident" }
+}
+
+// A string id replaces a vanilla file: zombies now drop a diamond.
+lootTable "minecraft:entities/zombie" {
+  "type": "minecraft:entity",
+  "pools": [{ "rolls": 1, "entries": [{ "type": "minecraft:item", "name": "minecraft:diamond" }] }]
+}
+
+predicate lucky { "type": "minecraft:random_chance", "chance": 0.25 }
+
+// The reward runs the mcfun `firstTrident`, written as its function id.
+advancement craftedTrident {
+  "criteria": {
+    "trident": { "trigger": "minecraft:inventory_changed", "conditions": { "items": [{ "items": "minecraft:trident" }] } }
+  },
+  "rewards": { "function": "crafting:first_trident" }
+}
+
+mcfun firstTrident() {
+    std:tellraw(@s, {text: "You crafted a trident!", color: "aqua"});
+    if (predicate self:lucky) { /give @s minecraft:diamond; }
+}

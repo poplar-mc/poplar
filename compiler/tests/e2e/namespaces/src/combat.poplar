@@ -1,0 +1,20 @@
+namespace combat;
+
+import magic;
+
+var #mana = 0;
+
+predicate isLucky { "type": "minecraft:random_chance", "chance": 1.0 }
+
+mcfun load() {
+    #magic:order = #magic:order * 10 + 2;
+}
+
+mcfun heal() {
+    /say combat heal;
+}
+
+mcfun report() {
+    /say combat reports {{#mana}};
+    if (predicate self:isLucky) { magic:heal(); }
+}

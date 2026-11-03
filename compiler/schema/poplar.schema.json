@@ -18,7 +18,7 @@
     "namespace": {
       "type": "string",
       "pattern": "^[a-z0-9_.-]+$",
-      "description": "The datapack namespace (a-z, 0-9, _ . -). Default: the project folder name."
+      "description": "The pack namespace (a-z, 0-9, _ . -), for Poplar's own files (poplar/load, poplar/tick) and the standard library. Each file names its own namespace with 'namespace x;'. Default: the project folder name."
     },
     "description": {
       "description": "The pack description in pack.mcmeta. Any text component: a string, an object such as {\"text\": \"Hi\", \"color\": \"green\"}, or an array. Default: zipName.",
@@ -35,11 +35,6 @@
     "maxFormat": {
       "$ref": "#/definitions/packFormat",
       "description": "The newest data pack format that the pack supports. Not less than minFormat. Default: minFormat."
-    },
-    "entry": {
-      "type": "string",
-      "pattern": "^src/",
-      "description": "The entry file. It must be inside src/. Default: src/main.poplar."
     }
   },
   "definitions": {

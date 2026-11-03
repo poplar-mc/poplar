@@ -1,4 +1,5 @@
 // The smallest pack: a greeting when the pack loads.
+namespace hello;
 
 var #loads = 0;
 

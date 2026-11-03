@@ -1,0 +1,208 @@
+// One data file of each type. Each tag names the sample of its type, so the server fails to start
+// when a sample is missing or in the wrong folder. Each sample is the smallest vanilla file of its type (26.3).
+namespace datafiles;
+
+advancement "sample" {"criteria": {"impossible": {"trigger": "minecraft:impossible"}}, "requirements": [["impossible"]]}
+advancementTag "all" {"values": ["datafiles:sample"]}
+
+bannerPattern "sample" {"asset_id": "minecraft:base", "translation_key": "block.minecraft.banner.base"}
+bannerPatternTag "all" {"values": ["datafiles:sample"]}
+
+blockTransformer "sample" [{"block_state_provider": {"type": "minecraft:rule_based", "rules": [{"if_true": {"type": "minecraft:all_of", "predicates": [{"type": "minecraft:matching_block_tag", "tag": "minecraft:turns_into_dirt_path"}, {"type": "minecraft:matching_block_tag", "offset": [0, 1, 0], "tag": "minecraft:air"}]}, "then": {"id": "minecraft:dirt_path"}}]}, "disallowed_faces": ["down"], "item_damage_per_use": 1, "sound": "minecraft:item.shovel.flatten"}]
+blockTransformerTag "all" {"values": ["datafiles:sample"]}
+
+catSoundVariant "sample" {"adult_sounds": {"ambient_sound": "minecraft:entity.cat.ambient", "beg_for_food_sound": "minecraft:entity.cat.beg_for_food", "death_sound": "minecraft:entity.cat.death", "eat_sound": "minecraft:entity.cat.eat", "hiss_sound": "minecraft:entity.cat.hiss", "hurt_sound": "minecraft:entity.cat.hurt", "purr_sound": "minecraft:entity.cat.purr", "purreow_sound": "minecraft:entity.cat.purreow", "stray_ambient_sound": "minecraft:entity.cat.stray_ambient"}, "baby_sounds": {"ambient_sound": "minecraft:entity.baby_cat.ambient", "beg_for_food_sound": "minecraft:entity.baby_cat.beg_for_food", "death_sound": "minecraft:entity.baby_cat.death", "eat_sound": "minecraft:entity.baby_cat.eat", "hiss_sound": "minecraft:entity.baby_cat.hiss", "hurt_sound": "minecraft:entity.baby_cat.hurt", "purr_sound": "minecraft:entity.baby_cat.purr", "purreow_sound": "minecraft:entity.baby_cat.purreow", "stray_ambient_sound": "minecraft:entity.baby_cat.stray_ambient"}}
+catSoundVariantTag "all" {"values": ["datafiles:sample"]}
+
+catVariant "sample" {"asset_id": "minecraft:entity/cat/cat_red", "baby_asset_id": "minecraft:entity/cat/cat_red_baby", "spawn_conditions": [{"priority": 0}]}
+catVariantTag "all" {"values": ["datafiles:sample"]}
+
+chatType "sample" {"chat": {"parameters": ["sender", "content"], "translation_key": "chat.type.emote"}, "narration": {"parameters": ["sender", "content"], "translation_key": "chat.type.emote"}}
+chatTypeTag "all" {"values": ["datafiles:sample"]}
+
+chickenSoundVariant "sample" {"adult_sounds": {"ambient_sound": "minecraft:entity.chicken.ambient", "death_sound": "minecraft:entity.chicken.death", "hurt_sound": "minecraft:entity.chicken.hurt", "step_sound": "minecraft:entity.chicken.step"}, "baby_sounds": {"ambient_sound": "minecraft:entity.baby_chicken.ambient", "death_sound": "minecraft:entity.baby_chicken.death", "hurt_sound": "minecraft:entity.baby_chicken.hurt", "step_sound": "minecraft:entity.baby_chicken.step"}}
+chickenSoundVariantTag "all" {"values": ["datafiles:sample"]}
+
+chickenVariant "sample" {"asset_id": "minecraft:entity/chicken/chicken_temperate", "baby_asset_id": "minecraft:entity/chicken/chicken_temperate_baby", "spawn_conditions": [{"priority": 0}]}
+chickenVariantTag "all" {"values": ["datafiles:sample"]}
+
+contextFloatProvider "sample" {"type": "minecraft:conditional", "condition": "minecraft:block/fast_cooking", "on_false": "minecraft:cooking/normal_speed_multiplier", "on_true": "minecraft:cooking/fast_speed_multiplier"}
+contextFloatProviderTag "all" {"values": ["datafiles:sample"]}
+
+contextIntProvider "sample" {"type": "minecraft:div", "left": 50, "right": {"type": "minecraft:conditional", "condition": "minecraft:block/fast_cooking", "on_false": "minecraft:cooking/normal_burn_time_reduction_factor", "on_true": "minecraft:cooking/fast_burn_time_reduction_factor"}}
+contextIntProviderTag "all" {"values": ["datafiles:sample"]}
+
+cowSoundVariant "sample" {"ambient_sound": "minecraft:entity.cow.ambient", "death_sound": "minecraft:entity.cow.death", "hurt_sound": "minecraft:entity.cow.hurt", "step_sound": "minecraft:entity.cow.step"}
+cowSoundVariantTag "all" {"values": ["datafiles:sample"]}
+
+cowVariant "sample" {"asset_id": "minecraft:entity/cow/cow_temperate", "baby_asset_id": "minecraft:entity/cow/cow_temperate_baby", "spawn_conditions": [{"priority": 0}]}
+cowVariantTag "all" {"values": ["datafiles:sample"]}
+
+damageType "sample" {"exhaustion": 0.1, "message_id": "explosion", "scaling": "always"}
+damageTypeTag "all" {"values": ["datafiles:sample"]}
+
+decoratedPotPattern "sample" {"asset_id": "minecraft:burn_pottery_pattern"}
+decoratedPotPatternTag "all" {"values": ["datafiles:sample"]}
+
+dialog "sample" {"type": "minecraft:server_links", "button_width": 310, "columns": 1, "exit_action": {"label": {"translate": "gui.back"}, "width": 200}, "external_title": {"translate": "menu.server_links"}, "title": {"translate": "menu.server_links.title"}}
+dialogTag "all" {"values": ["datafiles:sample"]}
+
+dimension "sample" {"type": "minecraft:the_end", "generator": {"type": "minecraft:noise", "biome_source": {"type": "minecraft:the_end"}, "settings": "minecraft:end"}}
+dimensionTag "all" {"values": ["datafiles:sample"]}
+
+dimensionType "sample" {"ambient_light": 0.25, "attributes": {"minecraft:audio/ambient_sounds": {"mood": {"block_search_extent": 8, "offset": 2.0, "sound": "minecraft:ambient.cave", "tick_delay": 6000}}, "minecraft:audio/background_music": {"default": {"max_delay": 24000, "min_delay": 6000, "replace_current_music": true, "sound": "minecraft:music.end"}}, "minecraft:gameplay/bed_rule": {"can_set_spawn": "never", "can_sleep": "never", "destroy_on_use": true}, "minecraft:gameplay/respawn_anchor_works": false, "minecraft:gameplay/straw_bed_rule": {"can_set_spawn": "never", "can_sleep": "never", "destroy_on_use": true}, "minecraft:visual/ambient_light_color": "#3f473f", "minecraft:visual/fog_color": "#181318", "minecraft:visual/sky_color": "#000000", "minecraft:visual/sky_light_color": "#ac60cd", "minecraft:visual/sky_light_factor": 0.0}, "coordinate_scale": 1.0, "default_clock": "minecraft:the_end", "has_ceiling": false, "has_ender_dragon_fight": true, "has_fixed_time": true, "has_skylight": true, "height": 256, "infiniburn": "#minecraft:infiniburn_end", "logical_height": 256, "min_y": 0, "monster_spawn_block_light_limit": 0, "monster_spawn_light_level": 15, "skybox": "end", "timelines": "#minecraft:in_end"}
+dimensionTypeTag "all" {"values": ["datafiles:sample"]}
+
+enchantment "sample" {"anvil_cost": 4, "description": {"translate": "enchantment.minecraft.fortune"}, "exclusive_set": "#minecraft:exclusive_set/mining", "max_cost": {"base": 65, "per_level_above_first": 9}, "max_level": 3, "min_cost": {"base": 15, "per_level_above_first": 9}, "slots": ["mainhand"], "supported_items": "#minecraft:enchantable/mining_loot", "weight": 2}
+enchantmentTag "all" {"values": ["datafiles:sample"]}
+
+enchantmentProvider "sample" {"type": "minecraft:single", "enchantment": "minecraft:piercing", "level": 1}
+enchantmentProviderTag "all" {"values": ["datafiles:sample"]}
+
+frogVariant "sample" {"asset_id": "minecraft:entity/frog/frog_temperate", "spawn_conditions": [{"priority": 0}]}
+frogVariantTag "all" {"values": ["datafiles:sample"]}
+
+instrument "sample" {"description": {"translate": "instrument.minecraft.call_goat_horn"}, "range": 256.0, "sound_event": "minecraft:item.goat_horn.sound.5", "use_duration": 7.0}
+instrumentTag "all" {"values": ["datafiles:sample"]}
+
+itemModifier "sample" {"type": "minecraft:set_count", "count": 5}
+
+jukeboxSong "sample" {"comparator_output": 15, "description": {"translate": "jukebox_song.minecraft.5"}, "length_in_seconds": 178.0, "sound_event": "minecraft:music_disc.5"}
+jukeboxSongTag "all" {"values": ["datafiles:sample"]}
+
+lootTable "sample" {"type": "minecraft:block", "random_sequence": "minecraft:blocks/cake"}
+lootTableTag "all" {"values": ["datafiles:sample"]}
+
+paintingVariant "sample" {"asset_id": "minecraft:fire", "height": 2, "title": {"color": "yellow", "translate": "painting.minecraft.fire.title"}, "width": 2}
+paintingVariantTag "all" {"values": ["datafiles:sample"]}
+
+pigSoundVariant "sample" {"adult_sounds": {"ambient_sound": "minecraft:entity.pig.ambient", "death_sound": "minecraft:entity.pig.death", "eat_sound": "minecraft:entity.pig.eat", "hurt_sound": "minecraft:entity.pig.hurt", "step_sound": "minecraft:entity.pig.step"}, "baby_sounds": {"ambient_sound": "minecraft:entity.baby_pig.ambient", "death_sound": "minecraft:entity.baby_pig.death", "eat_sound": "minecraft:entity.baby_pig.eat", "hurt_sound": "minecraft:entity.baby_pig.hurt", "step_sound": "minecraft:entity.baby_pig.step"}}
+pigSoundVariantTag "all" {"values": ["datafiles:sample"]}
+
+pigVariant "sample" {"asset_id": "minecraft:entity/pig/pig_temperate", "baby_asset_id": "minecraft:entity/pig/pig_temperate_baby", "spawn_conditions": [{"priority": 0}]}
+pigVariantTag "all" {"values": ["datafiles:sample"]}
+
+predicate "sample" {"type": "minecraft:random_chance", "chance": 1.0}
+predicateTag "all" {"values": ["datafiles:sample"]}
+
+recipe "sample" {"type": "minecraft:crafting_shapeless", "ingredients": ["minecraft:dirt"], "result": {"id": "minecraft:diamond"}}
+recipeTag "all" {"values": ["datafiles:sample"]}
+
+sulfurCubeArchetype "sample" {"attribute_modifiers": [{"amount": -2.0, "attribute": "minecraft:knockback_resistance", "id": "minecraft:sticky_add_knockback_resistance", "operation": "add_value"}, {"amount": -2.0, "attribute": "minecraft:explosion_knockback_resistance", "id": "minecraft:sticky_add_explosion_knockback_resistance", "operation": "add_value"}, {"amount": 0.0, "attribute": "minecraft:bounciness", "id": "minecraft:sticky_add_bounciness", "operation": "add_value"}, {"amount": 1.0, "attribute": "minecraft:friction_modifier", "id": "minecraft:sticky_mul_friction_modifier", "operation": "add_multiplied_total"}, {"amount": -0.9900000002235174, "attribute": "minecraft:air_drag_modifier", "id": "minecraft:sticky_mul_air_drag_modifier", "operation": "add_multiplied_total"}], "items": "#minecraft:sulfur_cube_archetype/sticky", "knockback_modifiers": {"horizontal_power": 0.4125, "vertical_power": 0.09}, "sound_settings": {"hit_sound": "minecraft:entity.sulfur_cube.sticky.hit", "push_sound": "minecraft:entity.sulfur_cube.sticky.push", "push_sound_cooldown": 0.5, "push_sound_impulse_threshold": 0.05}}
+sulfurCubeArchetypeTag "all" {"values": ["datafiles:sample"]}
+
+testEnvironment "sample" {"type": "minecraft:all_of", "definitions": []}
+testEnvironmentTag "all" {"values": ["datafiles:sample"]}
+
+testInstance "sample" {"type": "minecraft:function", "environment": "minecraft:default", "function": "minecraft:always_pass", "max_ticks": 1, "required": false, "setup_ticks": 1, "structure": "minecraft:empty"}
+testInstanceTag "all" {"values": ["datafiles:sample"]}
+
+timeline "sample" {"clock": "minecraft:overworld", "tracks": {"minecraft:gameplay/can_pillager_patrol_spawn": {"keyframes": [{"ticks": 0, "value": false}, {"ticks": 120000, "value": true}], "modifier": "and"}}}
+timelineTag "all" {"values": ["datafiles:sample"]}
+
+tradeSet "sample" {"amount": 2, "random_sequence": "minecraft:trade_set/mason/level_1", "trades": "#minecraft:mason/level_1"}
+tradeSetTag "all" {"values": ["datafiles:sample"]}
+
+trialSpawner "sample" {"simultaneous_mobs_added_per_player": 0.5, "spawn_potentials": [{"data": {"entity": {"IsBaby": 1, "id": "minecraft:zombie"}}, "weight": 1}], "ticks_between_spawn": 20}
+trialSpawnerTag "all" {"values": ["datafiles:sample"]}
+
+trimMaterial "sample" {"description": {"color": "#DEB12D", "translate": "trim_material.minecraft.gold"}, "palette_id": "minecraft:trim/gold"}
+trimMaterialTag "all" {"values": ["datafiles:sample"]}
+
+trimPattern "sample" {"asset_id": "minecraft:eye", "decal": false, "description": {"translate": "trim_pattern.minecraft.eye"}}
+trimPatternTag "all" {"values": ["datafiles:sample"]}
+
+villagerTrade "sample" {"gives": {"id": "minecraft:pumpkin"}, "reputation_discount": 0.05, "wants": {"id": "minecraft:emerald"}}
+villagerTradeTag "all" {"values": ["datafiles:sample"]}
+
+wolfSoundVariant "sample" {"adult_sounds": {"ambient_sound": "minecraft:entity.wolf.ambient", "death_sound": "minecraft:entity.wolf.death", "growl_sound": "minecraft:entity.wolf.growl", "hurt_sound": "minecraft:entity.wolf.hurt", "pant_sound": "minecraft:entity.wolf.pant", "step_sound": "minecraft:entity.wolf.step", "whine_sound": "minecraft:entity.wolf.whine"}, "baby_sounds": {"ambient_sound": "minecraft:entity.baby_wolf.ambient", "death_sound": "minecraft:entity.baby_wolf.death", "growl_sound": "minecraft:entity.baby_wolf.growl", "hurt_sound": "minecraft:entity.baby_wolf.hurt", "pant_sound": "minecraft:entity.baby_wolf.pant", "step_sound": "minecraft:entity.baby_wolf.step", "whine_sound": "minecraft:entity.baby_wolf.whine"}}
+wolfSoundVariantTag "all" {"values": ["datafiles:sample"]}
+
+wolfVariant "sample" {"assets": {"angry": "minecraft:entity/wolf/wolf_angry", "tame": "minecraft:entity/wolf/wolf_tame", "wild": "minecraft:entity/wolf/wolf"}, "baby_assets": {"angry": "minecraft:entity/wolf/wolf_angry_baby", "tame": "minecraft:entity/wolf/wolf_tame_baby", "wild": "minecraft:entity/wolf/wolf_baby"}, "spawn_conditions": [{"priority": 0}]}
+wolfVariantTag "all" {"values": ["datafiles:sample"]}
+
+worldClock "sample" {}
+worldClockTag "all" {"values": ["datafiles:sample"]}
+
+zombieNautilusVariant "sample" {"asset_id": "minecraft:entity/nautilus/zombie_nautilus", "spawn_conditions": [{"priority": 0}]}
+zombieNautilusVariantTag "all" {"values": ["datafiles:sample"]}
+
+biome "sample" {"attributes": {"minecraft:gameplay/natural_mob_spawns": {"argument": {"spawn_costs": {}, "spawns_by_category": {"monster": [{"type": "minecraft:enderman", "count": 4, "weight": 10}]}}, "modifier": "overlay"}}, "carvers": [], "downfall": 0.5, "effects": {"water_color": "#3f76e4"}, "features": [], "has_precipitation": false, "temperature": 0.5}
+biomeTag "all" {"values": ["datafiles:sample"]}
+
+blockStateProvider "sample" {"type": "minecraft:weighted", "entries": [{"data": "minecraft:cave_vines_plant", "weight": 4}, {"data": {"id": "minecraft:cave_vines_plant", "properties": {"berries": "true"}}, "weight": 1}]}
+blockStateProviderTag "all" {"values": ["datafiles:sample"]}
+
+carver "sample" {"type": "minecraft:cave", "count": {"type": "minecraft:very_biased_to_bottom", "max_inclusive": 9, "min_inclusive": 0}, "floor_level": -0.7, "horizontal_radius_multiplier": 1.0, "probability": 0.2, "room_vertical_radius_multiplier": 0.5, "start_vertical_radius_multiplier": 5.0, "thickness": {"type": "minecraft:trapezoid", "max": 6.0, "min": 0.0, "plateau": 2.0}, "vertical_radius_multiplier": 1.0, "y": {"type": "minecraft:uniform", "max_inclusive": {"below_top": 1}, "min_inclusive": {"absolute": 0}}}
+carverTag "all" {"values": ["datafiles:sample"]}
+
+densityFunction "sample" {"type": "minecraft:cache", "input": {"type": "minecraft:shift_a", "noise": "minecraft:offset"}}
+densityFunctionTag "all" {"values": ["datafiles:sample"]}
+
+feature "sample" {"type": "minecraft:vines"}
+featureTag "all" {"values": ["datafiles:sample"]}
+
+flatLevelGeneratorPreset "sample" {"display": "minecraft:barrier", "settings": {"biome": "minecraft:the_void", "features": true, "lakes": false, "layers": [{"block": "minecraft:air", "height": 1}], "structure_overrides": []}}
+flatLevelGeneratorPresetTag "all" {"values": ["datafiles:sample"]}
+
+materialCondition "sample" {"type": "minecraft:water", "add_stone_depth": true, "offset": -6, "surface_depth_multiplier": -1}
+materialConditionTag "all" {"values": ["datafiles:sample"]}
+
+materialRule "sample" {"type": "minecraft:block", "result_state": "minecraft:mud"}
+materialRuleTag "all" {"values": ["datafiles:sample"]}
+
+multiNoiseBiomeSourceParameterList "sample" {"preset": "minecraft:nether"}
+multiNoiseBiomeSourceParameterListTag "all" {"values": ["datafiles:sample"]}
+
+noise "sample" {"base_amplitude": 0.955388882960065, "base_octave": -3}
+noiseTag "all" {"values": ["datafiles:sample"]}
+
+noiseSettings "sample" {"debug_functions": [{"function": {"type": "minecraft:add", "left": {"type": "minecraft:squeeze", "input": {"type": "minecraft:interpolated", "cell_size_xz": 4, "cell_size_y": 8, "input": {"type": "minecraft:mul", "left": {"type": "minecraft:blend_density", "input": {"type": "minecraft:lerp", "alpha": {"type": "minecraft:gradient", "axis": "y", "from_coordinate": -72, "from_value": 0.0, "to_coordinate": -40, "to_value": 1.0}, "first": 2.5, "second": {"type": "minecraft:lerp", "alpha": {"type": "minecraft:gradient", "axis": "y", "from_coordinate": 104, "from_value": 1.0, "to_coordinate": 128, "to_value": 0.0}, "first": 0.9375, "second": "minecraft:nether/base_3d_noise"}}}, "right": 0.64}}}, "right": {"type": "minecraft:beardifier"}}, "label": "N"}], "default_block": "minecraft:stone", "default_fluid": "minecraft:water", "disable_mob_generation": false, "legacy_random_source": true, "material_rule": "minecraft:overworld_caves", "noise": {"height": 192, "min_y": -64}, "noise_router": {"chunk_surface_level": 0.0, "continents": 0.0, "depth": 0.0, "erosion": 0.0, "final_density": {"type": "minecraft:add", "left": {"type": "minecraft:squeeze", "input": {"type": "minecraft:interpolated", "cell_size_xz": 4, "cell_size_y": 8, "input": {"type": "minecraft:mul", "left": {"type": "minecraft:blend_density", "input": {"type": "minecraft:lerp", "alpha": {"type": "minecraft:gradient", "axis": "y", "from_coordinate": -72, "from_value": 0.0, "to_coordinate": -40, "to_value": 1.0}, "first": 2.5, "second": {"type": "minecraft:lerp", "alpha": {"type": "minecraft:gradient", "axis": "y", "from_coordinate": 104, "from_value": 1.0, "to_coordinate": 128, "to_value": 0.0}, "first": 0.9375, "second": "minecraft:nether/base_3d_noise"}}}, "right": 0.64}}}, "right": {"type": "minecraft:beardifier"}}, "ridges": 0.0, "temperature": 0.0, "vegetation": 0.0}, "sea_level": 32, "spawn_target": []}
+noiseSettingsTag "all" {"values": ["datafiles:sample"]}
+
+placedFeature "sample" {"feature": "minecraft:pile_hay", "placement": []}
+placedFeatureTag "all" {"values": ["datafiles:sample"]}
+
+processorList "sample" {"processors": []}
+processorListTag "all" {"values": ["datafiles:sample"]}
+
+structure "sample" {"type": "minecraft:igloo", "biomes": "#minecraft:has_structure/igloo", "spawn_overrides": {}, "step": "surface_structures"}
+structureTag "all" {"values": ["datafiles:sample"]}
+
+structureSet "sample" {"placement": {"type": "minecraft:random_spread", "salt": 14357618, "separation": 8, "spacing": 32}, "structures": [{"structure": "minecraft:igloo", "weight": 1}]}
+structureSetTag "all" {"values": ["datafiles:sample"]}
+
+templatePool "sample" {"elements": [], "fallback": "minecraft:empty"}
+templatePoolTag "all" {"values": ["datafiles:sample"]}
+
+worldPreset "sample" {"dimensions": {"minecraft:overworld": {"type": "minecraft:overworld", "generator": {"type": "minecraft:debug"}}, "minecraft:the_end": {"type": "minecraft:the_end", "generator": {"type": "minecraft:noise", "biome_source": {"type": "minecraft:the_end"}, "settings": "minecraft:end"}}, "minecraft:the_nether": {"type": "minecraft:the_nether", "generator": {"type": "minecraft:noise", "biome_source": {"type": "minecraft:multi_noise", "preset": "minecraft:nether"}, "settings": "minecraft:nether"}}}}
+worldPresetTag "all" {"values": ["datafiles:sample"]}
+
+itemTag "all" {"values": ["minecraft:stone"]}
+blockTag "all" {"values": ["minecraft:stone"]}
+entityTypeTag "all" {"values": ["minecraft:pig"]}
+fluidTag "all" {"values": ["minecraft:water"]}
+gameEventTag "all" {"values": ["minecraft:step"]}
+mobEffectTag "all" {"values": ["minecraft:speed"]}
+potionTag "all" {"values": ["minecraft:water"]}
+pointOfInterestTypeTag "all" {"values": ["minecraft:home"]}
+
+predicate alwaysTrue { "type": "minecraft:random_chance", "chance": 1.0 }
+
+functionTag runAll { "values": ["datafiles:tagged"] }
+
+mcfun test() {
+    if (predicate self:alwaysTrue and predicate datafiles:sample) { /say predicate; }
+    /execute in datafiles:sample run say dimension;
+    /function #self:runAll;
+    /forceload add 0 0;
+    /setblock 0 -60 0 minecraft:chest;
+    /item replace block 0 -60 0 container.0 with minecraft:stone;
+    /item modify block 0 -60 0 container.0 datafiles:sample;
+    /execute if data block 0 -60 0 Items[{count:5}] run say item modifier;
+    /setblock 0 -60 0 minecraft:air;
+}
+
+mcfun tagged() {
+    /say function tag;
+}
