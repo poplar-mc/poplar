@@ -272,7 +272,7 @@ fn parseStatementKind(self: *Self) ParseError!?Ast.Stmt.Kind {
 fn parseCommandStatement(self: *Self) ParseError!?Ast.Stmt.Kind {
     const command: Ast.Command = .{
         .text = self.current.literal,
-        .parts = try self.parseCommandParts(self.current.literal) orelse return null,
+        .parts = try self.parseCommandParts(self.current.literal, self.current.column + 1) orelse return null,
     };
     if (!try self.expectPeek(.semicolon)) return null;
 
@@ -280,7 +280,8 @@ fn parseCommandStatement(self: *Self) ParseError!?Ast.Stmt.Kind {
 }
 
 // Splits command text into plain text and `{{expr}}` inserts.
-fn parseCommandParts(self: *Self, text: []const u8) ParseError!?[]const Ast.CommandPart {
+// `text_column` is the column where `text` starts in the file, so an expression in an insert has its real position.
+fn parseCommandParts(self: *Self, text: []const u8, text_column: usize) ParseError!?[]const Ast.CommandPart {
     var parts: std.ArrayList(Ast.CommandPart) = .empty;
     var pos: usize = 0;
 
@@ -291,7 +292,7 @@ fn parseCommandParts(self: *Self, text: []const u8) ParseError!?[]const Ast.Comm
         };
 
         if (open > pos) try parts.append(self.gpa, .{ .offset = pos, .content = .{ .text = text[pos..open] } });
-        const expression = try self.parseInsert(text[open + 2 .. close]) orelse return null;
+        const expression = try self.parseInsert(text[open + 2 .. close], text_column + open + 2) orelse return null;
         try parts.append(self.gpa, .{ .offset = open, .content = .{ .insert = expression } });
         pos = close + 2;
     }
@@ -300,8 +301,11 @@ fn parseCommandParts(self: *Self, text: []const u8) ParseError!?[]const Ast.Comm
     return try parts.toOwnedSlice(self.gpa);
 }
 
-fn parseInsert(self: *Self, source: []const u8) ParseError!?*Ast.Expr {
-    var insert_parser = try Self.init(self.gpa, Lexer.init(source));
+fn parseInsert(self: *Self, source: []const u8, column: usize) ParseError!?*Ast.Expr {
+    var lexer = Lexer.init(source);
+    lexer.line = self.current.line;
+    lexer.first_line_column = column - 1;
+    var insert_parser = try Self.init(self.gpa, lexer);
     const expression = try insert_parser.parseExpression(.lowest);
 
     if (expression != null and !insert_parser.peekIs(.eof)) {
@@ -318,7 +322,7 @@ fn parseInsert(self: *Self, source: []const u8) ParseError!?*Ast.Expr {
 fn parseExecuteStatement(self: *Self) ParseError!?Ast.Stmt.Kind {
     if (!try self.expectPeek(.execute_subcommands)) return null;
     const subcommands_column = self.current.column;
-    const subcommands = try self.parseCommandParts(self.current.literal) orelse return null;
+    const subcommands = try self.parseCommandParts(self.current.literal, subcommands_column) orelse return null;
 
     if (!try self.expectPeek(.left_brace)) return null;
     const body = try self.parseBlock() orelse return null;
@@ -492,7 +496,7 @@ fn parsePrefix(self: *Self) ParseError!?*Ast.Expr {
             try self.addError("'self:' is only for ids in commands and checks. In code, a plain name already means this namespace", .{});
             return null;
         },
-        .condition_text => .{ .minecraft_check = try self.parseCommandParts(self.current.literal) orelse return null },
+        .condition_text => .{ .minecraft_check = try self.parseCommandParts(self.current.literal, self.current.column) orelse return null },
         .macro_key => .{ .macro_key = self.current.literal },
         .left_paren => return self.parseGroupedExpression(),
         else => {
@@ -809,6 +813,30 @@ test "parse calls with a macro compound, a path or raw text, and macro keys" {
     try std.testing.expectEqualStrings("name", body[0].kind.expression.kind.call.with.?.value.kind.compound[0].value.kind.macro_key);
     try std.testing.expectEqualStrings("players[0]", body[1].kind.expression.kind.call.with.?.value.kind.identifier.name);
     try std.testing.expectEqualStrings("entity @s", body[2].kind.expression.kind.call.with.?.raw);
+}
+
+test "an expression in an insert has its position in the file" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const program = try parseValidForTest(arena.allocator(),
+        \\mcfun f() {
+        \\    /say x{{ #a }};
+        \\    execute (as {{ #b }}) { }
+        \\    if (entity {{ #c }}) { }
+        \\}
+    );
+
+    const body = program.functions[0].body;
+    const command_insert = body[0].kind.command.parts[1].content.insert;
+    const execute_insert = body[1].kind.execute.subcommands[1].content.insert;
+    const check_insert = body[2].kind.@"if".condition.kind.minecraft_check[0].content.insert;
+    try std.testing.expectEqual(2, command_insert.line);
+    try std.testing.expectEqual(14, command_insert.column);
+    try std.testing.expectEqual(3, execute_insert.line);
+    try std.testing.expectEqual(20, execute_insert.column);
+    try std.testing.expectEqual(4, check_insert.line);
+    try std.testing.expectEqual(19, check_insert.column);
 }
 
 test "parse var statement" {

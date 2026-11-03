@@ -56,6 +56,8 @@ pub fn callMacroHelper(self: *Compiler, name: []const u8, command_text: Compiler
         switch (insert.source) {
             .data => |source| try commands.append(self.gpa, .{ .data_copy = .{ .target = target, .source = source } }),
             .value => |expression| {
+                const outer_position = self.enterExpression(expression);
+                defer self.restorePosition(outer_position);
                 if (expression.kind == .call and Data.isStringCall(expression.kind.call)) {
                     try Data.compileStringInto(self, target, expression.kind.call, env, commands);
                     continue;
@@ -111,6 +113,8 @@ pub fn buildCommandText(self: *Compiler, parts: []const Ast.CommandPart, env: *E
                 if (std.mem.indexOf(u8, part_text, "$(") != null) uses_macro_keys = true;
             },
             .insert => |expression| {
+                const outer_position = self.enterExpression(expression);
+                defer self.restorePosition(outer_position);
                 if (expression.kind == .macro_key) {
                     try text.print(self.gpa, "$({s})", .{expression.kind.macro_key});
                     uses_macro_keys = true;

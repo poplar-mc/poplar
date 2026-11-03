@@ -15,6 +15,8 @@ previous_type: ?Token.TokenType = null,
 brace_depth: usize = 0,
 // The open `(` of an `if` or `while` condition, counted from its first `(`. Zero outside a condition.
 condition_paren_depth: usize = 0,
+// Added to the column of each token on the first line: the column where a `{{...}}` insert starts in its file.
+first_line_column: usize = 0,
 
 pub fn init(input: []const u8) Self {
     var l = Self{
@@ -180,7 +182,8 @@ fn readToken(self: *Self) Token {
 }
 
 fn newToken(self: *Self, t: Token.TokenType, literal: []const u8) Token {
-    return Token.init(t, literal, self.line, self.token_start - self.line_start + 1);
+    const offset = if (self.line_start == 0) self.first_line_column else 0;
+    return Token.init(t, literal, self.line, self.token_start - self.line_start + 1 + offset);
 }
 
 // Division cannot follow these tokens, so a `/` here starts a command.
