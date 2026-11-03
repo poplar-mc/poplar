@@ -9,8 +9,8 @@ const Data = @import("Data.zig");
 
 pub fn containsRuntimeValue(self: *const Compiler, expression: *const Ast.Expr, env: *const Environment) bool {
     return switch (expression.kind) {
-        .identifier => |identifier| identifier.storage != .compile_time or isParam(expression, env),
-        .minecraft_check => true,
+        .identifier => |identifier| identifier.storage != .compile_time,
+        .minecraft_check, .macro_key => true,
         .prefix => |prefix| containsRuntimeValue(self, prefix.operand, env),
         .infix => |infix| containsRuntimeValue(self, infix.left, env) or containsRuntimeValue(self, infix.right, env),
         .cast => |cast| containsRuntimeValue(self, cast.value, env),
@@ -31,12 +31,6 @@ pub fn containsRuntimeValue(self: *const Compiler, expression: *const Ast.Expr, 
         },
         else => false,
     };
-}
-
-pub fn isParam(expression: *const Ast.Expr, env: *const Environment) bool {
-    if (expression.kind != .identifier or expression.kind.identifier.storage != .compile_time) return false;
-    const value = env.get(expression.kind.identifier.name) orelse return false;
-    return value == .param;
 }
 
 // `text(x)` and `len(x)` on a compile-time value are known when the pack is built.
@@ -87,6 +81,10 @@ pub fn evaluate(self: *Compiler, expression: *const Ast.Expr, env: *Environment)
             try self.addError("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition", .{});
             return null;
         },
+        .macro_key => |name| {
+            try self.addError("'$({s})' is a macro argument, known only when the call starts, so it cannot be used at compile time", .{name});
+            return null;
+        },
         .string => |text| .{ .string = text },
         .number => |number| .{ .number = number },
         .boolean => |boolean| .{ .boolean = boolean },
@@ -112,10 +110,6 @@ pub fn evaluate(self: *Compiler, expression: *const Ast.Expr, env: *Environment)
                 try self.addError("unknown name '{s}'", .{identifier.name});
                 return null;
             };
-            if (value == .param) {
-                try self.addError("parameter '{s}' is a runtime value and cannot be used at compile time", .{identifier.name});
-                return null;
-            }
             return value;
         },
         .prefix => |prefix| evaluatePrefix(self, prefix, env),
@@ -236,7 +230,7 @@ pub fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
         .compound => |entries| entries.len == right.compound.len and for (entries, right.compound) |entry, other| {
             if (!std.mem.eql(u8, entry.key, other.key) or std.meta.activeTag(entry.value) != std.meta.activeTag(other.value) or !valuesEqual(entry.value, other.value)) break false;
         } else true,
-        .param, .local => unreachable, // `evaluate` never returns a parameter or a local.
+        .local => unreachable, // `evaluate` never returns a local.
     };
 }
 
@@ -267,7 +261,7 @@ pub fn valueToText(self: *Compiler, value: Compiler.Value) Compiler.CompileError
         .boolean => |boolean| if (boolean) "true" else "false",
         .null => "null",
         .list, .compound => valueToSnbt(self, value),
-        .param, .local => unreachable, // `evaluate` never returns a parameter or a local.
+        .local => unreachable, // `evaluate` never returns a local.
     };
 }
 

@@ -13,17 +13,18 @@ mcfun show() {
 
     if (@s.$SelectedItem.components."minecraft:custom_name") {
         $shown.name = @s.$SelectedItem.components."minecraft:custom_name";
-        named($shown.hover_event);
+        named() with $shown;
     } else {
         $shown.id = slice(@s.$SelectedItem.id, 10);
-        unnamed($shown.id, $shown.hover_event);
+        unnamed() with $shown;
     }
 }
 
-mcfun named(hover) {
-    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {nbt: "shown.name", storage: "showoff:data", interpret: true, color: "aqua", italic: true, hover_event: {{hover}}}, {text: "]", color: "aqua"}];
+// `$shown` is the macro compound, so `$(hover_event)` is `$shown.hover_event`.
+mcfun named() {
+    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {nbt: "shown.name", storage: "showoff:data", interpret: true, color: "aqua", italic: true, hover_event: $(hover_event)}, {text: "]", color: "aqua"}];
 }
 
-mcfun unnamed(id, hover) {
-    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {color: "aqua", translate: "block.minecraft.{{id}}", fallback: "%s", with: [{translate: "item.minecraft.{{id}}"}], hover_event: {{hover}}}, {text: "]", color: "aqua"}];
+mcfun unnamed() {
+    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {color: "aqua", translate: "block.minecraft.$(id)", fallback: "%s", with: [{translate: "item.minecraft.$(id)"}], hover_event: $(hover_event)}, {text: "]", color: "aqua"}];
 }

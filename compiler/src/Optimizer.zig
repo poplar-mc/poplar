@@ -1,5 +1,6 @@
 const std = @import("std");
 const Ir = @import("Ir.zig");
+const Writer = @import("Writer.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -61,7 +62,7 @@ fn removeIdentities(gpa: Allocator, commands: []const Ir.Command) Allocator.Erro
     return result.toOwnedSlice(gpa);
 }
 
-// A score value that the optimizer knows: a number, or the value of an mcfun parameter.
+// A score value that the optimizer knows: a number, or the value of a macro argument.
 const KnownValue = union(enum) {
     number: i32,
     param: []const u8,
@@ -142,7 +143,7 @@ const KnownScores = struct {
     }
 };
 
-// Removes a set when the score already has the value, copies a parameter from a score that holds it
+// Removes a set when the score already has the value, copies a macro argument from a score that holds it
 // (a macro line is parsed again for new arguments), and computes math on known numbers.
 fn propagateKnownValues(gpa: Allocator, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
     var result: std.ArrayList(Ir.Command) = .empty;
@@ -503,7 +504,84 @@ fn readsReturnValue(command: Ir.Command, name: []const u8) bool {
 }
 
 fn isGenerated(name: []const u8) bool {
-    return std.mem.startsWith(u8, name, "poplar/");
+    _, const path = Ir.splitName(name);
+    return std.mem.startsWith(u8, path, "poplar/");
+}
+
+// A generated body gets the macro arguments of its mcfun (`{amount:"$(amount)"}`) only if it, or a body that it calls, has a
+// macro line. The others are called without them, so a value with a `"` in it cannot break the call.
+pub fn dropUnusedArguments(gpa: Allocator, functions: []Ir.McFunction) Allocator.Error!void {
+    var needs: std.StringHashMapUnmanaged(void) = .empty;
+    var is_changed = true;
+    while (is_changed) {
+        is_changed = false;
+        for (functions) |function| {
+            if (!isGenerated(function.name) or needs.contains(function.name)) continue;
+            for (function.commands) |command| {
+                if (!try usesArguments(gpa, command, &needs)) continue;
+                try needs.put(gpa, function.name, {});
+                is_changed = true;
+                break;
+            }
+        }
+    }
+    for (functions) |*function| {
+        const commands = try gpa.alloc(Ir.Command, function.commands.len);
+        for (function.commands, commands) |command, *result| result.* = try withoutArguments(gpa, command, &needs);
+        function.commands = commands;
+    }
+}
+
+fn usesArguments(gpa: Allocator, command: Ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!bool {
+    switch (command) {
+        .function_with => |call| if (call.arguments == .compound and isGenerated(call.name)) return needs.contains(call.name),
+        // The wrapper and its run are checked apart, so a call inside counts only as itself.
+        .execute, .execute_raw, .store_result, .return_run => {
+            const run = runOf(command).?;
+            return try hasMacroText(gpa, try withRun(gpa, command, .{ .raw = "" })) or try usesArguments(gpa, run.*, needs);
+        },
+        else => {},
+    }
+    return hasMacroText(gpa, command);
+}
+
+fn hasMacroText(gpa: Allocator, command: Ir.Command) Allocator.Error!bool {
+    var text: std.ArrayList(u8) = .empty;
+    Writer.renderCommand(&text, gpa, "", command) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    return std.mem.indexOf(u8, text.items, "$(") != null;
+}
+
+fn withoutArguments(gpa: Allocator, command: Ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!Ir.Command {
+    switch (command) {
+        .function_with => |call| if (call.arguments == .compound and isGenerated(call.name) and !needs.contains(call.name)) return .{ .function = call.name },
+        .execute, .execute_raw, .store_result, .return_run => return withRun(gpa, command, try withoutArguments(gpa, runOf(command).?.*, needs)),
+        else => {},
+    }
+    return command;
+}
+
+fn runOf(command: Ir.Command) ?*const Ir.Command {
+    return switch (command) {
+        .execute => |execute| execute.run,
+        .execute_raw => |execute| execute.run,
+        .store_result => |store| store.run,
+        .return_run => |run| run,
+        else => null,
+    };
+}
+
+fn withRun(gpa: Allocator, command: Ir.Command, run: Ir.Command) Allocator.Error!Ir.Command {
+    const new_run = try gpa.create(Ir.Command);
+    new_run.* = run;
+    return switch (command) {
+        .execute => |execute| .{ .execute = .{ .checks = execute.checks, .run = new_run } },
+        .execute_raw => |execute| .{ .execute_raw = .{ .subcommands = execute.subcommands, .run = new_run } },
+        .store_result => |store| .{ .store_result = .{ .target = store.target, .run = new_run } },
+        .return_run => .{ .return_run = new_run },
+        else => unreachable,
+    };
 }
 
 fn isCalled(functions: []const Ir.McFunction, name: []const u8) bool {

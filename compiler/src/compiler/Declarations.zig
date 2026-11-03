@@ -225,6 +225,7 @@ pub fn addDataGlobal(self: *Compiler, decl: Ast.VarDecl) Compiler.CompileError!v
         .initial_snbt = initial_snbt,
         .name = decl.target.name,
         .output_namespace = self.scope.output_namespace,
+        .storage = Data.storageOf(self.scope.namespace),
     };
 }
 
@@ -252,7 +253,7 @@ pub fn findFunction(self: *Compiler, identifier: Ast.Identifier) Compiler.Compil
     return .{ .key = function_key, .located = located };
 }
 
-// The namespaces other than the pack namespace that have mcfuns: each one gets its main objective for temps and locals.
+// The namespaces other than the pack namespace that have mcfuns: each one gets its own `poplar.<ns>` objective for temps and locals.
 pub fn outputNamespaces(self: *Compiler) Compiler.CompileError![]const []const u8 {
     var namespaces: std.StringArrayHashMapUnmanaged(void) = .empty;
     for (self.functions.values()) |located| {
@@ -312,6 +313,7 @@ test "two namespaces keep their own names, files and scores" {
         \\mcfun load() { #mana = 2; }
         \\mcfun heal() { #mana = #mana + 1; }
         \\mcfun castSpell() { ns:heal(); }
+        \\mcfun build() { var $player = {mana: #mana}; }
     };
     for (sources) |source| {
         var parser = try Parser.init(arena.allocator(), Lexer.init(source));
@@ -329,6 +331,12 @@ test "two namespaces keep their own names, files and scores" {
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "heal"));
     try std.testing.expectEqualStrings("scoreboard players add #global magic.mana 1\n", try Compiler.renderForTest(arena.allocator(), program, "magic:heal"));
+    try std.testing.expectEqualStrings(
+        \\data modify storage magic:data player_build set value {mana:0}
+        \\execute store result storage magic:data player_build.mana int 1 run scoreboard players get #global magic.mana
+        \\data remove storage magic:data player_build
+        \\
+    , try Compiler.renderForTest(arena.allocator(), program, "magic:build"));
 
     const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
     try std.testing.expect(std.mem.endsWith(u8, load, "function magic:load\nfunction ns:load\n"));

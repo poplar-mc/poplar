@@ -14,19 +14,19 @@ mcfun load() {
 mcfun playerDied() {
     #deaths = #deaths + 1;
     @s.#deaths = @s.#deaths + 1;
-    #worst = std:max(#worst, @s.#deaths);
+    #worst = std:max() with {a: #worst, b: @s.#deaths};
 
-    var #message = std:random(1, 3);
+    var #message = std:random() with {low: 1, high: 3};
     if (#message == 1) {
-        std:tellraw(@a, [{selector: "@s"}, " tripped."]);
+        /tellraw @a {{[{selector: "@s"}, " tripped."]}};
     } else if (#message == 2) {
-        std:tellraw(@a, [{selector: "@s"}, " forgot to eat."]);
+        /tellraw @a {{[{selector: "@s"}, " forgot to eat."]}};
     } else {
-        std:tellraw(@a, [{selector: "@s"}, " met their end."]);
+        /tellraw @a {{[{selector: "@s"}, " met their end."]}};
     }
 
     // A subtitle shows with the next title, so it comes first.
-    std:subtitle(@s, ["Deaths: ", text(@s.#deaths)]);
-    std:title(@s, {text: "You died", color: "red"});
-    std:actionBar(@a, ["Server deaths: ", text(#deaths), ", the most by one player: ", text(#worst)]);
+    /title @s subtitle {{["Deaths: ", text(@s.#deaths)]}};
+    /title @s title {{ {text: "You died", color: "red"} }};
+    /title @a actionbar {{["Server deaths: ", text(#deaths), ", the most by one player: ", text(#worst)]}};
 }

@@ -5,8 +5,6 @@ Poplar is a programming language that compiles to Minecraft Java datapacks (1.21
 ```poplar
 namespace demo;
 
-import std;
-
 var #deaths = 0;
 
 mcfun load() {
@@ -15,7 +13,7 @@ mcfun load() {
 
 mcfun playerDied() {
     #deaths = #deaths + 1;
-    std:tellraw(@a, ["Deaths: ", text(#deaths)]);
+    /tellraw @a {{["Deaths: ", text(#deaths)]}};
 }
 ```
 
@@ -183,7 +181,7 @@ mcfun countdown() {
   For an item without enchantments, the copy fails and `$enchantments` does not exist, so `show` says `plain`.
 - Each function has its own locals, and a recursive call gets fresh ones.
 
-In the game, a local is named `<name>_<function>`: `#i` above is the fake player `#i_countdown` in the objective `<namespace>`, and `$seen` is the key `seen_countdown` in `<namespace>:data`. A local only exists while its function runs, so to inspect one, print it from the function: `/say {{#i}};`.
+In the game, a local is named `<name>_<function>`: `#i` above is the fake player `#i_countdown` in the objective `poplar.<namespace>`, and `$seen` is the key `seen_countdown` in `<namespace>:data`. A local only exists while its function runs, so to inspect one, print it from the function: `/say {{#i}};`.
 
 ## Scores
 
@@ -204,7 +202,7 @@ A `#` variable is a scoreboard score: a 32-bit integer.
 - A global `#mana` is its own `dummy` objective, `<namespace>.mana`. `poplar/load` adds it.
 - `#mana` alone is the global value, held by the fake player `#global` (hidden from the sidebar).
 - `@sel.#mana` is the value of an entity in the same objective: `@s.#mana`, `@p.#mana`, `@a.#mana`.
-- A local is the fake player `#<name>_<function>` in the objective `<namespace>`.
+- A local is the fake player `#<name>_<function>` in the objective `poplar.<namespace>`.
 
 Scores support `+ - * / %` and the comparisons `< <= > >= == !=`. The example above compiles to one command:
 
@@ -324,7 +322,7 @@ The game reads some NBT fields as one type: an entity's `Health` is a float. `as
 | `float` | `1f` |
 | `double` | `1d` |
 
-`as` binds loosest: `#a + 1 as double` means `(#a + 1) as double`. It works on constants (`20 as float` is `20f`), on scores and math stored into NBT, and on [function arguments](#parameters). Anywhere else it is an error.
+`as` binds loosest: `#a + 1 as double` means `(#a + 1) as double`. It works on constants (`20 as float` is `20f`), on scores and math stored into NBT, and on values in a [`with` compound](#macro-arguments). Anywhere else it is an error.
 
 **Costs and caveats**
 
@@ -410,7 +408,7 @@ A condition works the same as `execute if` in Minecraft:
 
 Combine conditions with `and`, `or` and `!`. `as` binds loosest, so put it in brackets inside a comparison: `$ratio == (5 as float)`.
 
-A condition that starts with an `execute if` subcommand is Minecraft text, the same as inside `execute (...)`: `biome`, `block`, `blocks`, `data`, `dimension`, `entity`, `function`, `items`, `loaded`, `predicate`, `score`, `slots` or `stopwatch`, followed by a space. The text ends at `and`, `or` or the closing `)`. It is checked against the command tree, `self:name` is an id in your pack ([ids in commands](#ids-in-commands)), and `{{...}}` inserts a constant or a parameter:
+A condition that starts with an `execute if` subcommand is Minecraft text, the same as inside `execute (...)`: `biome`, `block`, `blocks`, `data`, `dimension`, `entity`, `function`, `items`, `loaded`, `predicate`, `score`, `slots` or `stopwatch`, followed by a space. The text ends at `and`, `or` or the closing `)`. It is checked against the command tree, `self:name` is an id in your pack ([ids in commands](#ids-in-commands)), and `{{...}}` inserts a constant or a `$(name)` macro argument:
 
 ```poplar
 namespace demo;
@@ -497,8 +495,8 @@ execute (as @e[type=zombie] at @s) {
 
 - **`while` costs one function call per step.** Minecraft stops a run after `max_command_sequence_length` commands (65536 by default), so a very long or endless loop stops partway.
 - **`break` is free; `continue` is one function call.**
-- **`return` in a loop or `execute (...)` costs 2 commands** where it happens and one check at the call site (2 in an `mcfun` with parameters).
-- **`return` in `execute (as @a)` returns for the first entity that returns.** It is an error in an `mcfun` with parameters and in an `execute` whose subcommands insert `{{$x}}`.
+- **`return` in a loop or `execute (...)` costs 2 commands** where it happens and one check at the call site (2 in an `mcfun` that uses macro arguments).
+- **`return` in `execute (as @a)` returns for the first entity that returns.** It is an error in an `mcfun` that uses macro arguments and in an `execute` whose subcommands insert `{{$x}}`.
 - **`for` copies its body** `b - a` times.
 
 ## Functions
@@ -508,17 +506,17 @@ namespace demo;
 
 var #hp = 0;
 
-mcfun heal(amount) {
-    #hp = #hp + amount;
+mcfun heal() {
+    #hp = #hp + $(amount);
 }
 
-mcfun double(x) {
-    return x * 2;
+mcfun double() {
+    return $(x) * 2;
 }
 
 mcfun load() {
-    heal(5);
-    #hp = double(#hp);
+    heal() with {amount: 5};
+    #hp = double() with {x: #hp};
 }
 ```
 
@@ -531,40 +529,49 @@ Every `mcfun` is one `.mcfunction` file. Minecraft function names cannot contain
 | `mcfun load()` | every time the pack loads, after Poplar sets up its scores and storage |
 | `mcfun tick()` | every tick |
 
-Each [namespace](#namespaces) can have its own. They run in import order: a namespace's `load` runs after the `load` of every namespace it imports. Neither can have parameters.
+Each [namespace](#namespaces) can have its own. They run in import order: a namespace's `load` runs after the `load` of every namespace it imports. The game runs them with no macro arguments, so they cannot use `$(name)`.
 
-### Parameters
+### Macro arguments
 
-An `mcfun` with parameters is a [macro function](https://minecraft.wiki/w/Function_(Java_Edition)#Macros): each line that uses a parameter becomes a macro line with `$(amount)`. A parameter is a game value, so it cannot be a constant (`var x = amount;` is an error). Used in math or an `if`, it goes through a score, so it must be a number.
-
-A call writes its arguments the way Minecraft passes macro arguments:
+An `mcfun` has no parameter list. It is a [macro function](https://minecraft.wiki/w/Function_(Java_Edition)#Macros): it reads a macro argument by name with `$(name)`, and the caller passes a compound with `with`. Both work as they do in Minecraft:
 
 ```poplar
-heal(5);
-// function demo:heal {amount:5}
-
-heal(#hp * 2);
-// execute store result storage demo:poplar args.amount int 1 run ...
-// function demo:heal with storage demo:poplar args
+mcfun greet() {
+    /say Hi $(name);
+}
 ```
 
-With only constants and parameters, the arguments go into the call. With any game value, every argument is written to `<namespace>:poplar args` first; a score or math argument is an `int`, unless you write `as` (`heal(#hp as float)`).
+| Call | Minecraft |
+|---|---|
+| `greet() with {name: "Steve"};` | `function demo:greet {name:"Steve"}` |
+| `greet() with {name: $player.name};` | `data modify storage demo:poplar args.name set from storage demo:data player.name`, then `function demo:greet with storage demo:poplar args` |
+| `greet() with $player;` | `function demo:greet with storage demo:data player` |
+| `greet() with @s.$SelectedItem.components;` | `function demo:greet with entity @s SelectedItem.components` |
+| `greet() with block ~ ~ ~;` | `function demo:greet with block ~ ~ ~` |
 
-A macro inserts a string argument **without quotes**, and a list or compound as SNBT. So `greet("Steve")` with `/say Hi {{name}};` writes `say Hi Steve`, and a text component should be a compound or a list: `tellraw(@a, {text: "hi"})`.
+- **A constant compound** goes into the call as it is.
+- **A compound with game values** (`#hp`, `$x`, math, calls) is written to `<namespace>:poplar args` first, one command for each game value. A score or math value is an `int`, unless you write `as` (`{x: #hp as float}`).
+- **A `$` variable or an entity path** is passed with `with storage` or `with entity`. It must hold a compound, and its keys are the argument names.
+- **`entity` and `block`** pass the text after them to Minecraft as it is.
+
+`$(name)` works in a command (`/say Hi $(name);`), in a `{{...}}` insert, and in math or an `if`. In math or an `if`, it goes through a score, so it must be a number. It is a game value, so it cannot be a constant: `var x = $(amount);` is an error. A macro inserts a string **without quotes**, and a list or compound as SNBT: with `{name: "Steve"}`, `/say Hi $(name);` writes `say Hi Steve`.
+
+The compiler gives an error for an mcfun that uses `$(name)` and is called without `with`. It also gives an error for `load`, `tick` or an [event](#events) callback that uses `$(name)`.
 
 ### Return values
 
-A call can be used as a value: `#y = double(#y);` → `execute store result score ... run function demo:double ...`. Minecraft only returns integers.
+A call can be used as a value: `#y = double() with {x: #y};` → `execute store result score ... run function demo:double ...`. Minecraft only returns integers.
 
 ### Recursion
 
-An `mcfun` can call itself. A recursive call would overwrite the temporary scores and locals of the running call, so the compiler saves the ones that are still needed on a stack in storage around the call.
+An `mcfun` can call itself. A recursive call would overwrite the temporary scores and locals of the running call, so the compiler saves the ones that are still needed on a stack in storage around the call. Macro arguments need no saving: Minecraft fills in `$(name)` when the call starts.
 
 **Costs and caveats**
 
-- **A function with parameters is a macro function.** Macro lines are slower than plain lines, because the game builds them again for new values.
-- **Game-value arguments cost one command each.**
-- **A `"` in an argument breaks forwarding.** Generated bodies receive the arguments as `{amount:"$(amount)"}`.
+- **A function that uses `$(name)` is a macro function.** Macro lines are slower than plain lines, because the game builds them again for new values.
+- **Each game value in a `with` compound costs one command.** A constant compound, a `$` variable and an entity path cost nothing extra.
+- **A missing key fails in the game.** The compiler cannot see the keys of a `$` variable, an entity or a block. If one is missing, Minecraft does not run the function.
+- **A `"` in an argument breaks forwarding.** Generated bodies (`if`, `while`, `execute`) that use `$(name)` receive the arguments as `{name:"$(name)"}`.
 - **Recursion costs a frame per call:** `2 + 2n` commands to save and restore the `n` values that are still needed. Calls that are not recursive cost nothing extra.
 - **Files are snake_case.**
 
@@ -644,11 +651,34 @@ The compiler checks the name: `'self:isSiting' is not a data file or mcfun of na
 | Insert | Written as |
 |---|---|
 | a constant, `{{i}}` | its text: `say step 3`. A string has no quotes, a list or compound is SNBT |
-| a parameter, `{{amount}}` | `$(amount)` in a macro line |
+| a [macro argument](#macro-arguments), `{{$(amount)}}` or `$(amount)` in the text | `$(amount)` in a macro line |
 | a `$` variable, `{{$item}}` | a macro line that reads `<namespace>:data` |
 | a score, math or entity data: `{{#hp}}`, `{{#hp * 2}}`, `{{@s.$CustomName}}` | a macro line, with the value copied in first |
 
 A line with a game value moves into a helper function, `poplar/<mcfun>/macro_<n>`. Values other than whole `$` variables are copied into `<namespace>:poplar macro` first, named after their source: `$stats.hp` is `$(stats_hp)`, `#hp` is `$(hp)`, math is `$(value)`.
+
+### Text components
+
+```poplar
+namespace demo;
+
+var #hp = 20;
+
+mcfun tick() {
+    /title @a actionbar {{["HP: ", text(#hp)]}};
+    /tellraw @a {{ {text: "Hello", color: "gold"} }};
+}
+```
+
+A text component in a command is a constant list or compound in `{{...}}`. `text(value)` is a part that names a score or data, so the game reads the value when it shows the text:
+
+| Call | Text component |
+|---|---|
+| `text(#hp)` | `{score:{name:"#global",objective:"<namespace>.hp"}}` |
+| `text($name)` | `{storage:"<namespace>:data",nbt:"name"}` |
+| `text(@s.$SelectedItem.id)` | `{entity:"@s",nbt:"SelectedItem.id"}` |
+
+Put a space between the braces of `{{` and a compound: `{{ {text: "hi"} }}`, because `}}}` would end the insert too early.
 
 **Costs and caveats**
 
@@ -696,7 +726,7 @@ Two namespaces can use the same names, because each one has its own files and st
 | In `namespace combat;` | Written as |
 |---|---|
 | `mcfun heal` | `data/combat/function/heal.mcfunction`, `combat:heal` |
-| its helpers, temps and locals | `combat:poplar/heal/...`, the objective `combat` |
+| its helpers, temps and locals | `combat:poplar/heal/...`, the objective `poplar.combat` |
 | `var #mana` | the objective `combat.mana` |
 | `var $item` | the key `item` in the storage `combat:data` |
 | `predicate isSitting` | `data/combat/predicate/is_sitting.json` |
@@ -733,11 +763,11 @@ mcfun playerDied() {
 }
 
 mcfun threwSnowball() {
-    std:tellraw(@s, {text: "Nice throw"});
+    /tellraw @s {{ {text: "Nice throw"} }};
 }
 ```
 
-`onEvent(criteria, callback)` runs the `mcfun` `callback` as a player, at the player, each time the [scoreboard criteria](https://minecraft.wiki/w/Scoreboard#Criteria) counts for that player. Call it in `mcfun load()` of any namespace, outside any runtime `if`, `while` or `execute`. The callback cannot have parameters.
+`onEvent(criteria, callback)` runs the `mcfun` `callback` as a player, at the player, each time the [scoreboard criteria](https://minecraft.wiki/w/Scoreboard#Criteria) counts for that player. Call it in `mcfun load()` of any namespace, outside any runtime `if`, `while` or `execute`. The callback cannot use [macro arguments](#macro-arguments).
 
 Each event gets an objective, `<namespace>.event_<n>`, and `poplar/tick` checks it every tick:
 
@@ -786,8 +816,42 @@ function demo:show
 
 - **Two commands every tick per trigger:** the check and the `enable`.
 - **The name has no namespace.** Two packs that use the same trigger name share it. The name can only have letters, 0-9, `_`, `-`, `.` and `+`.
+- **A name that starts with `poplar.` or `<namespace>.` is an error.** Poplar uses those for its own objectives. The name of the namespace itself (`showoff` in the namespace `showoff`) is fine.
 - **Any value counts once.** `/trigger showoff set 5` runs the callback once, like `/trigger showoff`. The callback cannot read the value, because the score is reset first.
 
+
+### Player events
+
+```poplar
+namespace demo;
+
+mcfun load() {
+    onFirstJoin(welcome);
+    onJoin(greet);
+    onDeath(died);
+    onRespawn(giveKit);
+}
+
+mcfun welcome() { /tellraw @s "Welcome to the server!"; }
+mcfun greet() { /say I joined; }
+mcfun died() { /say I died; }
+mcfun giveKit() { /give @s minecraft:bread 4; }
+```
+
+Each one runs the callback as the player, at the player, from `poplar/tick`, with the same rules as `onEvent`:
+
+| Builtin | Runs the callback | How it is detected |
+|---|---|---|
+| `onFirstJoin(cb)` | the first time a player is in the world | a player without the tag `<ns>.event_<n>` (which it then gets) |
+| `onJoin(cb)` | each time a player joins, the first time too | the same tag, plus the `leave_game` statistic for a rejoin |
+| `onDeath(cb)` | when a player dies | `onEvent("deathCount", cb)` |
+| `onRespawn(cb)` | when a dead player is alive again | `deathCount`, then the `time_since_death` statistic, which only counts while alive |
+
+**Costs and caveats**
+
+- **One check per event every tick** (two for `onJoin`), over all players.
+- **Players who were already in the world** when you add the pack count as joining for the first time.
+- **`onDeath` runs while the player is on the death screen;** use `onRespawn` to give items.
 ## Data files
 
 ```poplar
@@ -847,47 +911,62 @@ The type words are only special at the top level of a file, so you can still use
 
 ## Standard library
 
-`import std;` loads the standard library, the namespace `std`: call its functions as `std:clamp(...)`. It is written in Poplar and installed next to the compiler (`lib/poplar/std/`), so you can read it. Only the functions your code can reach are written into the pack, as a copy in the pack namespace: `std:clamp` is the function `<pack namespace>:std/clamp`. Two packs built with different Poplar versions each have their own copy, so they cannot overwrite each other. A `std:name` in a command, such as `/function std:clamp {x:5,low:0,high:3};`, counts as a use too.
+```poplar
+namespace demo;
+
+import std;
+
+var $scores = [5, 1, 4];
+
+mcfun tick() {
+    /say {{ std:sqrt() with {x: 50} }} and {{ std:sum() with {list: $scores} }};
+    std:sort() with {list: $scores};
+    $scores = $std:result;
+}
+```
+
+`import std;` loads the standard library, the namespace `std`: call its functions as `std:clamp() with {x: #hp, low: 0, high: 20}`. Each one reads its [macro arguments](#macro-arguments), named in the tables below. It is written in Poplar and installed next to the compiler (`lib/poplar/std/`), so you can read it. Only the functions your code can reach are written into the pack, as a copy in the pack namespace: `std:clamp` is the function `<pack namespace>:std/clamp`, and std's own data is in the storage `<pack namespace>:std`. Two packs built with different Poplar versions each have their own copy, so they cannot overwrite each other. A `std:name` in a command, such as `/function std:clamp {x:5,low:0,high:3};`, counts as a use too.
 
 ### Math
 
 All math functions work on integers.
 
-| Function | Returns |
-|---|---|
-| `abs(x)` | `x` without its sign |
-| `sign(x)` | `1`, `-1` or `0` |
-| `min(a, b)`, `max(a, b)` | the smaller or the larger of `a` and `b` |
-| `clamp(x, low, high)` | `x`, moved into `low..high` (both included) |
-| `pow(base, exponent)` | `base` to the power of `exponent`; a negative exponent gives `1` |
-| `sqrt(x)` | the integer square root, rounded down; a negative `x` gives `0` |
-| `random(low, high)` | a random integer in `low..high`, both included; if `high <= low`, `low` |
+| Function | Keys | Returns |
+|---|---|---|
+| `abs` | `x` | `x` without its sign |
+| `sign` | `x` | `1`, `-1` or `0` |
+| `min`, `max` | `a`, `b` | the smaller or the larger of `a` and `b` |
+| `clamp` | `x`, `low`, `high` | `x`, moved into `low..high` (both included) |
+| `pow` | `base`, `exponent` | `base` to the power of `exponent`; a negative exponent gives `1` |
+| `sqrt` | `x` | the integer square root, rounded down; a negative `x` gives `0` |
+| `lerp` | `a`, `b`, `t`, `scale` | the value `t / scale` of the way from `a` to `b`: `{a: 0, b: 100, t: 250, scale: 1000}` gives `25` |
+| `random` | `low`, `high` | a random integer in `low..high`, both included; if `high <= low`, `low` |
+| `weightedRandom` | `weights` | a random index into a list of int weights: `[1, 3]` gives `1` three times as often as `0` |
+| `sin`, `cos` | `degrees` | in thousandths: `{degrees: 30}` gives `500` for `sin` |
 
-### Text
+### Lists
 
-| Function | Shows `message` |
-|---|---|
-| `tellraw(target, message)` | in the chat of `target` |
-| `title(target, message)` | as a large title |
-| `subtitle(target, message)` | below the title (only together with a title) |
-| `actionBar(target, message)` | above the hotbar |
+| Function | Keys | Returns |
+|---|---|---|
+| `count`, `countString` | `list`, `value` | how many elements equal `value` |
+| `contains`, `containsString` | `list`, `value` | `1` if an element equals `value`, else `0` |
+| `indexOf`, `indexOfString` | `list`, `value` | the index of the first element equal to `value`, or `-1` |
+| `sum`, `minOf`, `maxOf` | `list` | for a list of ints; `minOf` and `maxOf` give `0` for an empty list |
+| `reverse` | `list` | nothing; the reversed list is in `$std:result` |
+| `sort` | `list` | nothing; the list of ints, smallest first, is in `$std:result` |
 
-`message` is a text component: a compound (`{text: "Hi", color: "gold"}`) or a list of parts (`["HP: ", text(#hp)]`). A plain string is inserted without quotes, as in any macro, so write `{text: "hi"}` rather than `"hi"`.
+Use the `String` helpers to search for a string: a macro argument loses its quotes, so `count` would read `"minecraft:diamond"` as `minecraft:diamond`, which is not valid NBT. `count`, `contains` and `indexOf` are for numbers and compounds.
 
-`text(value)` makes a text part that names a score or data. It is known when the pack is built, and the game reads the value when it shows the text:
-
-| Call | Text component |
-|---|---|
-| `text(#hp)` | `{score:{name:"#global",objective:"<namespace>.hp"}}` |
-| `text($name)` | `{storage:"<namespace>:data",nbt:"name"}` |
-| `text(@s.$SelectedItem.id)` | `{entity:"@s",nbt:"SelectedItem.id"}` |
-
-A game value cannot be passed as the message directly; wrap it in `text()`: `tellraw(@s, text($heldItem))`.
+The list is a copy, so these never change your variable. Copy a result where you want it: `std:reverse() with {list: $names}; $names = $std:result;`.
 
 **Costs and caveats**
 
-- **Every std function is a real function call.** The text functions are macro functions: one call plus one macro line per message. The math functions cost one extra command per game-value argument; `pow` makes one call per step of the exponent and `sqrt` about 16.
-- **Its names are your project's names.** You cannot define your own `clamp` while you import `std`.
+- **Every std function is a macro function call.** A game value in the `with` compound costs one command, and a list is copied once more inside the function.
+- **A string with a `"` in it** cannot be searched for with the `String` helpers.
+- **`count` and `contains` have no loop:** a few commands for any list. `indexOf`, `sum`, `minOf`, `maxOf` and `reverse` loop once over the list; `sort` loops once per element, so it is slow for long lists.
+- **`sqrt` takes about 4 to 20 loop steps,** and `pow` one per bit of the exponent.
+- **`sin` and `cos` are within 2 thousandths** (Bhaskara's approximation).
+- **`$std:result` is replaced by the next `reverse` or `sort`.** Copy it right away.
 - **It comes with the compiler.** Rebuild your pack after an update.
 
 ## Project
@@ -983,8 +1062,8 @@ poplar-out/<zipName>/
 | Name | Use |
 |---|---|
 | objective `combat.<name>` | one per global `#` variable of `combat` |
-| objective `combat` | `combat`'s locals (`#<name>_<mcfun>`) and temporary scores |
-| objective `demo` | the pack namespace's locals and temps, and the constants |
+| objective `poplar.combat` | `combat`'s locals (`#<name>_<mcfun>`) and temporary scores |
+| objective `poplar.demo` | the pack namespace's locals and temps, and the constants |
 | objective `<ns>.event_<n>` | one per `onEvent`, in the namespace that registers it |
 | storage `combat:data` | `combat`'s `$` variables, globals and locals |
 | storage `demo:poplar` | `args`, `macro` and the recursion `stack` |

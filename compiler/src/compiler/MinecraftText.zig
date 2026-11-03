@@ -21,19 +21,35 @@ pub fn compileCommand(self: *Compiler, command: Ast.Command, text_column: usize,
     const name = try self.newGeneratedName("macro");
     const macro_commands = try self.gpa.dupe(Ir.Command, &.{.{ .macro = command_text.text }});
     try self.generated.append(self.gpa, .{ .name = name, .commands = macro_commands });
-    try callMacroHelper(self, name, command_text, command_text.uses_param, env, commands);
+    try callMacroHelper(self, name, command_text, command_text.uses_macro_keys, env, commands);
 }
 
-// A macro call gets its arguments from one place. A helper that also needs the parameters of the mcfun,
-// or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the parameters, then each value it uses.
-pub fn callMacroHelper(self: *Compiler, name: []const u8, command_text: Compiler.CommandText, needs_params: bool, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!void {
-    const only_whole_vars = for (command_text.inserts) |insert| {
-        if (!insert.isWholeDataVar()) break false;
-    } else true;
-    if (!needs_params and only_whole_vars) return commands.append(self.gpa, .{ .function_with = .{ .name = name, .arguments = .data_storage } });
+// The storage that holds every insert, when each one is a whole `$` variable of the same storage: the helper can
+// then read them from it as they are.
+fn sharedStorage(inserts: []const Compiler.Insert) ?Ir.DataStorage {
+    var shared: ?Ir.DataStorage = null;
+    for (inserts) |insert| {
+        if (!insert.isWholeDataVar()) return null;
+        const path = insert.source.data;
+        if (path.holder.storage != .data and path.holder.storage != .std) return null;
+        const storage: Ir.DataStorage = .{ .storage = path.holder.storage, .namespace = path.namespace };
+        if (shared) |other| {
+            if (other.storage != storage.storage or !Ir.optionalEql(other.namespace, storage.namespace)) return null;
+        }
+        shared = storage;
+    }
+    return shared;
+}
+
+// A macro call gets its arguments from one place. A helper that also needs the macro arguments of the mcfun,
+// or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro arguments, then each value it uses.
+pub fn callMacroHelper(self: *Compiler, name: []const u8, command_text: Compiler.CommandText, needs_macro_keys: bool, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!void {
+    if (!needs_macro_keys) if (sharedStorage(command_text.inserts)) |storage| {
+        return commands.append(self.gpa, .{ .function_with = .{ .name = name, .arguments = .{ .data_storage = storage } } });
+    };
 
     // Old keys from an earlier helper do no harm, because a macro line reads only the names it uses.
-    if (needs_params) try commands.append(self.gpa, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = self.forwarded_args.? } });
+    if (needs_macro_keys) try commands.append(self.gpa, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = self.forwarded_args.? } });
     self.temp_count = 0;
     for (command_text.inserts) |insert| {
         const target: Ir.DataPath = .inStorage(.macro, insert.macro_name);
@@ -64,7 +80,7 @@ pub fn compileExecute(self: *Compiler, execute: Ast.Execute, env: *Environment, 
 
     const can_return = Compiler.containsReturn(execute.body);
     if (can_return) {
-        if (self.forwarded_args != null) return self.addError("'return' inside 'execute (...)' in an mcfun with parameters is not supported yet", .{});
+        if (self.forwarded_args != null) return self.addError("'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet", .{});
         if (subcommands.is_macro) return self.addError("'return' inside 'execute (...)' with a data insert is not supported yet", .{});
     }
 
@@ -74,26 +90,30 @@ pub fn compileExecute(self: *Compiler, execute: Ast.Execute, env: *Environment, 
 
     const name = try self.newGeneratedName("macro");
     try self.generated.append(self.gpa, .{ .name = name, .commands = try self.gpa.dupe(Ir.Command, &.{execute_command}) });
-    // The body can forward the parameters too, so in an mcfun with parameters they always go along.
+    // The body can forward the macro arguments too, so in an mcfun that uses them they always go along.
     try callMacroHelper(self, name, subcommands, self.forwarded_args != null, env, commands);
 }
 
-// Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line.
+// Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line. `$(key)` in the
+// text uses the mcfun's macro arguments.
 pub fn buildCommandText(self: *Compiler, parts: []const Ast.CommandPart, env: *Environment) Compiler.CompileError!?Compiler.CommandText {
     var text: std.ArrayList(u8) = .empty;
     const text_starts = try self.gpa.alloc(usize, parts.len);
     var is_macro = false;
-    var uses_param = false;
+    var uses_macro_keys = false;
     var inserts: std.ArrayList(Compiler.Insert) = .empty;
 
     for (parts, text_starts) |part, *text_start| {
         text_start.* = text.items.len;
         switch (part.content) {
-            .text => |part_text| try text.appendSlice(self.gpa, part_text),
+            .text => |part_text| {
+                try text.appendSlice(self.gpa, part_text);
+                if (std.mem.indexOf(u8, part_text, "$(") != null) uses_macro_keys = true;
+            },
             .insert => |expression| {
-                if (Values.isParam(expression, env)) {
-                    try text.print(self.gpa, "$({s})", .{expression.kind.identifier.name});
-                    uses_param = true;
+                if (expression.kind == .macro_key) {
+                    try text.print(self.gpa, "$({s})", .{expression.kind.macro_key});
+                    uses_macro_keys = true;
                     continue;
                 }
                 if (Values.containsRuntimeValue(self, expression, env)) {
@@ -115,7 +135,7 @@ pub fn buildCommandText(self: *Compiler, parts: []const Ast.CommandPart, env: *E
         .text = try text.toOwnedSlice(self.gpa),
         .text_starts = text_starts,
         .is_macro = is_macro,
-        .uses_param = uses_param,
+        .uses_macro_keys = uses_macro_keys,
         .inserts = try inserts.toOwnedSlice(self.gpa),
     };
 }
@@ -145,10 +165,10 @@ pub fn runtimeInsert(self: *Compiler, expression: *const Ast.Expr, env: *Environ
         if (isSameInsert(insert.source, source)) return insert;
     }
 
-    // A helper may get the parameters and the values in one compound, so each name must be new.
+    // A helper may get the macro arguments and the values in one compound, so each name must be new.
     var name = base;
     var number: usize = 2;
-    while (isUsedMacroName(name, used, env)) : (number += 1) name = try std.fmt.allocPrint(self.gpa, "{s}_{d}", .{ base, number });
+    while (isUsedMacroName(self, name, used)) : (number += 1) name = try std.fmt.allocPrint(self.gpa, "{s}_{d}", .{ base, number });
     return .{ .macro_name = name, .source = source };
 }
 
@@ -165,12 +185,11 @@ pub fn isSameInsert(a: Compiler.Insert.Source, b: Compiler.Insert.Source) bool {
     }
 }
 
-pub fn isUsedMacroName(name: []const u8, used: []const Compiler.Insert, env: *Environment) bool {
+pub fn isUsedMacroName(self: *const Compiler, name: []const u8, used: []const Compiler.Insert) bool {
     for (used) |insert| {
         if (std.mem.eql(u8, insert.macro_name, name)) return true;
     }
-    const value = env.get(name) orelse return false;
-    return value == .param;
+    return self.macro_keys.contains(name);
 }
 
 // Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.
@@ -311,10 +330,10 @@ test "inserts compile-time and runtime values into commands" {
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\var #hp = 0;
-        \\mcfun main(hp) {
+        \\mcfun main() {
         \\    var n = 2;
         \\    /effect give @p poison {{n * 5}};
-        \\    /say {{#hp}} {{#hp * 2}} {{@s.$CustomName}} {{hp}} {{#hp}};
+        \\    /say {{#hp}} {{#hp * 2}} {{@s.$CustomName}} $(hp) {{#hp}};
         \\}
         \\mcfun bad() { /effect give @p poison {{"x"}}; }
     );
@@ -324,13 +343,13 @@ test "inserts compile-time and runtime values into commands" {
     try std.testing.expectEqual(7, compiler.errors.items[0].line);
     try std.testing.expectEqual(38, compiler.errors.items[0].column);
 
-    // The parameter `hp` has the name `hp`, so the score gets `hp_2`. The same score again uses it again.
+    // The macro key `hp` has the name `hp`, so the score gets `hp_2`. The same score again uses it again.
     try std.testing.expectEqualStrings(
         \\effect give @p poison 10
         \\$data modify storage ns:poplar macro set value {hp:"$(hp)"}
         \\execute store result storage ns:poplar macro.hp_2 int 1 run scoreboard players get #global ns.hp
-        \\scoreboard players operation #poplar.main.t0 ns = #global ns.hp
-        \\execute store result storage ns:poplar macro.value int 1 run scoreboard players operation #poplar.main.t0 ns *= #poplar.c2 ns
+        \\scoreboard players operation #poplar.main.t0 poplar.ns = #global ns.hp
+        \\execute store result storage ns:poplar macro.value int 1 run scoreboard players operation #poplar.main.t0 poplar.ns *= #poplar.c2 poplar.ns
         \\data modify storage ns:poplar macro.CustomName set from entity @s CustomName
         \\function ns:poplar/main/macro_0 with storage ns:poplar macro
         \\
@@ -338,13 +357,13 @@ test "inserts compile-time and runtime values into commands" {
     try std.testing.expectEqualStrings("$say $(hp_2) $(value) $(CustomName) $(hp) $(hp_2)\n", try Compiler.renderForTest(arena.allocator(), program, "poplar/main/macro_0"));
 }
 
-test "a command uses a data variable and a parameter together" {
+test "a command uses a data variable and a macro key together" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\var $item = "diamond";
-        \\mcfun give(count) { /give @s {{$item}} {{count}}; }
+        \\mcfun give() { /give @s {{$item}} $(count); }
     );
     const program = try compiler.compile();
     try std.testing.expectEqual(0, compiler.errors.items.len);

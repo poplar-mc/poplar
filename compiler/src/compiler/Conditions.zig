@@ -84,7 +84,7 @@ pub fn dataCondition(self: *Compiler, identifier: Ast.Identifier, value: Compile
     try filter.appendSlice(self.gpa, snbt);
     try filter.appendNTimes(self.gpa, '}', depth);
 
-    return try singleCheck(self, .{ .negated = negated, .score_test = .{ .data_test = .{ .holder = path.holder, .path = try filter.toOwnedSlice(self.gpa) } } });
+    return try singleCheck(self, .{ .negated = negated, .score_test = .{ .data_test = path.withPath(try filter.toOwnedSlice(self.gpa)) } });
 }
 
 pub fn lowerComparison(self: *Compiler, infix: Ast.Infix, env: *Environment, negated: bool, setup: *std.ArrayList(Ir.Command)) Compiler.CompileError!?Compiler.Condition {

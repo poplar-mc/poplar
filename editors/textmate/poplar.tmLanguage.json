@@ -81,6 +81,9 @@
           "include": "#insert"
         },
         {
+          "include": "#macro-key"
+        },
+        {
           "include": "#string"
         },
         {
@@ -209,16 +212,7 @@
           "name": "punctuation.section.parens.end.poplar"
         }
       },
-      "patterns": [
-        {
-          "name": "variable.parameter.poplar",
-          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
-        },
-        {
-          "name": "punctuation.separator.poplar",
-          "match": ","
-        }
-      ]
+      "patterns": []
     },
     "expression": {
       "patterns": [
@@ -244,8 +238,23 @@
           "match": "\\b(if|else|for|while|return|break|continue|execute)\\b"
         },
         {
+          "comment": "`with entity @s` and `with block ~ ~ ~` pass raw Minecraft text",
+          "match": "\\b(with)\\s+(entity|block)\\b([^;]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.word.poplar"
+            },
+            "2": {
+              "name": "keyword.other.poplar"
+            },
+            "3": {
+              "name": "string.unquoted.command.poplar"
+            }
+          }
+        },
+        {
           "name": "keyword.operator.word.poplar",
-          "match": "\\b(and|or|as)\\b"
+          "match": "\\b(and|or|as|with)\\b"
         },
         {
           "name": "constant.language.poplar",
@@ -262,7 +271,7 @@
         },
         {
           "name": "support.function.builtin.poplar",
-          "match": "\\b(append|prepend|insert|remove|len|text|onEvent|onTrigger|slice|str|startsWith|endsWith)(?=\\s*\\()"
+          "match": "\\b(append|prepend|insert|remove|len|text|onEvent|onTrigger|onDeath|onFirstJoin|onJoin|onRespawn|slice|str|startsWith|endsWith)(?=\\s*\\()"
         },
         {
           "name": "entity.name.function.poplar",
@@ -282,6 +291,9 @@
         {
           "name": "variable.language.score.poplar",
           "match": "#(?:[a-z0-9_.]+:)?[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "include": "#macro-key"
         },
         {
           "name": "variable.other.property.data.poplar",
@@ -339,9 +351,17 @@
           "include": "#insert"
         },
         {
+          "include": "#macro-key"
+        },
+        {
           "include": "#selector"
         }
       ]
+    },
+    "macro-key": {
+      "comment": "`$(name)`: a macro argument of the mcfun",
+      "name": "variable.parameter.poplar",
+      "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*\\)"
     }
   }
 }

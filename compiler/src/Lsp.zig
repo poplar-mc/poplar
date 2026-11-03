@@ -54,6 +54,10 @@ const builtins = [_]Builtin{
     .{ .name = "text", .signature = "text(value)", .doc = "A text part that names a score or data. The game reads the value when it shows the text." },
     .{ .name = "onEvent", .signature = "onEvent(criteria, callback)", .doc = "Runs the mcfun `callback` as a player each time the criteria counts for that player. Only in `mcfun load`." },
     .{ .name = "onTrigger", .signature = "onTrigger(name, callback)", .doc = "Makes `/trigger name` run the mcfun `callback` as the player who used it. Only in `mcfun load`." },
+    .{ .name = "onDeath", .signature = "onDeath(callback)", .doc = "Runs the mcfun `callback` as a player when the player dies. Only in `mcfun load`." },
+    .{ .name = "onFirstJoin", .signature = "onFirstJoin(callback)", .doc = "Runs the mcfun `callback` as a player the first time the player joins the world. Only in `mcfun load`." },
+    .{ .name = "onJoin", .signature = "onJoin(callback)", .doc = "Runs the mcfun `callback` as a player each time the player joins, the first time too. Only in `mcfun load`." },
+    .{ .name = "onRespawn", .signature = "onRespawn(callback)", .doc = "Runs the mcfun `callback` as a player when a dead player is alive again. Only in `mcfun load`." },
     .{ .name = "slice", .signature = "slice(text, start, end)", .doc = "A substring: from `start` (included) to `end` (not included, optional). Negative bounds count from the end. One `data modify ... set string` command." },
     .{ .name = "str", .signature = "str(value)", .doc = "A number, score or math as a string: `$label = str(#kills);`." },
     .{ .name = "startsWith", .signature = "startsWith(text, \"prefix\")", .doc = "A condition: the text starts with a constant prefix." },
@@ -244,9 +248,11 @@ pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params:
     const compiler = if (analysis) |found| found.result.compiler else null;
     const place: ?Place = if (analysis) |found| try placeOf(arena, found, params.textDocument.uri, params.position) else null;
 
+    // A name in the file's own namespace without its `ns:`, any other with it.
+    const own: []const u8 = if (compiler) |found| try std.fmt.allocPrint(arena, "{s}:", .{found.file_namespaces.get(place.?.path) orelse found.namespace}) else "";
     switch (sigil) {
         '#' => if (compiler) |found| {
-            for (found.globals.keys()) |name| try items.append(arena, .{ .label = name, .kind = .Variable, .detail = "score" });
+            for (found.globals.keys()) |name| try items.append(arena, .{ .label = completionLabel(name, own), .kind = .Variable, .detail = "score" });
             for (try visibleLocals(arena, found, place.?, .score)) |local| {
                 try items.append(arena, .{ .label = local.name, .kind = .Variable, .detail = "local score" });
             }
@@ -254,7 +260,7 @@ pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params:
         '$' => if (compiler) |found| {
             var globals = found.data_globals.iterator();
             while (globals.next()) |entry| {
-                try items.append(arena, .{ .label = entry.key_ptr.*, .kind = .Variable, .detail = "data" });
+                try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Variable, .detail = "data" });
             }
             for (try visibleLocals(arena, found, place.?, .data)) |local| {
                 try items.append(arena, .{ .label = local.name, .kind = .Variable, .detail = "local data" });
@@ -268,7 +274,6 @@ pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params:
             for (Token.Keywords.keys()) |keyword| try items.append(arena, .{ .label = keyword, .kind = .Keyword });
             for (builtins) |each| try items.append(arena, .{ .label = each.name, .kind = .Function, .detail = each.signature });
             if (compiler) |found| {
-                const own = try std.fmt.allocPrint(arena, "{s}:", .{found.file_namespaces.get(place.?.path) orelse found.namespace});
                 var data_files = found.named_data_files.iterator();
                 while (data_files.next()) |entry| {
                     try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Constant, .detail = entry.value_ptr.id });
@@ -549,21 +554,12 @@ fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, word: Wo
     }
 }
 
-// `mcfun clamp(x, low, high)`
+// `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
 fn signature(arena: std.mem.Allocator, function: *const Ast.Function) ![]const u8 {
-    var text: std.Io.Writer.Allocating = .init(arena);
-    const writer = &text.writer;
-    writeSignature(writer, function) catch return error.OutOfMemory;
-    return text.written();
-}
-
-fn writeSignature(writer: *std.Io.Writer, function: *const Ast.Function) std.Io.Writer.Error!void {
-    try writer.print("mcfun {s}(", .{function.name});
-    for (function.params, 0..) |param, index| {
-        if (index > 0) try writer.writeAll(", ");
-        try writer.writeAll(param.name);
-    }
-    try writer.writeAll(")");
+    var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
+    try Compiler.collectMacroKeys(arena, function.body, &keys);
+    if (keys.count() == 0) return std.fmt.allocPrint(arena, "mcfun {s}()", .{function.name});
+    return std.fmt.allocPrint(arena, "mcfun {s}() with {{{s}}}", .{ function.name, try std.mem.join(arena, ", ", keys.keys()) });
 }
 
 // The `//` lines right above line `line` (1-based), without the slashes.

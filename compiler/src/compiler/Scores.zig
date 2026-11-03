@@ -42,10 +42,8 @@ pub fn compileInto(self: *Compiler, target: Ir.Score, expression: *const Ast.Exp
     }
 
     switch (expression.kind) {
+        .macro_key => |name| return commands.append(self.gpa, .{ .score_set_param = .{ .score = target, .param = name } }),
         .identifier => |identifier| {
-            if (identifier.storage == .compile_time) {
-                return commands.append(self.gpa, .{ .score_set_param = .{ .score = target, .param = identifier.name } });
-            }
             if (identifier.storage == .data or identifier.storage == .entity_data) {
                 const source = try Data.dataPathOf(self, identifier, env) orelse return;
                 return commands.append(self.gpa, .{ .data_to_score = .{ .source = source, .score = target } });
@@ -260,8 +258,8 @@ test "uses temp when target is read after write" {
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\scoreboard players operation #poplar.f.t0 ns = #global ns.b
-        \\execute store result score #global ns.a run scoreboard players operation #poplar.f.t0 ns -= #global ns.a
+        \\scoreboard players operation #poplar.f.t0 poplar.ns = #global ns.b
+        \\execute store result score #global ns.a run scoreboard players operation #poplar.f.t0 poplar.ns -= #global ns.a
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "f"));
 }
@@ -297,7 +295,7 @@ test "entity scores and execute blocks" {
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "poplar/tick/execute_0"));
     try std.testing.expectEqualStrings(
-        \\scoreboard objectives add ns dummy
+        \\scoreboard objectives add poplar.ns dummy
         \\scoreboard objectives add ns.mana dummy
         \\scoreboard objectives add ns.max dummy
         \\execute unless score #global ns.max matches -2147483648.. run scoreboard players set #global ns.max 100

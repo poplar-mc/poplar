@@ -70,11 +70,28 @@ pub fn appendEventFunctions(self: *Compiler, functions: *std.ArrayList(Ir.McFunc
     for (self.events.items, 0..) |event, index| {
         const objective = try eventObjective(self, event, index);
         const name = try std.fmt.allocPrint(self.gpa, "poplar/event_{d}", .{index});
-        const reset = try std.fmt.allocPrint(self.gpa, "scoreboard players reset @s {s}", .{objective});
-        try functions.append(self.gpa, .{ .name = name, .commands = try self.gpa.dupe(Ir.Command, &.{ .{ .raw = reset }, .{ .function = event.callback } }) });
+        const reset: Ir.Command = .{ .raw = try std.fmt.allocPrint(self.gpa, "scoreboard players reset @s {s}", .{objective}) };
+        // A player without the tag `<objective>` has not joined before.
+        const mark: Ir.Command = .{ .raw = try std.fmt.allocPrint(self.gpa, "tag @s add {s}", .{objective}) };
+        const body: []const Ir.Command = switch (event.kind) {
+            .criteria, .trigger, .respawn => &.{ reset, .{ .function = event.callback } },
+            .first_join => &.{ mark, .{ .function = event.callback } },
+            .join => &.{ reset, mark, .{ .function = event.callback } },
+        };
+        try functions.append(self.gpa, .{ .name = name, .commands = try self.gpa.dupe(Ir.Command, body) });
 
-        const subcommands = try std.fmt.allocPrint(self.gpa, "as @a[scores={{{s}=1..}}] at @s", .{objective});
-        try tick.append(self.gpa, .{ .execute_raw = .{ .subcommands = subcommands, .run = try self.createCommand(.{ .function = name }) } });
+        const players: []const []const u8 = switch (event.kind) {
+            .criteria, .trigger => &.{try std.fmt.allocPrint(self.gpa, "@a[scores={{{s}=1..}}]", .{objective})},
+            .first_join => &.{try std.fmt.allocPrint(self.gpa, "@a[tag=!{s}]", .{objective})},
+            // A rejoin: the score of `leave_game` counted when the player left.
+            .join => &.{ try std.fmt.allocPrint(self.gpa, "@a[tag=!{s}]", .{objective}), try std.fmt.allocPrint(self.gpa, "@a[scores={{{s}=1..}}]", .{objective}) },
+            // Dead, and alive again: `time_since_death` only counts while the player is alive.
+            .respawn => &.{try std.fmt.allocPrint(self.gpa, "@a[scores={{{s}=1..,{s}_alive=1..}}]", .{ objective, objective })},
+        };
+        for (players) |selector| {
+            const subcommands = try std.fmt.allocPrint(self.gpa, "as {s} at @s", .{selector});
+            try tick.append(self.gpa, .{ .execute_raw = .{ .subcommands = subcommands, .run = try self.createCommand(.{ .function = name }) } });
+        }
     }
     for (self.events.items) |event| {
         const trigger = event.trigger orelse continue;
@@ -143,8 +160,17 @@ pub fn buildLoadFunction(self: *Compiler, functions: []const Ir.McFunction) Comp
     for (try Declarations.outputNamespaces(self)) |namespace| try commands.append(self.gpa, .{ .add_objective = .{ .namespace = namespace } });
     for (self.globals.values()) |global| try commands.append(self.gpa, .{ .add_objective = .{ .namespace = global.output_namespace, .name = global.name } });
     for (self.events.items, 0..) |event, index| {
-        const add = try std.fmt.allocPrint(self.gpa, "scoreboard objectives add {s} {s}", .{ try eventObjective(self, event, index), event.criteria });
-        try commands.append(self.gpa, .{ .raw = add });
+        const objective = try eventObjective(self, event, index);
+        const criteria = switch (event.kind) {
+            .criteria, .trigger => event.criteria,
+            .first_join => continue,
+            .join => "minecraft.custom:minecraft.leave_game",
+            .respawn => "deathCount",
+        };
+        try commands.append(self.gpa, .{ .raw = try std.fmt.allocPrint(self.gpa, "scoreboard objectives add {s} {s}", .{ objective, criteria }) });
+        if (event.kind == .respawn) {
+            try commands.append(self.gpa, .{ .raw = try std.fmt.allocPrint(self.gpa, "scoreboard objectives add {s}_alive minecraft.custom:minecraft.time_since_death", .{objective}) });
+        }
     }
 
     for (self.constants.keys()) |constant| {
@@ -163,7 +189,7 @@ pub fn buildLoadFunction(self: *Compiler, functions: []const Ir.McFunction) Comp
     }
 
     for (self.data_globals.values()) |global| {
-        var target: Ir.DataPath = .inStorage(.data, global.name);
+        var target: Ir.DataPath = .inStorage(global.storage, global.name);
         target.namespace = global.output_namespace;
         try commands.append(self.gpa, .{ .data_set_if_unset = .{ .target = target, .snbt = global.initial_snbt } });
     }
@@ -181,37 +207,79 @@ pub fn buildLoadFunction(self: *Compiler, functions: []const Ir.McFunction) Comp
 
 // `onEvent(criteria, callback)` or `onTrigger(name, callback)` in the entry file's `load`. It registers the event
 // at compile time and writes no command.
+// The event builtins, and the kind of event each one registers.
+pub const event_builtins = std.StaticStringMap(Compiler.Event.Kind).initComptime(.{
+    .{ "onEvent", .criteria },
+    .{ "onTrigger", .trigger },
+    .{ "onDeath", .criteria },
+    .{ "onFirstJoin", .first_join },
+    .{ "onJoin", .join },
+    .{ "onRespawn", .respawn },
+});
+
 pub fn compileEvent(self: *Compiler, call: Ast.Call, builtin: []const u8, env: *Environment) Compiler.CompileError!void {
-    const is_trigger = std.mem.eql(u8, builtin, "onTrigger");
+    const kind = event_builtins.get(builtin).?;
+    const is_trigger = kind == .trigger;
     if (!self.in_load) return self.addError("'{s}' must be in 'mcfun load'", .{builtin});
     if (isInRuntimeBranch(env)) return self.addError("'{s}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'", .{builtin});
+
+    // `onEvent(criteria, callback)` and `onTrigger(name, callback)` take a name first; the player events only a callback.
+    const takes_name = std.mem.eql(u8, builtin, "onEvent") or is_trigger;
     const first = if (is_trigger) "name" else "criteria";
-    if (call.args.len != 2) return self.addError("'{s}' expects 2 arguments ({s}, callback), found {d}", .{ builtin, first, call.args.len });
+    if (takes_name and call.args.len != 2) return self.addError("'{s}' expects 2 arguments ({s}, callback), found {d}", .{ builtin, first, call.args.len });
+    if (!takes_name and call.args.len != 1) return self.addError("'{s}' expects 1 argument (callback), found {d}", .{ builtin, call.args.len });
 
-    const value = try Values.evaluate(self, call.args[0], env) orelse return;
-    if (value != .string or value.string.len == 0) {
-        return self.addError("the {s} of '{s}' must be a string, for example \"{s}\"", .{ first, builtin, if (is_trigger) "showoff" else "deathCount" });
-    }
-    if (is_trigger) for (value.string) |char| {
-        if (!std.ascii.isAlphanumeric(char) and std.mem.indexOfScalar(u8, "_-.+", char) == null) {
-            return self.addError("the trigger name '{s}' can only have letters, 0-9, '_', '-', '.' and '+'", .{value.string});
+    var criteria: []const u8 = if (std.mem.eql(u8, builtin, "onDeath")) "deathCount" else "";
+    var trigger: ?[]const u8 = null;
+    if (takes_name) {
+        const value = try Values.evaluate(self, call.args[0], env) orelse return;
+        if (value != .string or value.string.len == 0) {
+            return self.addError("the {s} of '{s}' must be a string, for example \"{s}\"", .{ first, builtin, if (is_trigger) "showoff" else "deathCount" });
         }
-    };
+        if (is_trigger) for (value.string) |char| {
+            if (!std.ascii.isAlphanumeric(char) and std.mem.indexOfScalar(u8, "_-.+", char) == null) {
+                return self.addError("the trigger name '{s}' can only have letters, 0-9, '_', '-', '.' and '+'", .{value.string});
+            }
+        };
+        if (is_trigger) if (try poplarObjectiveClash(self, value.string)) |prefix| {
+            return self.addError("the trigger name '{s}' starts with '{s}', which Poplar uses for its own objectives", .{ value.string, prefix });
+        };
+        criteria = if (is_trigger) "trigger" else value.string;
+        if (is_trigger) trigger = value.string;
+    }
 
-    const callback = call.args[1];
+    const callback = try callbackOf(self, call.args[call.args.len - 1], builtin) orelse return;
+    try self.events.append(self.gpa, .{ .kind = kind, .criteria = criteria, .callback = callback, .namespace = self.scope.output_namespace, .trigger = trigger });
+}
+
+// The IR name of an event's callback: an mcfun that uses no macro arguments. Null after an error.
+fn callbackOf(self: *Compiler, callback: *const Ast.Expr, builtin: []const u8) Compiler.CompileError!?[]const u8 {
     const outer_position = self.enterExpression(callback);
     defer self.restorePosition(outer_position);
-    if (callback.kind != .identifier or callback.kind.identifier.storage != .compile_time) return self.addError("the callback of '{s}' must be the name of an mcfun", .{builtin});
-    const name = callback.kind.identifier.name;
-    const found = try Declarations.findFunction(self, callback.kind.identifier) orelse return;
-    if (found.located.function.params.len > 0) return self.addError("the callback '{s}' is run by the game, so it cannot have parameters", .{name});
-
-    const callback_name = found.located.ir_name;
-    if (is_trigger) {
-        try self.events.append(self.gpa, .{ .criteria = "trigger", .callback = callback_name, .namespace = self.scope.output_namespace, .trigger = value.string });
-    } else {
-        try self.events.append(self.gpa, .{ .criteria = value.string, .callback = callback_name, .namespace = self.scope.output_namespace });
+    if (callback.kind != .identifier or callback.kind.identifier.storage != .compile_time) {
+        try self.addError("the callback of '{s}' must be the name of an mcfun", .{builtin});
+        return null;
     }
+    const name = callback.kind.identifier.name;
+    const found = try Declarations.findFunction(self, callback.kind.identifier) orelse return null;
+    var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
+    try Compiler.collectMacroKeys(self.gpa, found.located.function.body, &keys);
+    if (keys.count() > 0) {
+        try self.addError("the callback '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ name, keys.keys()[0] });
+        return null;
+    }
+    return found.located.ir_name;
+}
+
+// Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name clashes with.
+fn poplarObjectiveClash(self: *Compiler, name: []const u8) Compiler.CompileError!?[]const u8 {
+    if (std.mem.startsWith(u8, name, "poplar.")) return "poplar.";
+    const namespaces = try std.mem.concat(self.gpa, []const u8, &.{ &.{self.namespace}, try Declarations.outputNamespaces(self) });
+    for (namespaces) |namespace| {
+        const prefix = try std.fmt.allocPrint(self.gpa, "{s}.", .{namespace});
+        if (std.mem.startsWith(u8, name, prefix)) return prefix;
+    }
+    return null;
 }
 
 pub fn isInRuntimeBranch(env: *const Environment) bool {
@@ -229,18 +297,18 @@ test "selectors as values, text parts and events" {
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\var #hp = 7;
         \\var $stats = {maxHp: 20};
-        \\mcfun tellraw(target, message) { /tellraw {{target}} {{message}}; }
+        \\mcfun tellraw() { /tellraw $(target) $(message); }
         \\mcfun load() { onEvent("deathCount", playerDied); }
-        \\mcfun playerDied() { var #left = 3; tellraw(@a, ["HP ", text(#hp), text($stats.maxHp), text(@s.$CustomName), text(#left)]); }
-        \\mcfun greet(target) { /say {{target}}; }
-        \\mcfun main() { greet(@p); }
+        \\mcfun playerDied() { var #left = 3; tellraw() with {target: @a, message: ["HP ", text(#hp), text($stats.maxHp), text(@s.$CustomName), text(#left)]}; }
+        \\mcfun greet() { /say $(target); }
+        \\mcfun main() { greet() with {target: @p}; }
     );
     const program = try compiler.compile();
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\scoreboard players set #left_playerDied ns 3
-        \\function ns:tellraw {target:"@a",message:["HP ",{score:{name:"#global",objective:"ns.hp"}},{storage:"ns:data",nbt:"stats.maxHp"},{entity:"@s",nbt:"CustomName"},{score:{name:"#left_playerDied",objective:"ns"}}]}
+        \\scoreboard players set #left_playerDied poplar.ns 3
+        \\function ns:tellraw {target:"@a",message:["HP ",{score:{name:"#global",objective:"ns.hp"}},{storage:"ns:data",nbt:"stats.maxHp"},{entity:"@s",nbt:"CustomName"},{score:{name:"#left_playerDied",objective:"poplar.ns"}}]}
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "playerDied"));
     try std.testing.expectEqualStrings("function ns:greet {target:\"@p\"}\n", try Compiler.renderForTest(arena.allocator(), program, "main"));
@@ -270,14 +338,14 @@ test "onEvent errors" {
         \\    onEvent("deathCount", withParam);
         \\    onEvent("deathCount", missing);
         \\}
-        \\mcfun withParam(x) { }
+        \\mcfun withParam() { /say $(x); }
         \\mcfun other() { onEvent("deathCount", other); }
     );
     _ = try compiler.compile();
 
     const errors = compiler.errors.items;
     try std.testing.expectEqual(3, errors.len);
-    try std.testing.expectEqualStrings("the callback 'withParam' is run by the game, so it cannot have parameters", errors[0].message);
+    try std.testing.expectEqualStrings("the callback 'withParam' is run by the game, so it gets no macro arguments and cannot use '$(x)'", errors[0].message);
     try std.testing.expectEqualStrings("unknown function 'missing'", errors[1].message);
     try std.testing.expectEqualStrings("'onEvent' must be in 'mcfun load'", errors[2].message);
 }
@@ -293,7 +361,7 @@ test "load and tick of a project namespace are run by the game, std's are not" {
     );
     const program = try compiler.compile();
     try std.testing.expectEqualStrings(
-        \\scoreboard objectives add ns dummy
+        \\scoreboard objectives add poplar.ns dummy
         \\scoreboard objectives add ns.mana dummy
         \\function ns:load
         \\
@@ -308,31 +376,55 @@ test "load and tick of a project namespace are run by the game, std's are not" {
     try std.testing.expectEqual(0, library_program.tick.len);
 }
 
-test "onTrigger makes a trigger objective, runs the callback and enables it again" {
+test "onTrigger makes a trigger objective, runs the callback and enables it again, even with the namespace name" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\mcfun load() {
-        \\    onTrigger("showoff", show);
+        \\    onTrigger("ns", show);
         \\    onTrigger("bad name", show);
+        \\    onTrigger("ns.mana", show);
         \\}
         \\mcfun show() { /say shown; }
     );
     const program = try compiler.compile();
-    try std.testing.expectEqual(1, compiler.errors.items.len);
+    try std.testing.expectEqual(2, compiler.errors.items.len);
     try std.testing.expectEqualStrings("the trigger name 'bad name' can only have letters, 0-9, '_', '-', '.' and '+'", compiler.errors.items[0].message);
+    try std.testing.expectEqualStrings("the trigger name 'ns.mana' starts with 'ns.', which Poplar uses for its own objectives", compiler.errors.items[1].message);
 
     try std.testing.expectEqualStrings(
-        \\execute as @a[scores={showoff=1..}] at @s run function ns:poplar/event_0
-        \\scoreboard players enable @a showoff
+        \\execute as @a[scores={ns=1..}] at @s run function ns:poplar/event_0
+        \\scoreboard players enable @a ns
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "poplar/tick"));
     try std.testing.expectEqualStrings(
-        \\scoreboard players reset @s showoff
+        \\scoreboard players reset @s ns
         \\function ns:show
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "poplar/event_0"));
     const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
-    try std.testing.expect(std.mem.indexOf(u8, load, "scoreboard objectives add showoff trigger\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, load, "scoreboard objectives add poplar.ns dummy\nscoreboard objectives add ns trigger\n") != null);
+}
+
+test "player events: first join, join, death and respawn" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try Compiler.compileForTest(arena.allocator(),
+        \\mcfun load() { onFirstJoin(welcome); onJoin(greet); onRespawn(back); onJoin(); }
+        \\mcfun welcome() {}
+        \\mcfun greet() {}
+        \\mcfun back() {}
+    );
+    const program = try compiler.compile();
+    try std.testing.expectEqual(1, compiler.errors.items.len);
+    try std.testing.expectEqualStrings("'onJoin' expects 1 argument (callback), found 0", compiler.errors.items[0].message);
+    try std.testing.expectEqualStrings(
+        \\execute as @a[tag=!ns.event_0] at @s run function ns:poplar/event_0
+        \\execute as @a[tag=!ns.event_1] at @s run function ns:poplar/event_1
+        \\execute as @a[scores={ns.event_1=1..}] at @s run function ns:poplar/event_1
+        \\execute as @a[scores={ns.event_2=1..,ns.event_2_alive=1..}] at @s run function ns:poplar/event_2
+        \\
+    , try Compiler.renderForTest(arena.allocator(), program, "poplar/tick"));
 }

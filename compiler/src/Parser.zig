@@ -179,38 +179,21 @@ fn parseFunction(self: *Self) ParseError!?Ast.Function {
     const name = self.current.literal;
 
     if (!try self.expectPeek(.left_paren)) return null;
-    const params = try self.parseParams() orelse return null;
+    if (!self.peekIs(.right_paren)) {
+        try self.nextToken();
+        try self.addError("an mcfun has no parameter list. Pass a compound with 'f() with {{name: ...}}' and read it with '$(name)'", .{});
+        return null;
+    }
+    try self.nextToken();
 
     if (!try self.expectPeek(.left_brace)) return null;
     const body = try self.parseBlock() orelse return null;
 
     return .{
         .name = name,
-        .params = params,
         .body = body,
         .line = line,
     };
-}
-
-fn parseParams(self: *Self) ParseError!?[]const Ast.Param {
-    var params: std.ArrayList(Ast.Param) = .empty;
-
-    if (self.peekIs(.right_paren)) {
-        try self.nextToken();
-        return &.{};
-    }
-
-    while (true) {
-        if (!try self.expectPeek(.identifier)) return null;
-        try params.append(self.gpa, .{ .name = self.current.literal });
-
-        if (!self.peekIs(.comma)) break;
-        try self.nextToken();
-    }
-
-    if (!try self.expectPeek(.right_paren)) return null;
-
-    return try params.toOwnedSlice(self.gpa);
 }
 
 fn parseBlock(self: *Self) ParseError!?[]const Ast.Stmt {
@@ -510,6 +493,7 @@ fn parsePrefix(self: *Self) ParseError!?*Ast.Expr {
             return null;
         },
         .condition_text => .{ .minecraft_check = try self.parseCommandParts(self.current.literal) orelse return null },
+        .macro_key => .{ .macro_key = self.current.literal },
         .left_paren => return self.parseGroupedExpression(),
         else => {
             try self.addError("expected an expression, found '{s}'", .{describe(self.current)});
@@ -628,9 +612,20 @@ fn parseCallExpression(self: *Self, callee: *Ast.Expr) ParseError!?*Ast.Expr {
         if (!try self.expectPeek(.right_paren)) return null;
     }
 
+    var with: ?Ast.Call.With = null;
+    if (self.peekIs(.with)) {
+        try self.nextToken();
+        try self.nextToken();
+        with = if (self.currentIs(.with_source))
+            .{ .raw = self.current.literal }
+        else
+            .{ .value = try self.parseExpression(.call) orelse return null };
+    }
+
     return try self.createExpr(callee.line, callee.column, .{ .call = .{
         .callee = callee,
         .args = try args.toOwnedSlice(self.gpa),
+        .with = with,
     } });
 }
 
@@ -804,17 +799,16 @@ test "parse hello.poplar" {
     try std.testing.expectEqualStrings("hello", call.args[0].kind.string);
 }
 
-test "parse mcfun with params" {
+test "parse calls with a macro compound, a path or raw text, and macro keys" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
-    const program = try parseValidForTest(arena.allocator(), "mcfun greet(name, times) {}");
+    const program = try parseValidForTest(arena.allocator(), "mcfun f() { g() with {name: $(name)}; g() with $players[0]; g() with entity @s; }");
 
-    const function = program.functions[0];
-    try std.testing.expectEqual(2, function.params.len);
-    try std.testing.expectEqualStrings("name", function.params[0].name);
-    try std.testing.expectEqualStrings("times", function.params[1].name);
-    try std.testing.expectEqual(0, function.body.len);
+    const body = program.functions[0].body;
+    try std.testing.expectEqualStrings("name", body[0].kind.expression.kind.call.with.?.value.kind.compound[0].value.kind.macro_key);
+    try std.testing.expectEqualStrings("players[0]", body[1].kind.expression.kind.call.with.?.value.kind.identifier.name);
+    try std.testing.expectEqualStrings("entity @s", body[2].kind.expression.kind.call.with.?.raw);
 }
 
 test "parse var statement" {

@@ -40,6 +40,10 @@ pub const TokenType = enum {
     condition_text,
     // The JSON body of a data file, from `{` or `[` to the matching bracket.
     json_body,
+    // `$(name)`: a macro argument of the mcfun. The literal is the name.
+    macro_key,
+    // `entity @s` or `block ~ ~ ~` after `with`: raw text to the `;`.
+    with_source,
     string,
     number,
     @"and",
@@ -61,6 +65,7 @@ pub const TokenType = enum {
     true,
     @"var",
     @"while",
+    with,
     eof,
     illegal,
     // A string, `(`, `[` or JSON body that is not closed. The literal is the missing character.
@@ -87,6 +92,7 @@ pub const Keywords = std.StaticStringMap(TokenType).initComptime(.{
     .{ "var", .@"var" },
     .{ "true", .true },
     .{ "while", .@"while" },
+    .{ "with", .with },
 });
 
 type: TokenType,

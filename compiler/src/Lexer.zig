@@ -90,6 +90,7 @@ fn readToken(self: *Self) Token {
         ']' => tok = self.newToken(.right_bracket, "]"),
         ':' => tok = self.newToken(.colon, ":"),
         '$', '#' => {
+            if (self.ch == '$' and self.peekChar() == '(') return self.readMacroKey();
             const token_type: Token.TokenType = if (self.ch == '#') .score_identifier else .data_identifier;
             if (isLetter(self.peekChar())) {
                 self.readChar();
@@ -158,6 +159,10 @@ fn readToken(self: *Self) Token {
         },
         else => {
             if (isLetter(self.ch)) {
+                if (self.startsWithSource()) {
+                    const text = self.readBalanced(';') orelse return self.newToken(.unclosed, "\"");
+                    return self.newToken(.with_source, std.mem.trimEnd(u8, text, " \t\r"));
+                }
                 if (self.startsConditionCheck()) return self.newToken(.condition_text, self.readConditionText());
                 const literal = self.readIdentifier();
                 return self.newToken(Token.Keywords.get(literal) orelse .identifier, literal);
@@ -208,6 +213,25 @@ fn readExecuteSubcommands(self: *Self) Token {
 
     self.readChar();
     return self.newToken(.execute_subcommands, std.mem.trimEnd(u8, text, " \t\r"));
+}
+
+// Reads `$(name)`. The literal is the name.
+fn readMacroKey(self: *Self) Token {
+    self.readChar();
+    self.readChar();
+    const name = self.readIdentifier();
+    if (name.len == 0 or self.ch != ')') return self.newToken(.illegal, "$(");
+    self.readChar();
+    return self.newToken(.macro_key, name);
+}
+
+// `entity` or `block` right after `with`.
+fn startsWithSource(self: *Self) bool {
+    if (self.previous_type != .with) return false;
+    var end = self.pos;
+    while (end < self.input.len and isLetter(self.input[end])) end += 1;
+    const word = self.input[self.pos..end];
+    return std.mem.eql(u8, word, "entity") or std.mem.eql(u8, word, "block");
 }
 
 // Reads `@s` or `@a[tag=x,limit=1]`.

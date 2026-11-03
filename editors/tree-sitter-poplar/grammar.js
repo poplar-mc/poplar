@@ -66,7 +66,7 @@ module.exports = grammar({
     function_definition: $ => seq(
       'mcfun',
       field('name', $.identifier),
-      field('parameters', $.parameter_list),
+      '(', ')',
       field('body', $.block),
     ),
 
@@ -82,10 +82,6 @@ module.exports = grammar({
     json_array: $ => seq('[', commaSep($._json_value), ']'),
     _json_value: $ => choice($.json_object, $.json_array, $.string, $.json_number, $.boolean, $.null),
     json_number: _ => /-?\d+(\.\d+)?([eE][+-]?\d+)?/,
-
-    parameter_list: $ => seq('(', commaSep($.parameter), ')'),
-
-    parameter: $ => field('name', $.identifier),
 
     block: $ => seq('{', repeat($._statement), '}'),
 
@@ -134,7 +130,7 @@ module.exports = grammar({
     // `execute (as @a at @s) { ... }`. The subcommands are raw Minecraft text.
     execute_statement: $ => seq(
       'execute', '(',
-      field('subcommands', repeat(choice($.insert, $.selector, alias($._subcommand_text, $.command_text)))),
+      field('subcommands', repeat(choice($.insert, $.selector, $.macro_key, alias($._subcommand_text, $.command_text)))),
       ')',
       field('body', $.block),
     ),
@@ -143,15 +139,15 @@ module.exports = grammar({
     command: $ => seq(
       '/',
       field('name', $.command_name),
-      repeat(choice($.insert, $.selector, $.command_text)),
+      repeat(choice($.insert, $.selector, $.macro_key, $.command_text)),
       ';',
     ),
 
     command_name: _ => /[a-z_]+/,
 
-    command_text: _ => /[^\s;@{]+|\{[^{;\s]*/,
+    command_text: _ => /[^\s;@{$]+|\{[^{;\s]*|\$/,
 
-    _subcommand_text: _ => /[^\s;@{()]+/,
+    _subcommand_text: _ => /[^\s;@{()$]+|\$/,
 
     insert: $ => seq('{{', $._expression, '}}'),
 
@@ -174,14 +170,18 @@ module.exports = grammar({
       $.compound_literal,
       $.selector,
       $.minecraft_check,
+      $.macro_key,
     ),
+
+    // `$(name)`: a macro argument of the mcfun.
+    macro_key: _ => token(prec(1, /\$\([A-Za-z_][A-Za-z0-9_]*\)/)),
 
     // `block ~ ~-1 ~ stone` in a condition: an `execute if` subcommand as raw text, up to `and`, `or` or `)`.
     minecraft_check: $ => prec.right(seq(
       field('kind', alias(/(biome|block|blocks|data|dimension|entity|function|items|loaded|predicate|score|slots|stopwatch)\s/, $.check_kind)),
-      repeat1(choice($.insert, $.selector, $.check_text)),
+      repeat1(choice($.insert, $.selector, $.macro_key, $.check_text)),
     )),
-    check_text: _ => /[^\s(){}@]+|\{[^{\s)]*/,
+    check_text: _ => /[^\s(){}@$]+|\{[^{\s)]*|\$/,
 
     list_literal: $ => seq('[', commaSep($._expression), ']'),
     compound_literal: $ => seq('{', commaSep($.compound_entry), '}'),
@@ -204,7 +204,11 @@ module.exports = grammar({
     call_expression: $ => prec(PREC.call, seq(
       field('function', choice($.identifier, $.qualified_name)),
       field('arguments', $.argument_list),
+      optional(seq('with', field('with', choice($.compound_literal, $.data_variable, $.entity_data, $.with_source)))),
     )),
+
+    // `entity @s` or `block ~ ~ ~` after `with`: raw Minecraft text to the `;`.
+    with_source: $ => seq(field('kind', choice('entity', 'block')), field('text', alias(/[^;]+/, $.with_text))),
 
     argument_list: $ => seq('(', commaSep($._expression), ')'),
 

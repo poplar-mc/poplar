@@ -42,7 +42,6 @@ pub const DataFile = struct {
 
 pub const Function = struct {
     name: []const u8,
-    params: []const Param,
     body: []const Stmt,
     line: usize,
 };
@@ -80,11 +79,6 @@ pub const Identifier = struct {
     namespace: ?[]const u8 = null,
     // Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
     selector: ?[]const u8 = null,
-};
-
-// A parameter is a macro value: `$(name)` in the lines that use it.
-pub const Param = struct {
-    name: []const u8,
 };
 
 pub const VarDecl = struct {
@@ -159,6 +153,8 @@ pub const Expr = struct {
         selector: []const u8,
         // `block ~ ~-1 ~ stone` in a condition: the text after `execute if`, with `{{...}}` inserts.
         minecraft_check: []const CommandPart,
+        // `$(name)`: a macro argument of the mcfun, known when the call starts.
+        macro_key: []const u8,
     };
 };
 
@@ -186,6 +182,14 @@ pub const Infix = struct {
 };
 
 pub const Call = struct {
+    // `f() with {name: "Steve"}`, `f() with $player` or `f() with entity @s`.
+    pub const With = union(enum) {
+        value: *Expr,
+        // `entity @s` or `block ~ ~ ~`, as it is written.
+        raw: []const u8,
+    };
+
     callee: *Expr,
     args: []const *Expr,
+    with: ?With = null,
 };

@@ -29,6 +29,20 @@ pow = 1024
 random = 5
 random in range
 minmax = 2
+lerp = 25
+sin = 500
+cos = -500
+sqrt big = 44721
+weighted = 1
+count = 2
+contains = 0
+indexOf = 3
+sum = 11
+minOf = 15
+number search = 220
+id search = 1
+sorted [1,1,4,5]
+reversed ["Ari","Steve","Alex","Steve"]
 entity = 21
 strong = 1
 nbt = 7

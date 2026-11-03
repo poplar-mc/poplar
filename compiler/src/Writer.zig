@@ -181,7 +181,7 @@ pub fn renderFunction(gpa: std.mem.Allocator, namespace: []const u8, function: I
     return text.toOwnedSlice(gpa);
 }
 
-fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, command: Ir.Command) !void {
+pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, command: Ir.Command) !void {
     switch (command) {
         .raw => |command_text| try text.appendSlice(gpa, command_text),
         .function => |name| try text.print(gpa, "function {f}", .{functionId(namespace, name)}),
@@ -242,9 +242,11 @@ fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []
             try text.print(gpa, "function {f}", .{functionId(namespace, call.name)});
             switch (call.arguments) {
                 .compound => |compound| try text.print(gpa, " {s}", .{compound}),
-                .data_storage => try text.print(gpa, " with storage {s}:data", .{namespace}),
+                .data_storage => |storage| try text.print(gpa, " with storage {s}:{s}", .{ storage.namespace orelse namespace, if (storage.storage == .std) "std" else "data" }),
                 .args_storage => try text.print(gpa, " with storage {s}:poplar args", .{namespace}),
                 .macro_storage => try text.print(gpa, " with storage {s}:poplar macro", .{namespace}),
+                .data_path => |path| try text.print(gpa, " with {f}", .{dataPathText(namespace, path)}),
+                .raw => |raw_text| try text.print(gpa, " with {s}", .{raw_text}),
             }
         },
         .macro => |macro_text| try text.appendSlice(gpa, macro_text),
@@ -369,6 +371,7 @@ const DataPathText = struct {
         switch (self.data_path.holder) {
             .storage => |storage| switch (storage) {
                 .data => try writer.print("storage {s}:data {s}", .{ self.data_path.namespace orelse self.namespace, path }),
+                .std => try writer.print("storage {s}:std {s}", .{ self.namespace, path }),
                 .args => try writer.print("storage {s}:poplar args.{s}", .{ self.namespace, path }),
                 .frame => try writer.print("storage {s}:poplar stack[-1].{s}", .{ self.namespace, path }),
                 .poplar => try writer.print("storage {s}:poplar {s}", .{ self.namespace, path }),
@@ -390,9 +393,10 @@ const ObjectiveText = struct {
     namespace: []const u8,
     objective: ?[]const u8,
 
+    // Poplar's own objective is `poplar.<ns>`, so a trigger can have the name of its namespace.
     pub fn format(self: ObjectiveText, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.writeAll(self.namespace);
-        if (self.objective) |objective| try writer.print(".{s}", .{objective});
+        if (self.objective) |objective| return writer.print("{s}.{s}", .{ self.namespace, objective });
+        try writer.print("poplar.{s}", .{self.namespace});
     }
 };
 
@@ -463,7 +467,7 @@ test "writes functions and tags" {
 
     const load_text = try tmp.dir.readFileAlloc(io, "data/demo/function/poplar/load.mcfunction", arena.allocator(), .unlimited);
     try std.testing.expectEqualStrings(
-        "execute unless score $hp demo matches -2147483648.. run scoreboard players set $hp demo 20\n",
+        "execute unless score $hp poplar.demo matches -2147483648.. run scoreboard players set $hp poplar.demo 20\n",
         load_text,
     );
 

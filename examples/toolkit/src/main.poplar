@@ -1,8 +1,6 @@
 // A few /trigger tools, split over several files. Every file in src/ is built, and files with the same namespace share names.
 namespace toolkit;
 
-import std;
-
 mcfun load() {
     onTrigger("held", describeHeld);
     onTrigger("fib", showFibonacci);

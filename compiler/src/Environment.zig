@@ -9,8 +9,6 @@ pub const Value = union(enum) {
     null,
     list: []const Value,
     compound: []const Entry,
-    // An mcfun parameter. Its value is only known when the call starts: `$(name)` in a macro line.
-    param,
     // A `#` or `$` variable declared in a function body. Its key in the environment has the sigil: `#i`.
     local: Local,
 

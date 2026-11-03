@@ -156,12 +156,12 @@
           }
         },
         {
-          "type": "FIELD",
-          "name": "parameters",
-          "content": {
-            "type": "SYMBOL",
-            "name": "parameter_list"
-          }
+          "type": "STRING",
+          "value": "("
+        },
+        {
+          "type": "STRING",
+          "value": ")"
         },
         {
           "type": "FIELD",
@@ -374,60 +374,6 @@
     "json_number": {
       "type": "PATTERN",
       "value": "-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?"
-    },
-    "parameter_list": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "("
-        },
-        {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "parameter"
-                },
-                {
-                  "type": "REPEAT",
-                  "content": {
-                    "type": "SEQ",
-                    "members": [
-                      {
-                        "type": "STRING",
-                        "value": ","
-                      },
-                      {
-                        "type": "SYMBOL",
-                        "name": "parameter"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            {
-              "type": "BLANK"
-            }
-          ]
-        },
-        {
-          "type": "STRING",
-          "value": ")"
-        }
-      ]
-    },
-    "parameter": {
-      "type": "FIELD",
-      "name": "name",
-      "content": {
-        "type": "SYMBOL",
-        "name": "identifier"
-      }
     },
     "block": {
       "type": "SEQ",
@@ -801,6 +747,10 @@
                   "name": "selector"
                 },
                 {
+                  "type": "SYMBOL",
+                  "name": "macro_key"
+                },
+                {
                   "type": "ALIAS",
                   "content": {
                     "type": "SYMBOL",
@@ -857,6 +807,10 @@
               },
               {
                 "type": "SYMBOL",
+                "name": "macro_key"
+              },
+              {
+                "type": "SYMBOL",
                 "name": "command_text"
               }
             ]
@@ -874,11 +828,11 @@
     },
     "command_text": {
       "type": "PATTERN",
-      "value": "[^\\s;@{]+|\\{[^{;\\s]*"
+      "value": "[^\\s;@{$]+|\\{[^{;\\s]*|\\$"
     },
     "_subcommand_text": {
       "type": "PATTERN",
-      "value": "[^\\s;@{()]+"
+      "value": "[^\\s;@{()$]+|\\$"
     },
     "insert": {
       "type": "SEQ",
@@ -997,8 +951,23 @@
         {
           "type": "SYMBOL",
           "name": "minecraft_check"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "macro_key"
         }
       ]
+    },
+    "macro_key": {
+      "type": "TOKEN",
+      "content": {
+        "type": "PREC",
+        "value": 1,
+        "content": {
+          "type": "PATTERN",
+          "value": "\\$\\([A-Za-z_][A-Za-z0-9_]*\\)"
+        }
+      }
     },
     "minecraft_check": {
       "type": "PREC_RIGHT",
@@ -1034,6 +1003,10 @@
                 },
                 {
                   "type": "SYMBOL",
+                  "name": "macro_key"
+                },
+                {
+                  "type": "SYMBOL",
                   "name": "check_text"
                 }
               ]
@@ -1044,7 +1017,7 @@
     },
     "check_text": {
       "type": "PATTERN",
-      "value": "[^\\s(){}@]+|\\{[^{\\s)]*"
+      "value": "[^\\s(){}@$]+|\\{[^{\\s)]*|\\$"
     },
     "list_literal": {
       "type": "SEQ",
@@ -1670,9 +1643,86 @@
               "type": "SYMBOL",
               "name": "argument_list"
             }
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": "with"
+                  },
+                  {
+                    "type": "FIELD",
+                    "name": "with",
+                    "content": {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "compound_literal"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "data_variable"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "entity_data"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "with_source"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
           }
         ]
       }
+    },
+    "with_source": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "kind",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "entity"
+              },
+              {
+                "type": "STRING",
+                "value": "block"
+              }
+            ]
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "text",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "PATTERN",
+              "value": "[^;]+"
+            },
+            "named": true,
+            "value": "with_text"
+          }
+        }
+      ]
     },
     "argument_list": {
       "type": "SEQ",

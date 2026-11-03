@@ -29,7 +29,7 @@ pub const Command = union(enum) {
     raw: []const u8,
     // The Writer adds the namespace to this mcfun name.
     function: []const u8,
-    // Null is the main objective `<ns>`.
+    // Null is Poplar's objective `poplar.<ns>`.
     add_objective: Objective,
     score_set: ScoreValue,
     score_set_param: ScoreParam,
@@ -61,7 +61,7 @@ pub const Command = union(enum) {
     data_get: DataPath,
     return_run: *const Command,
     return_value: i32,
-    // `return $(param)`, which returns the value of an mcfun parameter.
+    // `return $(param)`, which returns the value of a macro argument.
     return_param: []const u8,
 };
 
@@ -76,11 +76,12 @@ pub const StoreResult = struct {
 };
 
 // `data` is the `<ns>:data` storage of `#` variables, where a key is a variable name.
-// `args` is `<ns>:poplar args`, where a key is the name of a parameter of the mcfun that is called next.
+// `args` is `<ns>:poplar args`, the `with` compound of the mcfun that is called next.
 // `frame` is the top frame of `<ns>:poplar stack`, where a key is the name of a saved temp.
-// `macro` is `<ns>:poplar macro`: the parameters and `#` keys for one macro helper. An empty key is the whole compound.
+// `macro` is `<ns>:poplar macro`: the macro arguments and `#` keys for one macro helper. An empty key is the whole compound.
 // `poplar` is the root of `<ns>:poplar`, where the string helpers keep their scratch value.
-pub const Storage = enum { data, args, frame, macro, poplar };
+// `std` is `<pack>:std`, the `$` variables of the standard library, apart from the pack's own `<pack>:data`.
+pub const Storage = enum { data, args, frame, macro, poplar, std };
 
 // A place for NBT: a key in one of Poplar's storages, or a path in the NBT of one entity.
 pub const DataPath = struct {
@@ -101,6 +102,13 @@ pub const DataPath = struct {
 
     pub fn ofEntity(selector: []const u8, path: []const u8) DataPath {
         return .{ .holder = .{ .entity = selector }, .path = path };
+    }
+
+    // The same holder and namespace, with another path.
+    pub fn withPath(self: DataPath, path: []const u8) DataPath {
+        var copy = self;
+        copy.path = path;
+        return copy;
     }
 };
 
@@ -155,12 +163,22 @@ pub const ScoreParam = struct {
 };
 
 // Calls an mcfun with macro arguments.
+pub const DataStorage = struct {
+    storage: Storage = .data,
+    namespace: ?[]const u8 = null,
+};
+
 pub const FunctionWith = struct {
     pub const Arguments = union(enum) {
         compound: []const u8,
-        data_storage,
+        // `with storage <ns>:data` or `<pack>:std`, where whole `$` variables are read as they are.
+        data_storage: DataStorage,
         args_storage,
         macro_storage,
+        // `with storage ns:data player` or `with entity @s SelectedItem`.
+        data_path: DataPath,
+        // `with entity @s` or `with block ~ ~ ~`, as written.
+        raw: []const u8,
     };
 
     name: []const u8,
@@ -168,8 +186,7 @@ pub const FunctionWith = struct {
 };
 
 // A holder is a fake player (`$hp`, `#poplar.t0`) or a selector (`@s`).
-// A null objective is the main objective `<ns>`. Otherwise it is `<ns>.<objective>`.
-// `<namespace>` (the main objective) or `<namespace>.<name>`.
+// A null objective is Poplar's objective `poplar.<ns>`. Otherwise it is `<ns>.<objective>`.
 pub const Objective = struct {
     namespace: ?[]const u8 = null,
     name: ?[]const u8 = null,

@@ -414,8 +414,8 @@ test "only the std mcfuns that the project calls are written, under std/" {
 
     try tmp.dir.createDirPath(io, "src");
     try tmp.dir.createDirPath(io, "std");
-    try tmp.dir.writeFile(io, .{ .sub_path = "src/main.poplar", .data = "namespace ns;\nimport std;\nmcfun main() { /say {{std:double(2)}}; /function std:fromCommand; }\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "std/std.poplar", .data = "namespace std;\nmcfun double(x) { return twice(x); }\nmcfun twice(x) { return x * 2; }\nmcfun fromCommand() {}\nmcfun unused() {}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/main.poplar", .data = "namespace ns;\nimport std;\nmcfun main() { /say {{ std:double() with {x: 2} }}; /function std:fromCommand; }\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "std/std.poplar", .data = "namespace std;\nmcfun double() { return twice() with {x: $(x)}; }\nmcfun twice() { return $(x) * 2; }\nmcfun fromCommand() {}\nmcfun unused() {}\n" });
 
     var src_dir = try tmp.dir.openDir(io, "src", .{});
     defer src_dir.close(io);

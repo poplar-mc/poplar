@@ -1,12 +1,10 @@
 // `/trigger held` describes the item in your hand, with the string helpers.
 namespace toolkit;
 
-import std;
-
 mcfun describeHeld() {
     // A bare data path in `if` checks that it exists, the same as `execute if data`.
     if (!@s.$SelectedItem) {
-        std:tellraw(@s, {text: "Your hand is empty", color: "gray"});
+        /tellraw @s {{ {text: "Your hand is empty", color: "gray"} }};
         return;
     }
 
@@ -14,10 +12,10 @@ mcfun describeHeld() {
     var $name = slice(@s.$SelectedItem.id, 10);
 
     if (endsWith(@s.$SelectedItem.id, "_sword")) {
-        std:tellraw(@s, ["A sword: ", text($name)]);
+        /tellraw @s {{["A sword: ", text($name)]}};
     } else if (startsWith($name, "golden_")) {
-        std:tellraw(@s, ["Something shiny: ", text($name)]);
+        /tellraw @s {{["Something shiny: ", text($name)]}};
     } else {
-        std:tellraw(@s, ["You hold ", text($name), ", ", text(@s.$SelectedItem.count), " of them"]);
+        /tellraw @s {{["You hold ", text($name), ", ", text(@s.$SelectedItem.count), " of them"]}};
     }
 }

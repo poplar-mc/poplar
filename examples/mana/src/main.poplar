@@ -1,8 +1,6 @@
 // Every player has mana that regenerates each tick. `/trigger cast` spends 30 of it on a speed boost.
 namespace mana;
 
-import std;
-
 var #mana = 0;
 var #maxMana = 100;
 
@@ -21,15 +19,15 @@ mcfun regen() {
     if (@s.#mana < #maxMana) {
         @s.#mana = @s.#mana + 1;
     }
-    std:actionBar(@s, ["Mana: ", text(@s.#mana), "/", text(#maxMana)]);
+    /title @s actionbar {{["Mana: ", text(@s.#mana), "/", text(#maxMana)]}};
 }
 
 mcfun cast() {
     if (@s.#mana < 30) {
-        std:tellraw(@s, {text: "Not enough mana", color: "red"});
+        /tellraw @s {{ {text: "Not enough mana", color: "red"} }};
         return;
     }
     @s.#mana = @s.#mana - 30;
     /effect give @s speed 5 1;
-    std:tellraw(@s, {text: "Whoosh!", color: "aqua"});
+    /tellraw @s {{ {text: "Whoosh!", color: "aqua"} }};
 }

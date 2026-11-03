@@ -1,0 +1,152 @@
+namespace std;
+
+// Helpers for lists in data. Pass the list as a macro argument: `std:sum() with {list: $scores}`. The helper
+// works on a copy, so it never changes your variable. `reverse` and `sort` put the new list in `$std:result`:
+// `std:sort() with {list: $scores}; $scores = $std:result;`.
+// A macro inserts a string without its quotes, so the helpers that search for a value come in two kinds:
+// `count` for numbers and compounds, and `countString` for strings.
+
+// The list that `reverse` and `sort` make. The next call replaces it.
+var $result = [];
+
+// Scratch values for the helpers below.
+var $needle = 0;
+var $probe = 0;
+var $searched = [];
+var $changed = 0;
+
+// How many elements equal the number or compound `value`.
+mcfun count() {
+    /data modify storage self:std needle set value $(value);
+    /data modify storage self:std searched set value $(list);
+    return countNeedle();
+}
+
+// How many elements equal the string `value`.
+mcfun countString() {
+    /data modify storage self:std needle set value "$(value)";
+    /data modify storage self:std searched set value $(list);
+    return countNeedle();
+}
+
+// 1 if an element equals the number or compound `value`, else 0.
+mcfun contains() {
+    /data modify storage self:std needle set value $(value);
+    /data modify storage self:std searched set value $(list);
+    if (countNeedle() > 0) { return 1; }
+    return 0;
+}
+
+// 1 if an element equals the string `value`, else 0.
+mcfun containsString() {
+    /data modify storage self:std needle set value "$(value)";
+    /data modify storage self:std searched set value $(list);
+    if (countNeedle() > 0) { return 1; }
+    return 0;
+}
+
+// The index of the first element equal to the number or compound `value`, or -1.
+mcfun indexOf() {
+    /data modify storage self:std needle set value $(value);
+    /data modify storage self:std searched set value $(list);
+    return indexOfNeedle();
+}
+
+// The index of the first element equal to the string `value`, or -1.
+mcfun indexOfString() {
+    /data modify storage self:std needle set value "$(value)";
+    /data modify storage self:std searched set value $(list);
+    return indexOfNeedle();
+}
+
+// How many elements of `$searched` equal `$needle`. No loop: setting every element to the needle reports how many
+// it changed.
+mcfun countNeedle() {
+    /execute store result storage self:std changed int 1 run data modify storage self:std searched[] set from storage self:std needle;
+    return len($searched) - $changed;
+}
+
+// The index of the first element of `$searched` that equals `$needle`, or -1.
+mcfun indexOfNeedle() {
+    var #index = 0;
+    while (len($searched) > 0) {
+        $probe = $searched[0];
+        // Setting the probe to the needle fails (0) when they are already equal.
+        /execute store success storage self:std changed int 1 run data modify storage self:std probe set from storage self:std needle;
+        if ($changed == 0) { return #index; }
+        remove($searched, 0);
+        #index = #index + 1;
+    }
+    return -1;
+}
+
+// The sum of a list of ints.
+mcfun sum() {
+    /data modify storage self:std searched set value $(list);
+    var #total = 0;
+    while (len($searched) > 0) {
+        #total = #total + $searched[0];
+        remove($searched, 0);
+    }
+    return #total;
+}
+
+// The smallest int in the list, or 0 for an empty list.
+mcfun minOf() {
+    /data modify storage self:std searched set value $(list);
+    if (len($searched) == 0) { return 0; }
+    var #smallest = $searched[0];
+    while (len($searched) > 0) {
+        if ($searched[0] < #smallest) { #smallest = $searched[0]; }
+        remove($searched, 0);
+    }
+    return #smallest;
+}
+
+// The largest int in the list, or 0 for an empty list.
+mcfun maxOf() {
+    /data modify storage self:std searched set value $(list);
+    if (len($searched) == 0) { return 0; }
+    var #largest = $searched[0];
+    while (len($searched) > 0) {
+        if ($searched[0] > #largest) { #largest = $searched[0]; }
+        remove($searched, 0);
+    }
+    return #largest;
+}
+
+// The list in reverse order, in `$std:result`.
+mcfun reverse() {
+    /data modify storage self:std searched set value $(list);
+    $result = [];
+    while (len($searched) > 0) {
+        prepend($result, $searched[0]);
+        remove($searched, 0);
+    }
+}
+
+// A list of ints from smallest to largest, in `$std:result`. Each step moves the smallest left to the result.
+mcfun sort() {
+    /data modify storage self:std searched set value $(list);
+    $result = [];
+    while (len($searched) > 0) {
+        var #smallest = $searched[0];
+        var $scan = $searched;
+        while (len($scan) > 0) {
+            if ($scan[0] < #smallest) { #smallest = $scan[0]; }
+            remove($scan, 0);
+        }
+        append($result, #smallest);
+        var $rest = [];
+        var #found = 0;
+        while (len($searched) > 0) {
+            if (#found == 0 and $searched[0] == #smallest) {
+                #found = 1;
+            } else {
+                append($rest, $searched[0]);
+            }
+            remove($searched, 0);
+        }
+        $searched = $rest;
+    }
+}

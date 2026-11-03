@@ -19,6 +19,6 @@ mcfun test() {
     /function magic:cast_spell;
     #combat:mana = 7;
     combat:report();
-    /say clamp {{std:clamp(30, 0, 20)}};
+    /say clamp {{ std:clamp() with {x: 30, low: 0, high: 20} }};
     if (predicate combat:isLucky) { /say lucky; }
 }

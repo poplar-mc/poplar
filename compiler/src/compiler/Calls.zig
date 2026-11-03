@@ -12,72 +12,108 @@ const MinecraftText = @import("MinecraftText.zig");
 const Scores = @import("Scores.zig");
 const Values = @import("Values.zig");
 
-// Returns the command that calls an mcfun. Commands that prepare runtime arguments go into `commands` first.
+// Returns the command that calls an mcfun. Commands that write a runtime `with` compound go into `commands` first.
 pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Located, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!?Ir.Command {
     const function = located.function;
-    if (call.args.len != function.params.len) {
-        try self.addError("mcfun '{s}' expects {d} arguments, found {d}", .{ function.name, function.params.len, call.args.len });
+    var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
+    try Compiler.collectMacroKeys(self.gpa, function.body, &keys);
+    if (call.args.len > 0) {
+        try self.addError("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ function.name, function.name, try exampleCompound(self, keys.keys()) });
         return null;
     }
-    if (function.params.len == 0) return .{ .function = located.ir_name };
+    const with = call.with orelse {
+        if (keys.count() > 0) try self.addError("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ function.name, keys.keys()[0], function.name, try exampleCompound(self, keys.keys()) });
+        return .{ .function = located.ir_name };
+    };
+    const value = switch (with) {
+        .raw => |text| return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .raw = text } } },
+        .value => |value| value,
+    };
 
-    var has_runtime_argument = false;
-    for (call.args) |arg| {
-        if (Values.containsRuntimeValue(self, arg, env) and !Values.isParam(arg, env)) has_runtime_argument = true;
+    if (Data.isDataIdentifier(value)) {
+        const path = try Data.dataPathOf(self, value.kind.identifier, env) orelse return null;
+        return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .data_path = path } } };
     }
+    const entries = switch (value.kind) {
+        .compound => |entries| entries,
+        else => {
+            const outer_position = self.enterExpression(value);
+            defer self.restorePosition(outer_position);
+            try self.addError("'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
+            return null;
+        },
+    };
 
-    if (!has_runtime_argument) {
+    var is_inline = true;
+    for (entries) |entry| {
+        if (Values.containsRuntimeValue(self, entry.value, env) and entry.value.kind != .macro_key) is_inline = false;
+    }
+    if (is_inline) {
         var compound: std.ArrayList(u8) = .empty;
-        for (function.params, call.args, 0..) |param, arg, index| {
-            try compound.appendSlice(self.gpa, if (index == 0) "{" else ",");
-            try compound.print(self.gpa, "{s}:{s}", .{ param.name, try argumentSnbt(self, arg, env) orelse return null });
+        try compound.append(self.gpa, '{');
+        for (entries, 0..) |entry, index| {
+            if (index > 0) try compound.append(self.gpa, ',');
+            try compound.print(self.gpa, "{s}:{s}", .{ try Values.snbtKey(self, entry.key), try argumentSnbt(self, entry.value, env) orelse return null });
         }
         try compound.append(self.gpa, '}');
         return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(self.gpa) } } };
     }
 
-    // Math is computed before any argument is written, so a call inside an argument cannot overwrite them.
-    const scores = try self.gpa.alloc(?Ir.Score, call.args.len);
-    for (call.args, scores) |arg, *score| {
+    // Math is computed before any key is written, so a call inside a value cannot overwrite them.
+    const scores = try self.gpa.alloc(?Ir.Score, entries.len);
+    for (entries, scores) |entry, *score| {
         score.* = null;
-        if (!Values.containsRuntimeValue(self, arg, env) or Values.isParam(arg, env)) continue;
-        const value, _ = Data.splitCast(arg);
-        if (value.kind == .call and Data.isStringCall(value.kind.call)) continue;
+        const entry_value, _ = Data.splitCast(entry.value);
+        if (!Values.containsRuntimeValue(self, entry_value, env) or entry_value.kind == .macro_key) continue;
+        if (entry_value.kind == .call and Data.isStringCall(entry_value.kind.call)) continue;
+        if (entry_value.kind == .list or entry_value.kind == .compound) continue;
 
-        if (value.kind == .identifier) {
-            if (value.kind.identifier.storage == .score) score.* = try Scores.scoreSource(self, value.kind.identifier, env) orelse return null;
+        if (entry_value.kind == .identifier) {
+            if (entry_value.kind.identifier.storage == .score) score.* = try Scores.scoreSource(self, entry_value.kind.identifier, env) orelse return null;
             continue;
         }
 
         score.* = try Scores.newTemp(self);
-        try Scores.compileInto(self, score.*.?, value, env, commands);
+        try Scores.compileInto(self, score.*.?, entry_value, env, commands);
     }
 
-    for (function.params, call.args, scores) |param, arg, argument_score| {
-        const outer_position = self.enterExpression(arg);
+    for (entries, scores) |entry, entry_score| {
+        const outer_position = self.enterExpression(entry.value);
         defer self.restorePosition(outer_position);
-        const target: Ir.DataPath = .inStorage(.args, param.name);
-        if (argument_score) |score| {
-            _, const cast_type = Data.splitCast(arg);
+        const target: Ir.DataPath = .inStorage(.args, try Values.snbtKey(self, entry.key));
+        const entry_value, const cast_type = Data.splitCast(entry.value);
+        if (entry_score) |score| {
             try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score, .type = cast_type orelse .int } });
-        } else if (arg.kind == .call and Data.isStringCall(arg.kind.call) and Values.containsRuntimeValue(self, arg, env)) {
-            try Data.compileStringInto(self, target, arg.kind.call, env, commands);
-        } else if (Data.isDataIdentifier(arg)) {
-            const source = try Data.dataPathOf(self, arg.kind.identifier, env) orelse return null;
+        } else if (entry_value.kind == .call and Data.isStringCall(entry_value.kind.call) and Values.containsRuntimeValue(self, entry_value, env)) {
+            try Data.compileStringInto(self, target, entry_value.kind.call, env, commands);
+        } else if (Data.isDataIdentifier(entry_value)) {
+            const source = try Data.dataPathOf(self, entry_value.kind.identifier, env) orelse return null;
             try commands.append(self.gpa, .{ .data_copy = .{ .target = target, .source = source } });
+        } else if ((entry_value.kind == .list or entry_value.kind == .compound) and Values.containsRuntimeValue(self, entry_value, env)) {
+            try Data.compileLiteralAssign(self, target, entry_value, env, commands);
         } else {
-            const snbt = try argumentSnbt(self, arg, env) orelse return null;
+            const snbt = try argumentSnbt(self, entry.value, env) orelse return null;
             try commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
         }
     }
     return .{ .function_with = .{ .name = located.ir_name, .arguments = .args_storage } };
 }
 
-// A compile-time argument as SNBT. A forwarded parameter is `"$(name)"`.
+// `{a: ..., b: ...}` for the keys an mcfun uses, for error messages.
+fn exampleCompound(self: *Compiler, keys: []const []const u8) Compiler.CompileError![]const u8 {
+    if (keys.len == 0) return "{name: ...}";
+    var text: std.ArrayList(u8) = .empty;
+    try text.append(self.gpa, '{');
+    for (keys, 0..) |key, index| try text.print(self.gpa, "{s}{s}: ...", .{ if (index == 0) "" else ", ", key });
+    try text.append(self.gpa, '}');
+    return text.toOwnedSlice(self.gpa);
+}
+
+// A compile-time value as SNBT. A macro key is `"$(name)"`, so the line becomes a macro line.
 pub fn argumentSnbt(self: *Compiler, arg: *const Ast.Expr, env: *Environment) Compiler.CompileError!?[]const u8 {
     const outer_position = self.enterExpression(arg);
     defer self.restorePosition(outer_position);
-    if (Values.isParam(arg, env)) return try std.fmt.allocPrint(self.gpa, "\"$({s})\"", .{arg.kind.identifier.name});
+    if (arg.kind == .macro_key) return try std.fmt.allocPrint(self.gpa, "\"$({s})\"", .{arg.kind.macro_key});
 
     const expression, const cast_type = Data.splitCast(arg);
     const value = try Values.evaluate(self, expression, env) orelse return null;
@@ -88,7 +124,7 @@ pub fn argumentSnbt(self: *Compiler, arg: *const Ast.Expr, env: *Environment) Co
     return try Data.castSnbt(self, value, cast_type);
 }
 
-// Calls a generated function. In an mcfun with parameters, the arguments are passed on, because the body can use them.
+// Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use them.
 pub fn generatedCall(self: *Compiler, name: []const u8) Ir.Command {
     const forwarded = self.forwarded_args orelse return .{ .function = name };
     return .{ .function_with = .{ .name = name, .arguments = .{ .compound = forwarded } } };
@@ -215,13 +251,17 @@ pub fn collectExpressionCalls(
         },
         .cast => |cast| try collectExpressionCalls(self, cast.value, calls),
         .minecraft_check => |parts| try collectInsertCalls(self, parts, calls),
+        .list => |elements| for (elements) |element| try collectExpressionCalls(self, element, calls),
+        .compound => |entries| for (entries) |entry| try collectExpressionCalls(self, entry.value, calls),
         .call => |call| {
             for (call.args) |arg| try collectExpressionCalls(self, arg, calls);
+            if (call.with) |with| if (with == .value) try collectExpressionCalls(self, with.value, calls);
             if (call.callee.kind != .identifier) return;
 
             // An event callback is called from `load`, as far as the call graph is concerned.
-            if ((isBuiltinCall(call, "onEvent") or isBuiltinCall(call, "onTrigger")) and call.args.len == 2 and call.args[1].kind == .identifier) {
-                if (try calledKey(self, call.args[1].kind.identifier)) |callback| try calls.put(self.gpa, callback, {});
+            const is_event = call.callee.kind.identifier.namespace == null and Load.event_builtins.has(call.callee.kind.identifier.name);
+            if (is_event and call.args.len > 0 and call.args[call.args.len - 1].kind == .identifier) {
+                if (try calledKey(self, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(self.gpa, callback, {});
             }
             const called = try calledKey(self, call.callee.kind.identifier) orelse return;
             try calls.put(self.gpa, called, {});
@@ -250,8 +290,7 @@ pub fn compileCall(self: *Compiler, call: Ast.Call, env: *Environment, commands:
     if (call.callee.kind != .identifier) return self.addError("only named functions can be called", .{});
     const name = call.callee.kind.identifier.name;
 
-    if (isBuiltinCall(call, "onEvent")) return Load.compileEvent(self, call, "onEvent", env);
-    if (isBuiltinCall(call, "onTrigger")) return Load.compileEvent(self, call, "onTrigger", env);
+    if (call.callee.kind.identifier.namespace == null and Load.event_builtins.has(name)) return Load.compileEvent(self, call, name, env);
     if (Data.isStringCall(call) or Data.isStringTest(call)) return self.addError("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
     if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return Data.compileListBuiltin(self, name, call, env, commands);
     const callee = try Declarations.findFunction(self, call.callee.kind.identifier) orelse return;
@@ -262,7 +301,7 @@ pub fn compileCall(self: *Compiler, call: Ast.Call, env: *Environment, commands:
     try commands.append(self.gpa, command);
 }
 
-pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "slice", "str", "startsWith", "endsWith" };
+pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "onDeath", "onFirstJoin", "onJoin", "onRespawn", "slice", "str", "startsWith", "endsWith" };
 
 pub fn isBuiltin(name: []const u8) bool {
     for (builtin_names) |builtin| {
@@ -313,27 +352,27 @@ test "return values, mcfun calls as values and while" {
     , try Compiler.renderForTest(arena.allocator(), program, "poplar/main/while_0_body"));
 }
 
-test "mcfun parameters become macro arguments" {
+test "with compounds become macro arguments" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\var #hp = 0;
-        \\mcfun heal(amount) {
-        \\    #hp = #hp + amount;
-        \\    if (#hp > 10) { /say {{amount}}; #hp = 10; }
+        \\mcfun heal() {
+        \\    #hp = #hp + $(amount);
+        \\    if (#hp > 10) { /say $(amount); #hp = 10; }
         \\}
         \\mcfun main() {
-        \\    heal(5);
-        \\    heal(#hp * 2);
+        \\    heal() with {amount: 5};
+        \\    heal() with {amount: #hp * 2};
         \\}
     );
     const program = try compiler.compile();
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\$scoreboard players set #poplar.heal.t0 ns $(amount)
-        \\scoreboard players operation #global ns.hp += #poplar.heal.t0 ns
+        \\$scoreboard players set #poplar.heal.t0 poplar.ns $(amount)
+        \\scoreboard players operation #global ns.hp += #poplar.heal.t0 poplar.ns
         \\$execute if score #global ns.hp matches 11.. run function ns:poplar/heal/if_0 {amount:"$(amount)"}
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "heal"));
@@ -344,29 +383,31 @@ test "mcfun parameters become macro arguments" {
     , try Compiler.renderForTest(arena.allocator(), program, "poplar/heal/if_0"));
     try std.testing.expectEqualStrings(
         \\function ns:heal {amount:5}
-        \\scoreboard players operation #poplar.main.t0 ns = #global ns.hp
-        \\execute store result storage ns:poplar args.amount int 1 run scoreboard players operation #poplar.main.t0 ns *= #poplar.c2 ns
+        \\scoreboard players operation #poplar.main.t0 poplar.ns = #global ns.hp
+        \\execute store result storage ns:poplar args.amount int 1 run scoreboard players operation #poplar.main.t0 poplar.ns *= #poplar.c2 poplar.ns
         \\function ns:heal with storage ns:poplar args
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
 }
 
-test "mcfun parameter errors" {
+test "mcfun call errors" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
-        \\mcfun heal(amount) {
-        \\    var copy = amount;
+        \\mcfun heal() {
+        \\    var copy = $(amount);
         \\}
-        \\mcfun main() { heal(); }
+        \\mcfun main() { heal(); heal(5); heal() with 5; }
     );
     _ = try compiler.compile();
 
     const errors = compiler.errors.items;
-    try std.testing.expectEqual(2, errors.len);
+    try std.testing.expectEqual(4, errors.len);
     try std.testing.expectEqualStrings("'copy' is a build-time constant, but this value only exists in the game. Use 'var #copy' for a score or 'var $copy' for data", errors[0].message);
-    try std.testing.expectEqualStrings("mcfun 'heal' expects 1 arguments, found 0", errors[1].message);
+    try std.testing.expectEqualStrings("mcfun 'heal' uses '$(amount)', so it needs a compound: 'heal() with {amount: ...}'", errors[1].message);
+    try std.testing.expectEqualStrings("mcfun 'heal' takes no arguments. Pass them as a compound: 'heal() with {amount: ...}'", errors[2].message);
+    try std.testing.expectEqualStrings("'with' needs a compound ('{name: ...}'), a '$' variable, 'entity <selector>' or 'block <position>'", errors[3].message);
 }
 
 test "recursive calls save live temps in a frame" {
@@ -375,33 +416,33 @@ test "recursive calls save live temps in a frame" {
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\var #x = 0;
-        \\mcfun fact(n) {
-        \\    if (n <= 1) { return 1; }
-        \\    return n * fact(n - 1);
+        \\mcfun fact() {
+        \\    if ($(n) <= 1) { return 1; }
+        \\    return $(n) * fact() with {n: $(n) - 1};
         \\}
-        \\mcfun double(v) { return v * 2; }
-        \\mcfun main() { #x = 2 * double(3); }
+        \\mcfun double() { return $(v) * 2; }
+        \\mcfun main() { #x = 2 * double() with {v: 3}; }
     );
     const program = try compiler.compile();
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\$scoreboard players set #poplar.fact.t0 ns $(n)
-        \\execute if score #poplar.fact.t0 ns matches ..1 run return 1
-        \\scoreboard players operation #poplar.fact.t2 ns = #poplar.fact.t0 ns
-        \\execute store result storage ns:poplar args.n int 1 run scoreboard players remove #poplar.fact.t2 ns 1
+        \\$scoreboard players set #poplar.fact.t0 poplar.ns $(n)
+        \\execute if score #poplar.fact.t0 poplar.ns matches ..1 run return 1
+        \\scoreboard players operation #poplar.fact.t2 poplar.ns = #poplar.fact.t0 poplar.ns
+        \\execute store result storage ns:poplar args.n int 1 run scoreboard players remove #poplar.fact.t2 poplar.ns 1
         \\data modify storage ns:poplar stack append value {}
-        \\execute store result storage ns:poplar stack[-1].t0 int 1 run scoreboard players get #poplar.fact.t0 ns
-        \\execute store result score #poplar.fact.t1 ns run function ns:fact with storage ns:poplar args
-        \\execute store result score #poplar.fact.t0 ns run data get storage ns:poplar stack[-1].t0
+        \\execute store result storage ns:poplar stack[-1].t0 int 1 run scoreboard players get #poplar.fact.t0 poplar.ns
+        \\execute store result score #poplar.fact.t1 poplar.ns run function ns:fact with storage ns:poplar args
+        \\execute store result score #poplar.fact.t0 poplar.ns run data get storage ns:poplar stack[-1].t0
         \\data remove storage ns:poplar stack[-1]
-        \\return run scoreboard players operation #poplar.fact.t0 ns *= #poplar.fact.t1 ns
+        \\return run scoreboard players operation #poplar.fact.t0 poplar.ns *= #poplar.fact.t1 poplar.ns
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "fact"));
     try std.testing.expectEqualStrings(
         \\scoreboard players set #global ns.x 2
-        \\execute store result score #poplar.main.t0 ns run function ns:double {v:3}
-        \\scoreboard players operation #global ns.x *= #poplar.main.t0 ns
+        \\execute store result score #poplar.main.t0 poplar.ns run function ns:double {v:3}
+        \\scoreboard players operation #global ns.x *= #poplar.main.t0 poplar.ns
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
     try std.testing.expectEqual(Ir.Command.stack_clear, program.load.?.commands[0]);

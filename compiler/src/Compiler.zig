@@ -52,7 +52,11 @@ pub const std_namespace = "std";
 // `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the callback.
 // `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run `/trigger <name>`.
 pub const Event = struct {
-    criteria: []const u8,
+    // `onEvent` and `onDeath` count a criteria; the player events are fixed patterns (see `Load.appendEventFunctions`).
+    pub const Kind = enum { criteria, trigger, first_join, join, respawn };
+
+    kind: Kind,
+    criteria: []const u8 = "",
     // The IR name of the callback mcfun.
     callback: []const u8,
     // The output namespace of the `load` that registered it. The objective is `<namespace>.event_<n>`.
@@ -81,7 +85,7 @@ pub const CommandText = struct {
     text_starts: []const usize,
     // True if a `{{$x}}` insert makes the text a macro line for a helper function.
     is_macro: bool,
-    uses_param: bool,
+    uses_macro_keys: bool,
     // The runtime values that the text uses, each one time.
     inserts: []const Insert,
 };
@@ -126,6 +130,7 @@ pub const GlobalData = struct {
     name: []const u8,
     // Null for the pack namespace.
     output_namespace: ?[]const u8,
+    storage: Ir.Storage,
 };
 
 // Checks in OR-of-ANDs form: the condition is true if every check in one clause passes.
@@ -162,8 +167,10 @@ tick_namespaces: std.StringArrayHashMapUnmanaged(void) = .empty,
 mcfun_calls: std.StringHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
 // Set when a recursive call saves temps, so that `poplar/load` clears the stack.
 uses_stack: bool = false,
-// `{a:"$(a)"}` for the parameters of the current mcfun. Calls to its generated functions pass it on.
+// `{a:"$(a)"}` for the macro arguments that the current mcfun uses. Calls to its generated functions pass it on.
 forwarded_args: ?[]const u8 = null,
+// The `$(name)` keys that the current mcfun uses.
+macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
 // Names the construct that `return` cannot be used in, while its body is compiled.
 // The test function of the innermost `while`, for `break` and `continue`.
 current_loop: ?[]const u8 = null,
@@ -305,9 +312,12 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
         }
         path_entry.value_ptr.* = function.name;
 
+        var macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty;
+        try collectMacroKeys(self.gpa, function.body, &macro_keys);
+        self.macro_keys = macro_keys;
         const is_hook = located.origin == .project and (std.mem.eql(u8, function.name, "load") or std.mem.eql(u8, function.name, "tick"));
-        if (is_hook and function.params.len > 0) {
-            try self.addError("mcfun '{s}' is run by the game and cannot have parameters", .{function.name});
+        if (is_hook and macro_keys.count() > 0) {
+            try self.addError("mcfun '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ function.name, macro_keys.keys()[0] });
             continue;
         }
 
@@ -323,13 +333,12 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
 
         var env: Environment = .{};
         var forwarded: std.ArrayList(u8) = .empty;
-        for (function.params, 0..) |param, index| {
-            if (!try env.declare(self.gpa, param.name, .param)) try self.addError("param '{s}' is declared more than once", .{param.name});
+        for (macro_keys.keys(), 0..) |key, index| {
             try forwarded.appendSlice(self.gpa, if (index == 0) "{" else ",");
-            try forwarded.print(self.gpa, "{s}:\"$({s})\"", .{ param.name, param.name });
+            try forwarded.print(self.gpa, "{s}:\"$({s})\"", .{ key, key });
         }
-        if (function.params.len > 0) try forwarded.append(self.gpa, '}');
-        self.forwarded_args = if (function.params.len > 0) try forwarded.toOwnedSlice(self.gpa) else null;
+        if (macro_keys.count() > 0) try forwarded.append(self.gpa, '}');
+        self.forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.gpa) else null;
 
         var commands: std.ArrayList(Ir.Command) = .empty;
         try self.compileBlock(function.body, &env, &commands);
@@ -342,6 +351,7 @@ pub fn compile(self: *Self) CompileError!Ir.Program {
     }
 
     try mc_functions.appendSlice(self.gpa, self.generated.items);
+    try Optimizer.dropUnusedArguments(self.gpa, mc_functions.items);
 
     for (mc_functions.items) |*function| function.commands = try Optimizer.optimizeFunction(self.gpa, function.name, function.commands);
     const optimized = try Optimizer.inlineSmallFunctions(self.gpa, mc_functions.items);
@@ -549,6 +559,75 @@ pub fn collectDataLocalNames(gpa: std.mem.Allocator, body: []const Ast.Stmt, nam
         .execute => |execute| try collectDataLocalNames(gpa, execute.body, names),
         else => {},
     };
+}
+
+// The `$(name)` keys that a body uses, in expressions and in Minecraft text.
+pub fn collectMacroKeys(gpa: std.mem.Allocator, body: []const Ast.Stmt, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+    for (body) |statement| switch (statement.kind) {
+        .var_decl => |var_decl| try collectExprMacroKeys(gpa, var_decl.value, keys),
+        .assign => |assign| try collectExprMacroKeys(gpa, assign.value, keys),
+        .@"return" => |value| if (value) |expression| try collectExprMacroKeys(gpa, expression, keys),
+        .@"break", .@"continue" => {},
+        .@"if" => |if_statement| {
+            try collectExprMacroKeys(gpa, if_statement.condition, keys);
+            try collectMacroKeys(gpa, if_statement.then_body, keys);
+            if (if_statement.else_body) |else_body| try collectMacroKeys(gpa, else_body, keys);
+        },
+        .@"while" => |loop| {
+            try collectExprMacroKeys(gpa, loop.condition, keys);
+            try collectMacroKeys(gpa, loop.body, keys);
+        },
+        .@"for" => |loop| {
+            try collectExprMacroKeys(gpa, loop.start, keys);
+            try collectExprMacroKeys(gpa, loop.end, keys);
+            try collectMacroKeys(gpa, loop.body, keys);
+        },
+        .command => |command| try collectPartsMacroKeys(gpa, command.parts, keys),
+        .execute => |execute| {
+            try collectPartsMacroKeys(gpa, execute.subcommands, keys);
+            try collectMacroKeys(gpa, execute.body, keys);
+        },
+        .expression => |expression| try collectExprMacroKeys(gpa, expression, keys),
+    };
+}
+
+fn collectExprMacroKeys(gpa: std.mem.Allocator, expression: *const Ast.Expr, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+    switch (expression.kind) {
+        .macro_key => |name| try keys.put(gpa, name, {}),
+        .prefix => |prefix| try collectExprMacroKeys(gpa, prefix.operand, keys),
+        .infix => |infix| {
+            try collectExprMacroKeys(gpa, infix.left, keys);
+            try collectExprMacroKeys(gpa, infix.right, keys);
+        },
+        .call => |call| {
+            for (call.args) |arg| try collectExprMacroKeys(gpa, arg, keys);
+            if (call.with) |with| switch (with) {
+                .value => |value| try collectExprMacroKeys(gpa, value, keys),
+                .raw => |text| try collectTextMacroKeys(gpa, text, keys),
+            };
+        },
+        .cast => |cast| try collectExprMacroKeys(gpa, cast.value, keys),
+        .list => |elements| for (elements) |element| try collectExprMacroKeys(gpa, element, keys),
+        .compound => |entries| for (entries) |entry| try collectExprMacroKeys(gpa, entry.value, keys),
+        .minecraft_check => |parts| try collectPartsMacroKeys(gpa, parts, keys),
+        .identifier, .number, .string, .boolean, .null, .selector => {},
+    }
+}
+
+fn collectPartsMacroKeys(gpa: std.mem.Allocator, parts: []const Ast.CommandPart, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+    for (parts) |part| switch (part.content) {
+        .text => |text| try collectTextMacroKeys(gpa, text, keys),
+        .insert => |expression| try collectExprMacroKeys(gpa, expression, keys),
+    };
+}
+
+fn collectTextMacroKeys(gpa: std.mem.Allocator, text: []const u8, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+    var rest = text;
+    while (std.mem.indexOf(u8, rest, "$(")) |start| {
+        const end = std.mem.indexOfScalarPos(u8, rest, start, ')') orelse return;
+        try keys.put(gpa, rest[start + 2 .. end], {});
+        rest = rest[end + 1 ..];
+    }
 }
 
 pub fn sameOrigin(a: LocalOrigin, b: LocalOrigin) bool {
@@ -821,9 +900,9 @@ pub fn compileReturn(self: *Self, value: ?*const Ast.Expr, env: *Environment, co
     }
 
     self.temp_count = 0;
-    if (Values.isParam(expression, env)) {
+    if (expression.kind == .macro_key) {
         try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_param = expression.kind.identifier.name });
+        return commands.append(self.gpa, .{ .return_param = expression.kind.macro_key });
     }
     // The value can read a local, so it is computed before the locals are removed.
     if (self.current_cleanup.len > 0) {
@@ -1148,17 +1227,17 @@ test "break, continue and return in loops and execute bodies" {
         \\
     , try renderForTest(arena.allocator(), program, "poplar/count/while_0_body"));
     try std.testing.expectEqualStrings(
-        \\execute if function ns:poplar/find/while_0 run return run scoreboard players get #poplar.find.result ns
+        \\execute if function ns:poplar/find/while_0 run return run scoreboard players get #poplar.find.result poplar.ns
         \\return -1
         \\
     , try renderForTest(arena.allocator(), program, "find"));
     try std.testing.expectEqualStrings(
-        \\scoreboard players operation #poplar.find.result ns = #global ns.i
+        \\scoreboard players operation #poplar.find.result poplar.ns = #global ns.i
         \\return 1
         \\
     , try renderForTest(arena.allocator(), program, "poplar/find/if_1"));
     try std.testing.expectEqualStrings(
-        \\execute as @e if function ns:poplar/any/execute_1 run return run scoreboard players get #poplar.any.result ns
+        \\execute as @e if function ns:poplar/any/execute_1 run return run scoreboard players get #poplar.any.result poplar.ns
         \\return 0
         \\
     , try renderForTest(arena.allocator(), program, "any"));
@@ -1198,14 +1277,14 @@ test "locals are set on every call, saved around a recursive call, and data loca
     defer arena.deinit();
 
     var compiler = try compileForTest(arena.allocator(),
-        \\mcfun walk(depth) {
-        \\    var #mine = depth;
+        \\mcfun walk() {
+        \\    var #mine = $(depth);
         \\    var $seen = true;
-        \\    if (depth > 0) { walk(depth - 1); }
+        \\    if ($(depth) > 0) { walk() with {depth: $(depth) - 1}; }
         \\    /say {{#mine}} {{$seen}};
         \\}
-        \\mcfun twice(n) {
-        \\    var $v = n;
+        \\mcfun twice() {
+        \\    var $v = $(n);
         \\    return $v * 2;
         \\}
     );
@@ -1213,31 +1292,31 @@ test "locals are set on every call, saved around a recursive call, and data loca
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\$scoreboard players set #mine_walk ns $(depth)
+        \\$scoreboard players set #mine_walk poplar.ns $(depth)
         \\data modify storage ns:data seen_walk set value true
-        \\scoreboard players operation #poplar.walk.t0 ns = #mine_walk ns
-        \\$execute if score #poplar.walk.t0 ns matches 1.. run function ns:poplar/walk/if_0 {depth:"$(depth)"}
-        \\execute store result storage ns:poplar macro.mine int 1 run scoreboard players get #mine_walk ns
+        \\scoreboard players operation #poplar.walk.t0 poplar.ns = #mine_walk poplar.ns
+        \\$execute if score #poplar.walk.t0 poplar.ns matches 1.. run function ns:poplar/walk/if_0 {depth:"$(depth)"}
+        \\execute store result storage ns:poplar macro.mine int 1 run scoreboard players get #mine_walk poplar.ns
         \\data modify storage ns:poplar macro.seen_walk set from storage ns:data seen_walk
         \\function ns:poplar/walk/macro_1 with storage ns:poplar macro
         \\data remove storage ns:data seen_walk
         \\
     , try renderForTest(arena.allocator(), program, "walk"));
     try std.testing.expectEqualStrings(
-        \\$execute store result storage ns:data v_twice int 1 run scoreboard players set #poplar.twice.t0 ns $(n)
-        \\execute store result score #poplar.twice.t0 ns run data get storage ns:data v_twice 2
+        \\$execute store result storage ns:data v_twice int 1 run scoreboard players set #poplar.twice.t0 poplar.ns $(n)
+        \\execute store result score #poplar.twice.t0 poplar.ns run data get storage ns:data v_twice 2
         \\data remove storage ns:data v_twice
-        \\return run scoreboard players get #poplar.twice.t0 ns
+        \\return run scoreboard players get #poplar.twice.t0 poplar.ns
         \\
     , try renderForTest(arena.allocator(), program, "twice"));
     try std.testing.expectEqualStrings(
-        \\$scoreboard players set #poplar.walk.t0 ns $(depth)
-        \\execute store result storage ns:poplar args.depth int 1 run scoreboard players remove #poplar.walk.t0 ns 1
+        \\$scoreboard players set #poplar.walk.t0 poplar.ns $(depth)
+        \\execute store result storage ns:poplar args.depth int 1 run scoreboard players remove #poplar.walk.t0 poplar.ns 1
         \\data modify storage ns:poplar stack append value {}
-        \\execute store result storage ns:poplar stack[-1].s_mine_walk int 1 run scoreboard players get #mine_walk ns
+        \\execute store result storage ns:poplar stack[-1].s_mine_walk int 1 run scoreboard players get #mine_walk poplar.ns
         \\data modify storage ns:poplar stack[-1].d_seen_walk set from storage ns:data seen_walk
         \\function ns:walk with storage ns:poplar args
-        \\execute store result score #mine_walk ns run data get storage ns:poplar stack[-1].s_mine_walk
+        \\execute store result score #mine_walk poplar.ns run data get storage ns:poplar stack[-1].s_mine_walk
         \\data modify storage ns:data seen_walk set from storage ns:poplar stack[-1].d_seen_walk
         \\data remove storage ns:poplar stack[-1]
         \\

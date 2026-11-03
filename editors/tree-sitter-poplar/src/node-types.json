@@ -48,6 +48,10 @@
           "named": true
         },
         {
+          "type": "macro_key",
+          "named": true
+        },
+        {
           "type": "minecraft_check",
           "named": true
         },
@@ -165,6 +169,10 @@
             "named": true
           },
           {
+            "type": "macro_key",
+            "named": true
+          },
+          {
             "type": "minecraft_check",
             "named": true
           },
@@ -250,6 +258,10 @@
           },
           {
             "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "macro_key",
             "named": true
           },
           {
@@ -393,6 +405,10 @@
             "named": true
           },
           {
+            "type": "macro_key",
+            "named": true
+          },
+          {
             "type": "minecraft_check",
             "named": true
           },
@@ -524,6 +540,28 @@
             "named": true
           }
         ]
+      },
+      "with": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "compound_literal",
+            "named": true
+          },
+          {
+            "type": "data_variable",
+            "named": true
+          },
+          {
+            "type": "entity_data",
+            "named": true
+          },
+          {
+            "type": "with_source",
+            "named": true
+          }
+        ]
       }
     }
   },
@@ -583,6 +621,10 @@
           },
           {
             "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "macro_key",
             "named": true
           },
           {
@@ -653,6 +695,10 @@
           "named": true
         },
         {
+          "type": "macro_key",
+          "named": true
+        },
+        {
           "type": "selector",
           "named": true
         }
@@ -719,6 +765,10 @@
           },
           {
             "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "macro_key",
             "named": true
           },
           {
@@ -822,6 +872,10 @@
         },
         {
           "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "macro_key",
           "named": true
         },
         {
@@ -991,6 +1045,10 @@
             "named": true
           },
           {
+            "type": "macro_key",
+            "named": true
+          },
+          {
             "type": "selector",
             "named": true
           }
@@ -1044,6 +1102,10 @@
         },
         {
           "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "macro_key",
           "named": true
         },
         {
@@ -1154,6 +1216,10 @@
             "named": true
           },
           {
+            "type": "macro_key",
+            "named": true
+          },
+          {
             "type": "minecraft_check",
             "named": true
           },
@@ -1236,6 +1302,10 @@
             "named": true
           },
           {
+            "type": "macro_key",
+            "named": true
+          },
+          {
             "type": "minecraft_check",
             "named": true
           },
@@ -1295,16 +1365,6 @@
         "types": [
           {
             "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "parameters": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "parameter_list",
             "named": true
           }
         ]
@@ -1413,6 +1473,10 @@
         },
         {
           "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "macro_key",
           "named": true
         },
         {
@@ -1599,6 +1663,10 @@
           "named": true
         },
         {
+          "type": "macro_key",
+          "named": true
+        },
+        {
           "type": "minecraft_check",
           "named": true
         },
@@ -1665,6 +1733,10 @@
           "named": true
         },
         {
+          "type": "macro_key",
+          "named": true
+        },
+        {
           "type": "selector",
           "named": true
         }
@@ -1706,37 +1778,6 @@
     "type": "number_type",
     "named": true,
     "fields": {}
-  },
-  {
-    "type": "parameter",
-    "named": true,
-    "fields": {
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "parameter_list",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "parameter",
-          "named": true
-        }
-      ]
-    }
   },
   {
     "type": "parenthesized_expression",
@@ -1784,6 +1825,10 @@
         },
         {
           "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "macro_key",
           "named": true
         },
         {
@@ -1897,6 +1942,10 @@
         },
         {
           "type": "list_literal",
+          "named": true
+        },
+        {
+          "type": "macro_key",
           "named": true
         },
         {
@@ -2016,6 +2065,10 @@
           },
           {
             "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "macro_key",
             "named": true
           },
           {
@@ -2151,6 +2204,10 @@
             "named": true
           },
           {
+            "type": "macro_key",
+            "named": true
+          },
+          {
             "type": "minecraft_check",
             "named": true
           },
@@ -2210,6 +2267,36 @@
         "types": [
           {
             "type": "condition",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "with_source",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": false
+          },
+          {
+            "type": "entity",
+            "named": false
+          }
+        ]
+      },
+      "text": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "with_text",
             "named": true
           }
         ]
@@ -2313,6 +2400,10 @@
     "named": false
   },
   {
+    "type": "block",
+    "named": false
+  },
+  {
     "type": "break",
     "named": false
   },
@@ -2366,6 +2457,10 @@
     "named": false
   },
   {
+    "type": "entity",
+    "named": false
+  },
+  {
     "type": "execute",
     "named": false
   },
@@ -2404,6 +2499,10 @@
   {
     "type": "long",
     "named": false
+  },
+  {
+    "type": "macro_key",
+    "named": true
   },
   {
     "type": "mcfun",
@@ -2456,6 +2555,14 @@
   {
     "type": "while",
     "named": false
+  },
+  {
+    "type": "with",
+    "named": false
+  },
+  {
+    "type": "with_text",
+    "named": true
   },
   {
     "type": "{",

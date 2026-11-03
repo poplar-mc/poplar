@@ -39,7 +39,7 @@ pub fn compileDataAssign(self: *Compiler, target: Ir.DataPath, value_expression:
         return self.addError("a score or math in entity data needs its NBT type: '{s}.${s} = ... as float;' (byte, short, int, long, float, double)", .{ target.holder.entity, target.path });
     }
 
-    if (expression.kind == .identifier and !Values.isParam(expression, env)) {
+    if (expression.kind == .identifier) {
         const identifier = expression.kind.identifier;
         switch (identifier.storage) {
             .score => {
@@ -75,7 +75,7 @@ pub fn compileLiteralAssign(self: *Compiler, target: Ir.DataPath, expression: *c
 
     try commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = try Values.valueToSnbt(self, template) } });
     for (parts.items) |part| {
-        const part_target: Ir.DataPath = .{ .holder = target.holder, .path = try std.mem.concat(self.gpa, u8, &.{ target.path, part.path }) };
+        const part_target = target.withPath(try std.mem.concat(self.gpa, u8, &.{ target.path, part.path }));
         try compileDataAssign(self, part_target, part.value, env, commands);
     }
 }
@@ -170,16 +170,21 @@ pub fn dataPath(self: *Compiler, identifier: Ast.Identifier, env: *const Environ
         try self.addError("unknown data '${s}'", .{root});
         return null;
     };
-    var path: Ir.DataPath = .inStorage(.data, name);
+    var path: Ir.DataPath = .inStorage(global.storage, name);
     path.namespace = global.output_namespace;
     return path;
 }
 
-// A data local in `<ns>:data` of the mcfun's namespace.
+// A data local in `<ns>:data` of the mcfun's namespace, or in `<pack>:std` for std.
 pub fn dataLocal(self: *const Compiler, key_name: []const u8) Ir.DataPath {
-    var path: Ir.DataPath = .inStorage(.data, key_name);
+    var path: Ir.DataPath = .inStorage(storageOf(self.scope.namespace), key_name);
     path.namespace = self.scope.output_namespace;
     return path;
+}
+
+// std shares the pack namespace, so its `$` variables have their own storage, apart from the pack's.
+pub fn storageOf(namespace: []const u8) Ir.Storage {
+    return if (std.mem.eql(u8, namespace, Compiler.std_namespace)) .std else .data;
 }
 
 // `text(#hp)` → `{score:{name:"#global",objective:"<ns>.hp"}}`, `text($x)` → `{storage:"<ns>:data",nbt:"x"}`,
@@ -190,15 +195,15 @@ pub fn textComponent(self: *Compiler, argument: *const Ast.Expr, env: *Environme
         switch (identifier.storage) {
             .score => {
                 const score = try Scores.resolveScore(self, identifier, env) orelse return null;
-                // A local score is in the main objective `<ns>`, a global one in `<ns>.<name>`.
+                // A local score is in Poplar's objective `poplar.<ns>`, a global one in `<ns>.<name>`.
                 const score_namespace = score.namespace orelse self.namespace;
-                const objective = if (score.objective) |name| try std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ score_namespace, name }) else score_namespace;
+                const objective = if (score.objective) |name| try std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ score_namespace, name }) else try std.fmt.allocPrint(self.gpa, "poplar.{s}", .{score_namespace});
                 const holder: Compiler.Value = .{ .compound = try self.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
                 return .{ .compound = try self.gpa.dupe(Compiler.Value.Entry, &.{.{ .key = "score", .value = holder }}) };
             },
             .data => {
                 const path = try dataPath(self, identifier, env) orelse return null;
-                const storage = try std.fmt.allocPrint(self.gpa, "{s}:data", .{path.namespace orelse self.namespace});
+                const storage = try std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ path.namespace orelse self.namespace, if (path.holder.storage == .std) "std" else "data" });
                 return .{ .compound = try self.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path.path } } }) };
             },
             .entity_data => return .{ .compound = try self.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "entity", .value = .{ .string = identifier.selector.? } }, .{ .key = "nbt", .value = .{ .string = identifier.name } } }) },
@@ -224,7 +229,7 @@ pub fn compileListBuiltin(self: *Compiler, name: []const u8, call: Ast.Call, env
     } else 0;
 
     if (std.mem.eql(u8, name, "remove")) {
-        return commands.append(self.gpa, .{ .data_remove = .{ .holder = list.holder, .path = try std.fmt.allocPrint(self.gpa, "{s}[{d}]", .{ list.path, index }) } });
+        return commands.append(self.gpa, .{ .data_remove = list.withPath(try std.fmt.allocPrint(self.gpa, "{s}[{d}]", .{ list.path, index })) });
     }
 
     const position: Ir.DataAdd.Position = if (std.mem.eql(u8, name, "append")) .append else if (std.mem.eql(u8, name, "prepend")) .prepend else .{ .insert = index };
@@ -248,7 +253,7 @@ pub fn compileListBuiltin(self: *Compiler, name: []const u8, call: Ast.Call, env
 
     // Add a `0`, then store the runtime value into it.
     try commands.append(self.gpa, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = "0" } } });
-    const element: Ir.DataPath = .{ .holder = list.holder, .path = try std.mem.concat(self.gpa, u8, &.{ list.path, element_path }) };
+    const element = list.withPath(try std.mem.concat(self.gpa, u8, &.{ list.path, element_path }));
     try compileDataAssign(self, element, value, env, commands);
 }
 
@@ -446,7 +451,7 @@ test "data variables use storage and macros" {
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
     try std.testing.expectEqualStrings("$give @p $(item) $(count)\n", try Compiler.renderForTest(arena.allocator(), program, "poplar/main/macro_0"));
     try std.testing.expectEqualStrings(
-        \\scoreboard objectives add ns dummy
+        \\scoreboard objectives add poplar.ns dummy
         \\scoreboard objectives add ns.kills dummy
         \\execute unless score #global ns.kills matches -2147483648.. run scoreboard players set #global ns.kills 0
         \\execute unless data storage ns:data item run data modify storage ns:data item set value "diamond"
@@ -476,8 +481,8 @@ test "reads and writes entity data with types" {
     try std.testing.expectEqualStrings(
         \\execute store result score #global ns.hp run data get entity @s Health 10
         \\execute store result entity @s Health float 1 run scoreboard players get #global ns.hp
-        \\scoreboard players operation #poplar.main.t0 ns = #global ns.hp
-        \\execute store result entity @s data.x double 1 run scoreboard players add #poplar.main.t0 ns 1
+        \\scoreboard players operation #poplar.main.t0 poplar.ns = #global ns.hp
+        \\execute store result entity @s data.x double 1 run scoreboard players add #poplar.main.t0 poplar.ns 1
         \\data modify storage ns:data pos set from entity @s Pos
         \\data modify entity @s Glowing set value 1b
         \\
@@ -492,19 +497,19 @@ test "a score or math is stored as an int unless 'as' gives the type" {
         \\var #a = 3;
         \\var $ratio = 0 as float;
         \\var $speeds = [1, 2];
-        \\mcfun heal(amount, label) { /say {{label}} {{amount}}; }
+        \\mcfun heal() { /say $(label) $(amount); }
         \\mcfun main() {
         \\    $ratio = #a * 2 as float;
         \\    $speeds = #a;
-        \\    heal(#a as double, "hi");
+        \\    heal() with {amount: #a as double, label: "hi"};
         \\}
     );
     const program = try compiler.compile();
     try std.testing.expectEqual(0, compiler.errors.items.len);
 
     try std.testing.expectEqualStrings(
-        \\scoreboard players operation #poplar.main.t0 ns = #global ns.a
-        \\execute store result storage ns:data ratio float 1 run scoreboard players operation #poplar.main.t0 ns *= #poplar.c2 ns
+        \\scoreboard players operation #poplar.main.t0 poplar.ns = #global ns.a
+        \\execute store result storage ns:data ratio float 1 run scoreboard players operation #poplar.main.t0 poplar.ns *= #poplar.c2 poplar.ns
         \\execute store result storage ns:data speeds int 1 run scoreboard players get #global ns.a
         \\execute store result storage ns:poplar args.amount double 1 run scoreboard players get #global ns.a
         \\data modify storage ns:poplar args.label set value "hi"
