@@ -186,11 +186,6 @@ pub const Score = struct {
     pub fn eql(a: Score, b: Score) bool {
         return optionalEql(a.objective, b.objective) and optionalEql(a.namespace, b.namespace) and std.mem.eql(u8, a.holder, b.holder);
     }
-
-    fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
-        if (a == null or b == null) return a == null and b == null;
-        return std.mem.eql(u8, a.?, b.?);
-    }
 };
 
 pub const ScoreValue = struct {
@@ -247,3 +242,30 @@ pub const Compare = struct {
 };
 
 pub const CompareOp = enum { lt, le, eq, ge, gt };
+
+// `combat:poplar/heal/if_0` → `combat` and `poplar/heal/if_0`. A name without `:` is in the pack namespace.
+pub fn splitName(name: []const u8) struct { ?[]const u8, []const u8 } {
+    const colon = std.mem.indexOfScalar(u8, name, ':') orelse return .{ null, name };
+    return .{ name[0..colon], name[colon + 1 ..] };
+}
+
+pub fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
+}
+
+// The generated functions of an mcfun go in `poplar/<folder>/`, and its temps are `#poplar.<folder>.t<n>`. The folder
+// is the mcfun's path with `.` for `/` (`std/clamp` → `std.clamp`), because it is also in data keys, which cannot have `/`.
+pub fn generatedFolder(gpa: std.mem.Allocator, mcfun_path: []const u8) std.mem.Allocator.Error![]const u8 {
+    const folder = try gpa.dupe(u8, mcfun_path);
+    std.mem.replaceScalar(u8, folder, '/', '.');
+    return folder;
+}
+
+pub fn isGeneratedFolder(folder: []const u8, mcfun_path: []const u8) bool {
+    if (folder.len != mcfun_path.len) return false;
+    for (folder, mcfun_path) |a, b| {
+        if (a != b and !(a == '.' and b == '/')) return false;
+    }
+    return true;
+}

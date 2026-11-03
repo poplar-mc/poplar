@@ -1,5 +1,6 @@
 // One data file of each type. Each tag names the sample of its type, so the server fails to start
-// when a sample is missing or in the wrong folder. Each sample is the smallest vanilla file of its type (26.3).
+// when a sample is missing or in the wrong folder. Each sample is the smallest vanilla file of its type.
+// Written by tools/gen_datafiles_test.py.
 namespace datafiles;
 
 advancement "sample" {"criteria": {"impossible": {"trigger": "minecraft:impossible"}}, "requirements": [["impossible"]]}

@@ -565,32 +565,15 @@ fn readsTempsOf(name: []const u8, temp: Ir.Score) bool {
     // A `macro_<n>` helper holds one user command, so it never reads a temp.
     if (std.mem.startsWith(u8, std.fs.path.basenamePosix(name), "macro_")) return false;
 
-    const function_namespace, const path = splitName(name);
+    const function_namespace, const path = Ir.splitName(name);
     // A local knows its mcfun (`combat:heal`). A temp names it in its holder (`#poplar.heal.t0`), in its namespace.
-    const owner_namespace, const owner = if (temp.owner) |owner| splitName(owner) else .{ temp.namespace, temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?] };
-    if (!optionalEql(function_namespace, owner_namespace)) return false;
-
-    // The generated functions of `std/clamp` are in `poplar/std.clamp/`.
-    var folder_buffer: [256]u8 = undefined;
-    if (owner.len > folder_buffer.len) return true;
-    const folder = folder_buffer[0..owner.len];
-    _ = std.mem.replace(u8, owner, "/", ".", folder);
+    const owner_namespace, const owner = if (temp.owner) |owner| Ir.splitName(owner) else .{ temp.namespace, temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?] };
+    if (!Ir.optionalEql(function_namespace, owner_namespace)) return false;
 
     const generated_prefix = "poplar/";
-    return std.mem.startsWith(u8, path, generated_prefix) and
-        std.mem.startsWith(u8, path[generated_prefix.len..], folder) and
-        path.len > generated_prefix.len + folder.len and path[generated_prefix.len + folder.len] == '/';
-}
-
-// `combat:poplar/heal/if_0` → `combat` and `poplar/heal/if_0`. A name without `:` is in the pack namespace.
-fn splitName(name: []const u8) struct { ?[]const u8, []const u8 } {
-    const colon = std.mem.indexOfScalar(u8, name, ':') orelse return .{ null, name };
-    return .{ name[0..colon], name[colon + 1 ..] };
-}
-
-fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
-    if (a == null or b == null) return a == null and b == null;
-    return std.mem.eql(u8, a.?, b.?);
+    if (!std.mem.startsWith(u8, path, generated_prefix)) return false;
+    const folder_end = std.mem.indexOfScalarPos(u8, path, generated_prefix.len, '/') orelse return false;
+    return Ir.isGeneratedFolder(path[generated_prefix.len..folder_end], owner);
 }
 
 fn checkReads(check: Ir.Check, score: Ir.Score) bool {

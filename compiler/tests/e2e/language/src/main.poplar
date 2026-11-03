@@ -194,7 +194,7 @@ mcfun test() {
     if (endsWith($sid, "stone")) { /say wrong suffix; }
     var $tiny = "x";
     if (!startsWith($tiny, "minecraft:")) { /say short ok; }
-    /execute if predicate {{alwaysTrue}} run say predicate ok;
+    /execute if predicate self:alwaysTrue run say predicate ok;
     /execute unless predicate language:checks/never run say string id ok;
     /function #self:greeters;
     if (dimension minecraft:overworld and #x > 0) { /say in overworld; }

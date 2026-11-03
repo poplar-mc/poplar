@@ -355,8 +355,8 @@ fn functionId(pack_namespace: []const u8, name: []const u8) FunctionId {
 }
 
 fn splitFunctionName(pack_namespace: []const u8, name: []const u8) struct { []const u8, []const u8 } {
-    const colon = std.mem.indexOfScalar(u8, name, ':') orelse return .{ pack_namespace, name };
-    return .{ name[0..colon], name[colon + 1 ..] };
+    const namespace, const path = Ir.splitName(name);
+    return .{ namespace orelse pack_namespace, path };
 }
 
 // `storage ns:data hp` or `entity @s Health`, the target of `data` and `execute store`.

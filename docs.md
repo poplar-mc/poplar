@@ -825,7 +825,7 @@ The name is an identifier or a string:
 | `"checks/rare"` | `data/demo/predicate/checks/rare.json` | none; type `demo:checks/rare` |
 | `"minecraft:entities/zombie"` | `data/minecraft/loot_table/entities/zombie.json` | none; it replaces the vanilla file |
 
-In commands and conditions, refer to a data file by its name: `if (predicate self:lucky)` ([ids in commands](#ids-in-commands)). An identifier name is also a constant that holds the full id, for `{{...}}`. Inside JSON, write ids out (`"#demo:handles"`, `"demo:first_trident"` for an `mcfun firstTrident`).
+In commands and conditions, refer to a data file by its name: `if (predicate self:lucky)` ([ids in commands](#ids-in-commands)). Inside JSON, write ids out (`"#demo:handles"`, `"demo:first_trident"` for an `mcfun firstTrident`).
 
 The type word is the folder name in camelCase. Worldgen types drop `worldgen/`, and a tag is the registry name followed by `Tag`:
 

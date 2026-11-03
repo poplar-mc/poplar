@@ -55,11 +55,12 @@ pub const Id = struct {
 };
 
 pub fn check(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!?Failure {
-    return (try self.checkText(gpa, text)).failure;
+    return (try self.checkText(gpa, text, &.{})).failure;
 }
 
-pub fn checkText(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!Checked {
-    var walk: Walk = .{ .gpa = gpa, .root = &self.root, .registries = &self.registries, .text = text };
+// `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
+pub fn checkText(self: *const Self, gpa: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
+    var walk: Walk = .{ .gpa = gpa, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
     const matched = walk.matchChildren(&self.root, 0);
     if (walk.out_of_memory) return error.OutOfMemory;
     if (matched) return .{ .ids = walk.ids.items };
@@ -93,6 +94,7 @@ const Walk = struct {
     root: *const Node,
     registries: *const Registries,
     text: []const u8,
+    poplar_namespaces: []const []const u8,
     furthest: ?Problem = null,
     // Only filled on the path that matches, because each argument adds its ids after the rest matched.
     ids: std.ArrayList(Id) = .empty,
@@ -227,7 +229,7 @@ const Walk = struct {
         } else if (eql(parser, "minecraft:vec2") or eql(parser, "minecraft:column_pos") or eql(parser, "minecraft:rotation")) {
             return walk.readCoordinates(pos, 2);
         } else if (isResourceParser(parser)) {
-            if (isResourceLocation(word)) return end;
+            if (isResourceLocation(word, walk.poplar_namespaces)) return end;
         } else if (word.len > 0) {
             return end;
         }
@@ -414,15 +416,20 @@ fn isResourceParser(parser: []const u8) bool {
     return false;
 }
 
-fn isResourceLocation(word: []const u8) bool {
+fn isResourceLocation(word: []const u8, poplar_namespaces: []const []const u8) bool {
     const location = if (std.mem.startsWith(u8, word, "#")) word[1..] else word;
     if (location.len == 0) return false;
     // `self:healPlayer` names a Poplar declaration with a capital. The compiler changes it into the id.
     if (std.mem.indexOfScalar(u8, location, ':')) |colon| {
-        for (location[colon + 1 ..]) |ch| {
-            if (!std.ascii.isAlphanumeric(ch) and std.mem.indexOfScalar(u8, "_-./", ch) == null) return false;
+        const is_poplar = for (poplar_namespaces) |namespace| {
+            if (eql(namespace, location[0..colon])) break true;
+        } else false;
+        if (is_poplar) {
+            for (location[colon + 1 ..]) |ch| {
+                if (!std.ascii.isAlphanumeric(ch) and std.mem.indexOfScalar(u8, "_-./", ch) == null) return false;
+            }
+            return true;
         }
-        return isResourceLocation(location[0..colon]);
     }
 
     for (location) |ch| {
@@ -455,12 +462,13 @@ test "finds ids in id arguments and selectors, not in text" {
     const tree = try load(arena.allocator());
 
     const text = "execute as @e[type=#self:undead] if predicate self:isSitting run say self:not_an_id";
-    const checked = try tree.checkText(arena.allocator(), text);
+    const checked = try tree.checkText(arena.allocator(), text, &.{"self"});
     try std.testing.expectEqual(null, checked.failure);
     try std.testing.expectEqual(2, checked.ids.len);
     for (checked.ids) |id| try std.testing.expect(std.mem.startsWith(u8, text[id.at..], "self:undead") or std.mem.startsWith(u8, text[id.at..], "self:isSitting"));
 
-    const storage = try tree.checkText(arena.allocator(), "data get storage self:data x");
+    const storage = try tree.checkText(arena.allocator(), "data get storage self:data x", &.{"self"});
+    try std.testing.expect((try tree.checkText(arena.allocator(), "function other:Caps", &.{"self"})).failure != null);
     try std.testing.expect(!storage.ids[0].names_declaration);
 }
 

@@ -8,8 +8,6 @@ const Compiler = @import("Compiler.zig");
 const Config = @import("Config.zig");
 const DataFile = @import("DataFile.zig");
 const Environment = @import("Environment.zig");
-const Lexer = @import("Lexer.zig");
-const Parser = @import("Parser.zig");
 const Project = @import("Project.zig");
 const Token = @import("Token.zig");
 
@@ -198,7 +196,7 @@ pub fn @"textDocument/hover"(self: *Self, arena: std.mem.Allocator, params: lsp.
     const text = self.documents.get(params.textDocument.uri) orelse return null;
     const word = wordAt(text, lsp.offsets.positionToIndex(text, params.position, self.offset_encoding)) orelse return null;
     const place = try placeOf(arena, analysis, params.textDocument.uri, params.position);
-    const markdown = try self.describe(arena, analysis, text, word, place) orelse return null;
+    const markdown = try self.describe(arena, analysis, word, place) orelse return null;
     return .{ .contents = .{ .markup_content = .{ .kind = .markdown, .value = markdown } } };
 }
 
@@ -215,7 +213,7 @@ pub fn @"textDocument/definition"(self: *Self, arena: std.mem.Allocator, params:
         else => null,
     };
     const local = if (local_kind != null and word.namespace == null) try findLocal(arena, compiler, place, local_kind.?, Compiler.pathRoot(word.text)) else null;
-    const key = try wordKey(arena, compiler, text, word, Compiler.pathRoot(word.text));
+    const key = try wordKey(arena, compiler, place, word, Compiler.pathRoot(word.text));
 
     const display_path: []const u8, const line: usize = if (local) |found| .{ found.path, found.line } else switch (word.kind) {
         .score => if (compiler.globals.get(key)) |global| .{ global.path, global.line } else return null,
@@ -270,7 +268,7 @@ pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params:
             for (Token.Keywords.keys()) |keyword| try items.append(arena, .{ .label = keyword, .kind = .Keyword });
             for (builtins) |each| try items.append(arena, .{ .label = each.name, .kind = .Function, .detail = each.signature });
             if (compiler) |found| {
-                const own = try std.fmt.allocPrint(arena, "{s}:", .{try documentNamespace(arena, text) orelse found.namespace});
+                const own = try std.fmt.allocPrint(arena, "{s}:", .{found.file_namespaces.get(place.?.path) orelse found.namespace});
                 var data_files = found.named_data_files.iterator();
                 while (data_files.next()) |entry| {
                     try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Constant, .detail = entry.value_ptr.id });
@@ -398,17 +396,16 @@ fn analyze(self: *Self, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     return analysis;
 }
 
-// The nearest folder above the file that has `poplar.json` or `src/main.poplar`.
+// The nearest folder with `poplar.json`, or else the folder that holds the `src/` that the file is in.
 fn findProjectRoot(self: *Self, arena: std.mem.Allocator, file_path: []const u8) !?[]const u8 {
+    var above_src: ?[]const u8 = null;
     var directory = std.fs.path.dirname(file_path);
     while (directory) |current| : (directory = std.fs.path.dirname(current)) {
-        for ([_][]const u8{ Config.file_name, "src/main.poplar" }) |marker| {
-            const marker_path = try std.fs.path.join(arena, &.{ current, marker });
-            std.Io.Dir.accessAbsolute(self.io, marker_path, .{}) catch continue;
-            return current;
-        }
+        const config_path = try std.fs.path.join(arena, &.{ current, Config.file_name });
+        if (std.Io.Dir.accessAbsolute(self.io, config_path, .{})) |_| return current else |_| {}
+        if (above_src == null and std.mem.eql(u8, std.fs.path.basename(current), "src")) above_src = std.fs.path.dirname(current);
     }
-    return null;
+    return above_src;
 }
 
 // The text of a file: from the editor when it is open, else from the disk.
@@ -454,16 +451,9 @@ fn namespaceBefore(text: []const u8, start: usize) struct { ?[]const u8, usize }
     return .{ text[namespace_start .. start - 1], namespace_start };
 }
 
-// The namespace of a document: its `namespace` line.
-fn documentNamespace(arena: std.mem.Allocator, text: []const u8) !?[]const u8 {
-    var parser = try Parser.init(arena, Lexer.init(text));
-    const program = try parser.parseProgram();
-    return if (program.namespace) |namespace| namespace.name else null;
-}
-
-// `combat:heal`: how the compiler keys the declaration that `word` names.
-fn wordKey(arena: std.mem.Allocator, compiler: *const Compiler, text: []const u8, word: Word, name: []const u8) ![]const u8 {
-    const namespace = word.namespace orelse try documentNamespace(arena, text) orelse compiler.namespace;
+// `combat:heal`: how the compiler keys the declaration that `word` names, from the namespace of its file.
+fn wordKey(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, word: Word, name: []const u8) ![]const u8 {
+    const namespace = word.namespace orelse compiler.file_namespaces.get(place.path) orelse compiler.namespace;
     return std.fmt.allocPrint(arena, "{s}:{s}", .{ namespace, name });
 }
 
@@ -519,7 +509,7 @@ fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Pla
 }
 
 // The hover text for a word, in Markdown.
-fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, text: []const u8, word: Word, place: Place) !?[]const u8 {
+fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, word: Word, place: Place) !?[]const u8 {
     if (word.kind == .entity_data) {
         return try std.fmt.allocPrint(arena, "Entity NBT `{s}`. The compiler does not check the path.", .{word.text});
     }
@@ -529,7 +519,7 @@ fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, text: []
         }
     }
     const compiler = analysis.result.compiler orelse return null;
-    const key = try wordKey(arena, compiler, text, word, Compiler.pathRoot(word.text));
+    const key = try wordKey(arena, compiler, place, word, Compiler.pathRoot(word.text));
     switch (word.kind) {
         .score => {
             if (word.namespace == null) if (try findLocal(arena, compiler, place, .score, word.text)) |local| {
