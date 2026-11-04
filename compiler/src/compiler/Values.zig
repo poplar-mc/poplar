@@ -87,6 +87,7 @@ pub fn evaluate(self: *Compiler, expression: *const Ast.Expr, env: *Environment)
         },
         .string => |text| .{ .string = text },
         .number => |number| .{ .number = number },
+        .typed_number => |number| .{ .typed_number = number },
         .boolean => |boolean| .{ .boolean = boolean },
         .null => .null,
         .identifier => |identifier| {
@@ -141,6 +142,11 @@ pub fn evaluatePrefix(self: *Compiler, prefix: Ast.Prefix, env: *Environment) Co
     const operand = try evaluate(self, prefix.operand, env) orelse return null;
 
     if (prefix.op == .minus and operand == .number) return checkedNumber(self, std.math.sub(i64, 0, operand.number));
+    if (prefix.op == .minus and operand == .typed_number) {
+        const text = operand.typed_number.text;
+        const negated = if (text[0] == '-') text[1..] else try std.fmt.allocPrint(self.gpa, "-{s}", .{text});
+        return .{ .typed_number = .{ .text = negated, .type = operand.typed_number.type } };
+    }
     if (prefix.op == .bang and operand == .boolean) return .{ .boolean = !operand.boolean };
 
     try self.addError("operator '{s}' cannot be used with {s}", .{ operatorText(prefix.op), @tagName(operand) });
@@ -187,6 +193,10 @@ pub fn evaluateInfix(self: *Compiler, infix: Ast.Infix, env: *Environment) Compi
         return .{ .boolean = if (infix.op == .eql_eql) is_equal else !is_equal };
     }
 
+    if (left == .typed_number or right == .typed_number) {
+        try self.addError("build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here", .{operatorText(infix.op)});
+        return null;
+    }
     try self.addError("operator '{s}' cannot be used with {s} and {s}", .{
         operatorText(infix.op),
         @tagName(left),
@@ -222,6 +232,7 @@ pub fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
     return switch (left) {
         .string => |text| std.mem.eql(u8, text, right.string),
         .number => |number| number == right.number,
+        .typed_number => |number| number.type == right.typed_number.type and std.mem.eql(u8, number.text, right.typed_number.text),
         .boolean => |boolean| boolean == right.boolean,
         .null => true,
         .list => |elements| elements.len == right.list.len and for (elements, right.list) |element, other| {
@@ -258,11 +269,18 @@ pub fn valueToText(self: *Compiler, value: Compiler.Value) Compiler.CompileError
     return switch (value) {
         .string => |text| text,
         .number => |number| try std.fmt.allocPrint(self.gpa, "{d}", .{number}),
+        .typed_number => |number| try typedNumberSnbt(self, number),
         .boolean => |boolean| if (boolean) "true" else "false",
         .null => "null",
         .list, .compound => valueToSnbt(self, value),
         .local => unreachable, // `evaluate` never returns a local.
     };
+}
+
+// `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is a double.
+pub fn typedNumberSnbt(self: *Compiler, number: Ast.TypedNumber) Compiler.CompileError![]const u8 {
+    const suffix = if (number.type) |number_type| number_type.suffix() else "";
+    return std.mem.concat(self.gpa, u8, &.{ number.text, suffix });
 }
 
 // A key is written as it is when it is a plain name, else in quotes.

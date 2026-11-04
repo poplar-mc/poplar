@@ -162,6 +162,15 @@ pub fn isSingleEntitySelector(selector: []const u8) bool {
 }
 
 pub fn toScoreValue(self: *Compiler, value: Compiler.Value) Compiler.CompileError!?i32 {
+    if (value == .typed_number) {
+        const number = value.typed_number;
+        if (number.hasFraction()) {
+            try self.addError("a score holds whole numbers, so it cannot hold '{s}'", .{number.text});
+        } else {
+            try self.addError("a score has no number types: write '{s}' with no suffix", .{number.text});
+        }
+        return null;
+    }
     if (value != .number) {
         try self.addError("a score must hold a number, found {s}", .{@tagName(value)});
         return null;

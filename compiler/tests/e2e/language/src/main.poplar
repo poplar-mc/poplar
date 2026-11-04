@@ -17,6 +17,8 @@ var $names = [];
 var $flag = true;
 var $src = {};
 var $sid = "minecraft:diamond";
+var $small = 0.05f;
+var $typed = {myNum: 0.05f, count: 1b, big: 5L, little: 5s, plain: 0.5, whole: 20d};
 
 mcfun show() {
     /say $(label) = $(value);
@@ -221,6 +223,11 @@ mcfun test() {
     if (dimension minecraft:overworld and #x > 0) { /say in overworld; }
     if (!entity @e[tag=poplar_none] or #x > 1000) { /say no entity; }
     if (dimension minecraft:the_nether) { /say wrong dimension; } else { /say not nether; }
+    /say snbt {{$small}} {{$typed}};
+    $small = -0.25d;
+    /say negative {{$small}};
+    if ($small == -0.25d) { /say typed equal; }
+    if ($small == -0.25f) { /say wrong number type; }
 }
 
 // A failed copy must not leave the value of an earlier call: locals are removed when the mcfun ends.

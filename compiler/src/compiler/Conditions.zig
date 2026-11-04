@@ -126,13 +126,14 @@ pub fn dataComparison(self: *Compiler, data_side: *const Ast.Expr, other: *const
     return dataCondition(self, data_side.kind.identifier, value, cast_type, negated, env);
 }
 
-// True when one side is data and the other is a compile-time value that is not a plain number.
+// True when one side is data and the other is a compile-time value that is not a plain int.
 pub fn isTextComparison(self: *Compiler, left: *const Ast.Expr, right: *const Ast.Expr, env: *Environment) bool {
     if (!Data.isDataIdentifier(left) and !Data.isDataIdentifier(right)) return false;
     for ([_]*const Ast.Expr{ left, right }) |side| {
         if (Data.isDataIdentifier(side) or Values.containsRuntimeValue(self, side, env)) continue;
         switch (side.kind) {
-            .string, .boolean, .list, .compound, .cast => return true,
+            .string, .boolean, .list, .compound, .cast, .typed_number => return true,
+            .prefix => |prefix| if (prefix.operand.kind == .typed_number) return true,
             else => {},
         }
     }
@@ -144,6 +145,10 @@ pub fn lowerOperand(self: *Compiler, expression: *const Ast.Expr, env: *Environm
     defer self.restorePosition(outer_position);
     if (!Values.containsRuntimeValue(self, expression, env)) {
         const value = try Values.evaluate(self, expression, env) orelse return null;
+        if (value == .typed_number) {
+            try self.addError("a score holds whole numbers with no suffix, so it cannot be compared with '{s}'", .{value.typed_number.text});
+            return null;
+        }
         if (value != .number) {
             try self.addError("only numbers can be compared with scores, found {s}", .{@tagName(value)});
             return null;

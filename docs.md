@@ -246,13 +246,17 @@ A `$` variable is NBT. A global is a key in the storage `<namespace>:data`; a lo
 | Write | Stored as |
 |---|---|
 | `20` | `20` (an int) |
+| `0.5` | `0.5` (a double) |
+| `0.05f`, `20f` | `0.05f`, `20f` (a float) |
+| `0.05d`, `20d` | `0.05d`, `20d` (a double) |
+| `1b`, `5s`, `5L` | `1b`, `5s`, `5L` (a byte, short and long) |
 | `20 as float` | `20f` |
 | `true` / `false` | `true` / `false` (a byte, `1b` / `0b`) |
 | `"Steve"` | `"Steve"` |
 | `[1, "a"]` | `[1,"a"]` |
 | `{hp: 20, "custom key": 1}` | `{hp:20,"custom key":1}` |
 
-Number literals are integers. A global's initial value is set only if the key does not exist yet, so `/reload` keeps it.
+These are the same number forms as Minecraft's SNBT, and suffixes can be upper or lower case, so NBT from a command pastes in as it is: `{Count: 1b, chance: 0.05f}`. A global's initial value is set only if the key does not exist yet, so `/reload` keeps it.
 
 ### Assigning
 
@@ -311,7 +315,7 @@ mcfun inspect() {
 
 ### NBT types with `as`
 
-The game reads some NBT fields as one type: an entity's `Health` is a float. `as` says which number type to store:
+The game reads some NBT fields as one type: an entity's `Health` is a float. For a constant, write the suffix: `0.05f`. For a score or math, `as` says which number type to store:
 
 | `as` | Suffix |
 |---|---|
@@ -322,11 +326,14 @@ The game reads some NBT fields as one type: an entity's `Health` is a float. `as
 | `float` | `1f` |
 | `double` | `1d` |
 
-`as` binds loosest: `#a + 1 as double` means `(#a + 1) as double`. It works on constants (`20 as float` is `20f`), on scores and math stored into NBT, and on values in a [`with` compound](#macro-arguments). Anywhere else it is an error.
+`as` binds loosest: `#a + 1 as double` means `(#a + 1) as double`. It works on constants (`20 as float` is `20f`, `0.05 as float` is `0.05f`), on scores and math stored into NBT, and on values in a [`with` compound](#macro-arguments). Anywhere else it is an error.
 
 **Costs and caveats**
 
 - **Paths are not checked.** A typo like `$stats.hpp` compiles and reads nothing in the game.
+- **Decimal and typed numbers are constants for data.** They cost nothing extra, but a score holds only whole numbers (`#x = 0.05;` is an error), and build-time math (`0.5 + 1`) only works on plain whole numbers.
+- **A comparison checks the NBT type too.** `$x == 0.25d` is false if `$x` is `0.25f` or `1`, because it is Minecraft's NBT filter.
+- **A float inserted on its own prints as a long decimal.** With `$x` set to `0.05f`, `/say {{$x}};` says `.050000000745058`, because Minecraft widens it. Inside a compound, it prints as `0.05f`.
 - **Math reads an `int`.** In math or a number comparison, `$x` is read with `data get`, which rounds a fraction down.
 - **A literal with game values costs 1 + n commands:** one for the literal and one for each of the n game values.
 - **A game value added to a list costs 2 commands.** A constant, or a copy from other data, is 1 command.
@@ -1007,7 +1014,7 @@ Every build deletes and rewrites `poplar-out/`. Every field of `poplar.json` is 
 | `poplar watch [dir] [--world <world>]` | builds again on every change; with a world, copies each build into the world's `datapacks/` |
 | `poplar update [--yes]` | updates Poplar to the latest release, after asking |
 | `poplar lsp` | the language server, over stdin and stdout |
-| `poplar --version` | the Poplar and Minecraft versions |
+| `poplar --version`, `poplar -v` | the Poplar and Minecraft versions |
 
 `new` and `init` never overwrite a file. A failing command lists its errors, one per line, and exits with code 1:
 

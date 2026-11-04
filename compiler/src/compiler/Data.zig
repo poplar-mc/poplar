@@ -128,23 +128,22 @@ pub fn castSnbt(self: *Compiler, value: Compiler.Value, cast_type: ?Ast.NumberTy
 }
 
 pub fn numberSnbt(self: *Compiler, value: Compiler.Value, target_type: Ast.NumberType) Compiler.CompileError!?[]const u8 {
-    const number: i64 = switch (value) {
-        .number => |number| number,
-        .boolean => |boolean| @intFromBool(boolean),
+    switch (value) {
+        .number => |number| return try std.fmt.allocPrint(self.gpa, "{d}{s}", .{ number, target_type.suffix() }),
+        .boolean => |boolean| return try std.fmt.allocPrint(self.gpa, "{d}{s}", .{ @intFromBool(boolean), target_type.suffix() }),
+        .typed_number => |number| {
+            const is_whole_type = target_type != .float and target_type != .double;
+            if (number.hasFraction() and is_whole_type) {
+                try self.addError("'as {t}' is a whole number type, so '{s}' cannot be one", .{ target_type, number.text });
+                return null;
+            }
+            return try Values.typedNumberSnbt(self, .{ .text = number.text, .type = target_type });
+        },
         else => {
             try self.addError("a {t} needs a number, found {s}", .{ target_type, @tagName(value) });
             return null;
         },
-    };
-    const suffix = switch (target_type) {
-        .byte => "b",
-        .short => "s",
-        .int => "",
-        .long => "L",
-        .float => "f",
-        .double => "d",
-    };
-    return try std.fmt.allocPrint(self.gpa, "{d}{s}", .{ number, suffix });
+    }
 }
 
 // A `#` variable in `<ns>:data`, or the NBT path of one entity.
@@ -381,6 +380,7 @@ pub fn evaluateStringCall(self: *Compiler, call: Ast.Call, env: *Environment) Co
     const text = switch (first) {
         .string => |text| text,
         .number => |number| try std.fmt.allocPrint(self.gpa, "{d}", .{number}),
+        .typed_number => |number| number.text,
         else => {
             try self.addError("'{s}' needs a string or a number, found {s}", .{ name, @tagName(first) });
             return null;
@@ -487,6 +487,44 @@ test "reads and writes entity data with types" {
         \\data modify entity @s Glowing set value 1b
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
+}
+
+test "SNBT numbers are written as they are, and scores reject them" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try Compiler.compileForTest(arena.allocator(),
+        \\var $small = 0.05f;
+        \\var $item = {myNum: 0.05f, count: 1b, list: [5s, 5L, 0.5]};
+        \\var #hp = 0;
+        \\mcfun main() {
+        \\    $small = -0.5d;
+        \\    $small = 0.05 as float;
+        \\    if ($small == 0.05f) { /say same; }
+        \\    if ($small == -0.5d) { /say negative; }
+        \\    #hp = 0.05;
+        \\    #hp = 5b;
+        \\    if (#hp > 0.5f) { /say big; }
+        \\    $small = 0.5 + 1;
+        \\    $small = 0.5 as int;
+        \\}
+    );
+    const program = try compiler.compile();
+    const errors = compiler.errors.items;
+    try std.testing.expectEqual(5, errors.len);
+    try std.testing.expectEqualStrings("a score holds whole numbers, so it cannot hold '0.05'", errors[0].message);
+    try std.testing.expectEqualStrings("a score has no number types: write '5' with no suffix", errors[1].message);
+    try std.testing.expectEqualStrings("a score holds whole numbers with no suffix, so it cannot be compared with '0.5'", errors[2].message);
+    try std.testing.expectEqualStrings("build-time math only works on whole numbers with no suffix, so '+' cannot be used here", errors[3].message);
+    try std.testing.expectEqualStrings("'as int' is a whole number type, so '0.5' cannot be one", errors[4].message);
+
+    const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
+    try std.testing.expect(std.mem.indexOf(u8, load, "small set value 0.05f") != null);
+    try std.testing.expect(std.mem.indexOf(u8, load, "item set value {myNum:0.05f,count:1b,list:[5s,5L,0.5]}") != null);
+    const main = try Compiler.renderForTest(arena.allocator(), program, "main");
+    try std.testing.expect(std.mem.indexOf(u8, main, "data modify storage ns:data small set value -0.5d\ndata modify storage ns:data small set value 0.05f\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, main, "{small:0.05f}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, main, "{small:-0.5d}") != null);
 }
 
 test "a score or math is stored as an int unless 'as' gives the type" {

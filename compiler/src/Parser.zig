@@ -477,10 +477,7 @@ fn parsePrefix(self: *Self) ParseError!?*Ast.Expr {
             .{ .selector = self.current.literal },
         .identifier, .score_identifier, .data_identifier => .{ .identifier = try self.parseIdentifier() orelse return null },
         .string => .{ .string = try self.decodeString(self.current.literal) orelse return null },
-        .number => .{ .number = std.fmt.parseInt(i64, self.current.literal, 10) catch {
-            try self.addError("number '{s}' is too large", .{self.current.literal});
-            return null;
-        } },
+        .number => try self.parseNumber() orelse return null,
         .left_bracket => .{ .list = try self.parseListLiteral() orelse return null },
         .left_brace => .{ .compound = try self.parseCompoundLiteral() orelse return null },
         .true => .{ .boolean = true },
@@ -506,6 +503,31 @@ fn parsePrefix(self: *Self) ParseError!?*Ast.Expr {
     };
 
     return try self.createExpr(start.line, start.column, kind);
+}
+
+fn parseNumber(self: *Self) ParseError!?Ast.Expr.Kind {
+    const literal = self.current.literal;
+    const number_type: ?Ast.NumberType = switch (std.ascii.toLower(literal[literal.len - 1])) {
+        'b' => .byte,
+        's' => .short,
+        'l' => .long,
+        'f' => .float,
+        'd' => .double,
+        else => null,
+    };
+    const number: Ast.TypedNumber = .{ .text = if (number_type == null) literal else literal[0 .. literal.len - 1], .type = number_type };
+
+    if (number_type == null and !number.hasFraction()) {
+        return .{ .number = std.fmt.parseInt(i64, literal, 10) catch {
+            try self.addError("number '{s}' is too large", .{literal});
+            return null;
+        } };
+    }
+    if (number.hasFraction() and (number_type == .byte or number_type == .short or number_type == .long)) {
+        try self.addError("a {t} is a whole number, so '{s}' cannot have a fraction", .{ number_type.?, literal });
+        return null;
+    }
+    return .{ .typed_number = number };
 }
 
 // Only `\"` and `\\` are allowed, because a string ends up in a one-line command or in SNBT.
@@ -830,13 +852,31 @@ test "an expression in an insert has its position in the file" {
     const body = program.functions[0].body;
     const command_insert = body[0].kind.command.parts[1].content.insert;
     const execute_insert = body[1].kind.execute.subcommands[1].content.insert;
-    const check_insert = body[2].kind.@"if".condition.kind.minecraft_check[0].content.insert;
+    const check_insert = body[2].kind.@"if".condition.kind.minecraft_check[1].content.insert;
     try std.testing.expectEqual(2, command_insert.line);
     try std.testing.expectEqual(14, command_insert.column);
     try std.testing.expectEqual(3, execute_insert.line);
     try std.testing.expectEqual(20, execute_insert.column);
     try std.testing.expectEqual(4, check_insert.line);
     try std.testing.expectEqual(19, check_insert.column);
+}
+
+test "SNBT numbers keep their text and type, and a range still works" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const program = try parseValidForTest(arena.allocator(), "mcfun f() { g(0.05f, 0.05, 1b, 5L, 20D, 5); for (1..5) |i| {} }");
+
+    const args = program.functions[0].body[0].kind.expression.kind.call.args;
+    try std.testing.expectEqualStrings("0.05", args[0].kind.typed_number.text);
+    try std.testing.expectEqual(.float, args[0].kind.typed_number.type.?);
+    try std.testing.expectEqualStrings("0.05", args[1].kind.typed_number.text);
+    try std.testing.expectEqual(null, args[1].kind.typed_number.type);
+    try std.testing.expectEqual(.byte, args[2].kind.typed_number.type.?);
+    try std.testing.expectEqual(.long, args[3].kind.typed_number.type.?);
+    try std.testing.expectEqual(.double, args[4].kind.typed_number.type.?);
+    try std.testing.expectEqual(5, args[5].kind.number);
+    try std.testing.expectEqual(5, program.functions[0].body[1].kind.@"for".end.kind.number);
 }
 
 test "parse var statement" {

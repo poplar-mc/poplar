@@ -19,6 +19,7 @@ pub fn register(init_options: zli.InitOptions) !*zli.Command {
     }, showHelpOrVersion);
     try root.addFlag(.{
         .name = "version",
+        .shortcut = "v",
         .description = "Show the Poplar version and the Minecraft version it targets",
         .type = .Bool,
         .default_value = .{ .Bool = false },

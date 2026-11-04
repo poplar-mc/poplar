@@ -241,7 +241,8 @@ module.exports = grammar({
 
     identifier: _ => /[A-Za-z_][A-Za-z0-9_]*/,
 
-    number: _ => /\d+/,
+    // An SNBT number: `5`, `0.05`, `0.05f` or `1b`.
+    number: _ => /\d+(\.\d+)?[bBsSlLfFdD]?/,
 
     string: _ => /"([^"\\\n]|\\.)*"/,
 

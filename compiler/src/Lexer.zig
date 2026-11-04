@@ -460,12 +460,19 @@ fn readString(self: *Self) ?[]const u8 {
     return self.input[start + 1 .. self.pos];
 }
 
+// Reads an SNBT number: `5`, `0.05`, `0.05f` or `1b`. A `.` needs a digit after it, so `1..5` is still a range.
 fn readNumber(self: *Self) []const u8 {
     const start = self.pos;
 
-    while (std.ascii.isDigit(self.ch)) {
+    while (std.ascii.isDigit(self.ch)) self.readChar();
+    if (self.ch == '.' and std.ascii.isDigit(self.peekChar())) {
         self.readChar();
+        while (std.ascii.isDigit(self.ch)) self.readChar();
     }
+
+    const next = self.peekChar();
+    const ends_after = !isLetter(next) and !std.ascii.isDigit(next);
+    if (std.mem.indexOfScalar(u8, "bBsSlLfFdD", self.ch) != null and ends_after) self.readChar();
 
     return self.input[start..self.pos];
 }

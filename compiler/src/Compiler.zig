@@ -610,7 +610,7 @@ fn collectExprMacroKeys(gpa: std.mem.Allocator, expression: *const Ast.Expr, key
         .list => |elements| for (elements) |element| try collectExprMacroKeys(gpa, element, keys),
         .compound => |entries| for (entries) |entry| try collectExprMacroKeys(gpa, entry.value, keys),
         .minecraft_check => |parts| try collectPartsMacroKeys(gpa, parts, keys),
-        .identifier, .number, .string, .boolean, .null, .selector => {},
+        .identifier, .number, .typed_number, .string, .boolean, .null, .selector => {},
     }
 }
 
@@ -1028,7 +1028,7 @@ pub fn evaluateRange(self: *Self, loop: Ast.For, env: *Environment) CompileError
     const end = try Values.evaluate(self, loop.end, env) orelse return null;
 
     if (start != .number or end != .number) {
-        try self.addError("range bounds must be numbers", .{});
+        try self.addError("range bounds must be whole numbers", .{});
         return null;
     }
     if (start.number > end.number) {

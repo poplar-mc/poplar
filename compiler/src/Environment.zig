@@ -1,10 +1,12 @@
 const std = @import("std");
+const Ast = @import("Ast.zig");
 
 const Self = @This();
 
 pub const Value = union(enum) {
     string: []const u8,
     number: i64,
+    typed_number: Ast.TypedNumber,
     boolean: bool,
     null,
     list: []const Value,

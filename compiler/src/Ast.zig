@@ -1,3 +1,4 @@
+const std = @import("std");
 const Token = @import("Token.zig");
 
 pub const Program = struct {
@@ -70,7 +71,35 @@ pub const Stmt = struct {
 pub const Storage = enum { compile_time, score, data, entity_data };
 
 // The NBT number types of `x as float`.
-pub const NumberType = enum { byte, short, int, long, float, double };
+pub const NumberType = enum {
+    byte,
+    short,
+    int,
+    long,
+    float,
+    double,
+
+    pub fn suffix(self: NumberType) []const u8 {
+        return switch (self) {
+            .byte => "b",
+            .short => "s",
+            .int => "",
+            .long => "L",
+            .float => "f",
+            .double => "d",
+        };
+    }
+};
+
+// `0.05f`, `1b` or `0.05`: an SNBT number as written, so `0.05` stays exact. A null type is a plain decimal, a double.
+pub const TypedNumber = struct {
+    text: []const u8,
+    type: ?NumberType,
+
+    pub fn hasFraction(self: TypedNumber) bool {
+        return std.mem.indexOfScalar(u8, self.text, '.') != null;
+    }
+};
 
 pub const Identifier = struct {
     name: []const u8,
@@ -140,6 +169,7 @@ pub const Expr = struct {
     pub const Kind = union(enum) {
         identifier: Identifier,
         number: i64,
+        typed_number: TypedNumber,
         string: []const u8,
         boolean: bool,
         null,

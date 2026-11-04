@@ -1954,7 +1954,7 @@
     },
     "number": {
       "type": "PATTERN",
-      "value": "\\d+"
+      "value": "\\d+(\\.\\d+)?[bBsSlLfFdD]?"
     },
     "string": {
       "type": "PATTERN",
