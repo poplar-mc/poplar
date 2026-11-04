@@ -6,7 +6,6 @@
 // @ts-check
 
 const PREC = {
-  cast: 0,
   or: 1,
   and: 2,
   equality: 3,
@@ -165,7 +164,6 @@ module.exports = grammar({
       $.binary_expression,
       $.call_expression,
       $.parenthesized_expression,
-      $.cast_expression,
       $.list_literal,
       $.compound_literal,
       $.selector,
@@ -213,15 +211,6 @@ module.exports = grammar({
     argument_list: $ => seq('(', commaSep($._expression), ')'),
 
     parenthesized_expression: $ => seq('(', $._expression, ')'),
-
-    // `#hp + 1 as float`: the NBT type of a value that is stored in data.
-    cast_expression: $ => prec.left(PREC.cast, seq(
-      field('value', $._expression),
-      'as',
-      field('type', $.number_type),
-    )),
-
-    number_type: _ => choice('byte', 'short', 'int', 'long', 'float', 'double'),
 
     // `@s.#mana`
     entity_score: $ => seq(field('selector', $.selector), '.', field('score', $.score_variable)),

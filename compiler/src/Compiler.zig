@@ -125,7 +125,7 @@ pub const LocalVariable = struct {
 pub const GlobalData = struct {
     path: []const u8,
     line: usize,
-    // The initial value as SNBT: `20`, `20f` for `20 as float`, `{hp:20}`.
+    // The initial value as SNBT: `20`, `20f`, `{hp:20}`.
     initial_snbt: []const u8,
     name: []const u8,
     // Null for the pack namespace.
@@ -606,7 +606,6 @@ fn collectExprMacroKeys(gpa: std.mem.Allocator, expression: *const Ast.Expr, key
                 .raw => |text| try collectTextMacroKeys(gpa, text, keys),
             };
         },
-        .cast => |cast| try collectExprMacroKeys(gpa, cast.value, keys),
         .list => |elements| for (elements) |element| try collectExprMacroKeys(gpa, element, keys),
         .compound => |entries| for (entries) |entry| try collectExprMacroKeys(gpa, entry.value, keys),
         .minecraft_check => |parts| try collectPartsMacroKeys(gpa, parts, keys),
@@ -1303,7 +1302,7 @@ test "locals are set on every call, saved around a recursive call, and data loca
         \\
     , try renderForTest(arena.allocator(), program, "walk"));
     try std.testing.expectEqualStrings(
-        \\$execute store result storage ns:data v_twice int 1 run scoreboard players set #poplar.twice.t0 poplar.ns $(n)
+        \\$data modify storage ns:data v_twice set value $(n)
         \\execute store result score #poplar.twice.t0 poplar.ns run data get storage ns:data v_twice 2
         \\data remove storage ns:data v_twice
         \\return run scoreboard players get #poplar.twice.t0 poplar.ns

@@ -68,5 +68,7 @@ in overworld
 no entity
 not nether
 snbt .050000000745058 {big:5L,count:1b,little:5s,myNum:0.05f,plain:0.5d,whole:20.0d}
+macro stored .25
+macro stored [1,2]
 negative -.25
 typed equal

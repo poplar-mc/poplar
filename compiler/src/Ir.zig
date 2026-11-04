@@ -1,6 +1,5 @@
 const std = @import("std");
 
-pub const NumberType = @import("Ast.zig").NumberType;
 
 // A function name is `ns:path`, or only `path` in the pack namespace (Poplar's own files and the namespace
 // of `poplar.json`). A score or data path with no namespace is in the pack namespace too.
@@ -68,7 +67,7 @@ pub const Command = union(enum) {
 pub const StoreResult = struct {
     pub const Target = union(enum) {
         score: Score,
-        data: TypedDataPath,
+        data: DataPath,
     };
 
     target: Target,
@@ -112,11 +111,6 @@ pub const DataPath = struct {
     }
 };
 
-pub const TypedDataPath = struct {
-    path: DataPath,
-    type: NumberType = .int,
-};
-
 pub const DataValue = struct {
     target: DataPath,
     snbt: []const u8,
@@ -147,7 +141,6 @@ pub const DataAdd = struct {
 pub const ScoreToData = struct {
     target: DataPath,
     score: Score,
-    type: NumberType = .int,
 };
 
 // The value is multiplied by the scale before it is stored.

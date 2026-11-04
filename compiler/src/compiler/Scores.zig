@@ -82,7 +82,6 @@ pub fn compileInto(self: *Compiler, target: Ir.Score, expression: *const Ast.Exp
             if (!try Calls.canReach(self, found.key, self.mcfun.key)) return commands.append(self.gpa, store);
             try Calls.appendWithSavedValues(self, store, target, live_count, commands);
         },
-        .cast => try self.addError(Values.cast_error, .{}),
         else => try self.addError("this expression cannot be used with scores", .{}),
     }
 }
@@ -146,6 +145,10 @@ pub fn resolveScore(self: *Compiler, identifier: Ast.Identifier, env: *const Env
 
 pub fn checkSingleEntity(self: *Compiler, identifier: Ast.Identifier) Compiler.CompileError!bool {
     const selector = identifier.selector orelse return true;
+    if (try self.command_tree.checkSelector(self.gpa, selector)) |failure| {
+        try self.addError("{s}", .{failure.message});
+        return false;
+    }
     if (isSingleEntitySelector(selector)) return true;
 
     const sigil = if (identifier.storage == .entity_data) "$" else "#";
@@ -327,9 +330,8 @@ test "entity score errors" {
     _ = try compiler.compile();
 
     const errors = compiler.errors.items;
-    try std.testing.expectEqual(3, errors.len);
+    try std.testing.expectEqual(2, errors.len);
     try std.testing.expectEqualStrings("'@a.#mana' needs a selector for one entity (@s, @p, @r, @n or limit=1)", errors[0].message);
     try std.testing.expectEqualStrings("expected a subcommand, found 'az'", errors[1].message);
     try std.testing.expectEqual(14, errors[1].column);
-    try std.testing.expectEqualStrings("a score or math in entity data needs its NBT type: '@s.$Health = ... as float;' (byte, short, int, long, float, double)", errors[2].message);
 }

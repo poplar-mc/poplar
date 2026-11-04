@@ -13,7 +13,6 @@ pub fn containsRuntimeValue(self: *const Compiler, expression: *const Ast.Expr, 
         .minecraft_check, .macro_key => true,
         .prefix => |prefix| containsRuntimeValue(self, prefix.operand, env),
         .infix => |infix| containsRuntimeValue(self, infix.left, env) or containsRuntimeValue(self, infix.right, env),
-        .cast => |cast| containsRuntimeValue(self, cast.value, env),
         .list => |elements| for (elements) |element| {
             if (containsRuntimeValue(self, element, env)) break true;
         } else false,
@@ -67,16 +66,10 @@ pub fn evaluateCall(self: *Compiler, call: Ast.Call, env: *Environment) Compiler
     return null;
 }
 
-pub const cast_error = "'as' sets the NBT type of a value that is stored in data: '$x = ... as float;' or '@s.$path = ... as float;'";
-
 pub fn evaluate(self: *Compiler, expression: *const Ast.Expr, env: *Environment) Compiler.CompileError!?Compiler.Value {
     const outer_position = self.enterExpression(expression);
     defer self.restorePosition(outer_position);
     return switch (expression.kind) {
-        .cast => {
-            try self.addError(cast_error, .{});
-            return null;
-        },
         .minecraft_check => {
             try self.addError("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition", .{});
             return null;
@@ -116,7 +109,13 @@ pub fn evaluate(self: *Compiler, expression: *const Ast.Expr, env: *Environment)
         .prefix => |prefix| evaluatePrefix(self, prefix, env),
         .infix => |infix| evaluateInfix(self, infix, env),
         .call => |call| evaluateCall(self, call, env),
-        .selector => |text| .{ .string = text },
+        .selector => |text| {
+            if (try self.command_tree.checkSelector(self.gpa, text)) |failure| {
+                try self.addError("{s}", .{failure.message});
+                return null;
+            }
+            return .{ .string = text };
+        },
         .list => |elements| {
             const values = try self.gpa.alloc(Compiler.Value, elements.len);
             for (elements, values) |element, *value| value.* = try evaluate(self, element, env) orelse return null;

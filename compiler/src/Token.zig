@@ -47,7 +47,6 @@ pub const TokenType = enum {
     string,
     number,
     @"and",
-    as,
     @"break",
     @"continue",
     @"else",
@@ -74,7 +73,6 @@ pub const TokenType = enum {
 
 pub const Keywords = std.StaticStringMap(TokenType).initComptime(.{
     .{ "and", .@"and" },
-    .{ "as", .as },
     .{ "break", .@"break" },
     .{ "continue", .@"continue" },
     .{ "else", .@"else" },

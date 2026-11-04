@@ -226,9 +226,8 @@ pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace
             if (set.start) |start| try text.print(gpa, " {d}", .{start});
             if (set.end) |end| try text.print(gpa, " {d}", .{end});
         },
-        .score_to_data => |copy| try text.print(gpa, "execute store result {f} {t} 1 run scoreboard players get {f}", .{
+        .score_to_data => |copy| try text.print(gpa, "execute store result {f} int 1 run scoreboard players get {f}", .{
             dataPathText(namespace, copy.target),
-            copy.type,
             scoreText(namespace, copy.score),
         }),
         .data_to_score => |copy| {
@@ -271,7 +270,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace
         .store_result => |store| {
             switch (store.target) {
                 .score => |score| try text.print(gpa, "execute store result score {f} run ", .{scoreText(namespace, score)}),
-                .data => |data| try text.print(gpa, "execute store result {f} {t} 1 run ", .{ dataPathText(namespace, data.path), data.type }),
+                .data => |path| try text.print(gpa, "execute store result {f} int 1 run ", .{dataPathText(namespace, path)}),
             }
             try renderCommand(text, gpa, namespace, store.run.*);
         },

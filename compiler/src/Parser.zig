@@ -15,7 +15,6 @@ pub const Error = struct {
 
 const Precedence = enum {
     lowest,
-    cast,
     @"or",
     @"and",
     equals,
@@ -564,7 +563,6 @@ fn parseGroupedExpression(self: *Self) ParseError!?*Ast.Expr {
 
 fn parseInfix(self: *Self, left: *Ast.Expr) ParseError!?*Ast.Expr {
     if (self.currentIs(.left_paren)) return self.parseCallExpression(left);
-    if (self.currentIs(.as)) return self.parseCast(left);
 
     const op = self.current.type;
     const precedence = self.currentPrecedence();
@@ -609,15 +607,6 @@ fn parseCompoundLiteral(self: *Self) ParseError!?[]const Ast.Entry {
     }
     if (!try self.expectPeek(.right_brace)) return null;
     return try entries.toOwnedSlice(self.gpa);
-}
-
-fn parseCast(self: *Self, value: *Ast.Expr) ParseError!?*Ast.Expr {
-    if (!try self.expectPeek(.identifier)) return null;
-    const number_type = std.meta.stringToEnum(Ast.NumberType, self.current.literal) orelse {
-        try self.addError("unknown type '{s}'. Types: byte, short, int, long, float, double", .{self.current.literal});
-        return null;
-    };
-    return try self.createExpr(value.line, value.column, .{ .cast = .{ .value = value, .type = number_type } });
 }
 
 fn parseCallExpression(self: *Self, callee: *Ast.Expr) ParseError!?*Ast.Expr {
@@ -752,7 +741,6 @@ fn peekPrecedence(self: *Self) Precedence {
 
 fn precedenceOf(token_type: Token.TokenType) Precedence {
     return switch (token_type) {
-        .as => .cast,
         .@"or" => .@"or",
         .@"and" => .@"and",
         .eql_eql, .bang_eql => .equals,

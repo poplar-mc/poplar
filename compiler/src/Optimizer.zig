@@ -25,7 +25,7 @@ fn storeConstants(gpa: Allocator, function_name: []const u8, commands: []const I
             if (isScopedHere(set.score, function_name) and !isReadLater(commands[index + 1 ..], set.score)) {
                 try result.append(gpa, switch (command.store_result.target) {
                     .score => |score| .{ .score_set = .{ .score = score, .value = set.value } },
-                    .data => |data| .{ .data_set = .{ .target = data.path, .snbt = try numberSnbt(gpa, set.value, data.type) } },
+                    .data => |path| .{ .data_set = .{ .target = path, .snbt = try std.fmt.allocPrint(gpa, "{d}", .{set.value}) } },
                 });
                 continue;
             }
@@ -33,18 +33,6 @@ fn storeConstants(gpa: Allocator, function_name: []const u8, commands: []const I
         try result.append(gpa, command);
     }
     return result.toOwnedSlice(gpa);
-}
-
-fn numberSnbt(gpa: Allocator, value: i32, number_type: Ir.NumberType) Allocator.Error![]const u8 {
-    const suffix = switch (number_type) {
-        .byte => "b",
-        .short => "s",
-        .int => "",
-        .long => "L",
-        .float => "f",
-        .double => "d",
-    };
-    return std.fmt.allocPrint(gpa, "{d}{s}", .{ value, suffix });
 }
 
 // `add 0`, `remove 0`, `*= 1` and `/= 1` do nothing.
@@ -294,7 +282,7 @@ fn mergeCopy(gpa: Allocator, definition: Ir.Command, copy: Ir.Command, temp: Ir.
     switch (copy) {
         .score_to_data => |store| {
             if (!store.score.eql(temp)) return null;
-            const target: Ir.StoreResult.Target = .{ .data = .{ .path = store.target, .type = store.type } };
+            const target: Ir.StoreResult.Target = .{ .data = store.target };
             return .{ .store_result = .{ .target = target, .run = try create(gpa, definition) } };
         },
         .return_run => |run| {
@@ -726,7 +714,7 @@ test "removes identities and inlines copies of temps" {
     const result = try optimizeFunction(gpa, "f", &commands);
     try std.testing.expectEqual(6, result.len);
     try std.testing.expect(result[0] == .store_result);
-    try std.testing.expectEqualStrings("n", result[0].store_result.target.data.path.path);
+    try std.testing.expectEqualStrings("n", result[0].store_result.target.data.path);
     try std.testing.expect(result[0].store_result.run.* == .score_remove);
     try std.testing.expect(result[1] == .score_set);
     try std.testing.expect(result[4] == .score_operation);

@@ -20,10 +20,6 @@
           "named": true
         },
         {
-          "type": "cast_expression",
-          "named": true
-        },
-        {
           "type": "compound_literal",
           "named": true
         },
@@ -141,10 +137,6 @@
             "named": true
           },
           {
-            "type": "cast_expression",
-            "named": true
-          },
-          {
             "type": "compound_literal",
             "named": true
           },
@@ -230,10 +222,6 @@
           },
           {
             "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
             "named": true
           },
           {
@@ -374,10 +362,6 @@
           },
           {
             "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
             "named": true
           },
           {
@@ -566,108 +550,6 @@
     }
   },
   {
-    "type": "cast_expression",
-    "named": true,
-    "fields": {
-      "type": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "number_type",
-            "named": true
-          }
-        ]
-      },
-      "value": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "binary_expression",
-            "named": true
-          },
-          {
-            "type": "boolean",
-            "named": true
-          },
-          {
-            "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
-            "named": true
-          },
-          {
-            "type": "compound_literal",
-            "named": true
-          },
-          {
-            "type": "data_variable",
-            "named": true
-          },
-          {
-            "type": "entity_data",
-            "named": true
-          },
-          {
-            "type": "entity_score",
-            "named": true
-          },
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "list_literal",
-            "named": true
-          },
-          {
-            "type": "macro_key",
-            "named": true
-          },
-          {
-            "type": "minecraft_check",
-            "named": true
-          },
-          {
-            "type": "null",
-            "named": true
-          },
-          {
-            "type": "number",
-            "named": true
-          },
-          {
-            "type": "parenthesized_expression",
-            "named": true
-          },
-          {
-            "type": "qualified_name",
-            "named": true
-          },
-          {
-            "type": "score_variable",
-            "named": true
-          },
-          {
-            "type": "selector",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "unary_expression",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
     "type": "command",
     "named": true,
     "fields": {
@@ -737,10 +619,6 @@
           },
           {
             "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
             "named": true
           },
           {
@@ -844,10 +722,6 @@
         },
         {
           "type": "call_expression",
-          "named": true
-        },
-        {
-          "type": "cast_expression",
           "named": true
         },
         {
@@ -1077,10 +951,6 @@
           "named": true
         },
         {
-          "type": "cast_expression",
-          "named": true
-        },
-        {
           "type": "compound_literal",
           "named": true
         },
@@ -1188,10 +1058,6 @@
             "named": true
           },
           {
-            "type": "cast_expression",
-            "named": true
-          },
-          {
             "type": "compound_literal",
             "named": true
           },
@@ -1271,10 +1137,6 @@
           },
           {
             "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
             "named": true
           },
           {
@@ -1445,10 +1307,6 @@
         },
         {
           "type": "call_expression",
-          "named": true
-        },
-        {
-          "type": "cast_expression",
           "named": true
         },
         {
@@ -1635,10 +1493,6 @@
           "named": true
         },
         {
-          "type": "cast_expression",
-          "named": true
-        },
-        {
           "type": "compound_literal",
           "named": true
         },
@@ -1775,11 +1629,6 @@
     }
   },
   {
-    "type": "number_type",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "parenthesized_expression",
     "named": true,
     "fields": {},
@@ -1797,10 +1646,6 @@
         },
         {
           "type": "call_expression",
-          "named": true
-        },
-        {
-          "type": "cast_expression",
           "named": true
         },
         {
@@ -1914,10 +1759,6 @@
         },
         {
           "type": "call_expression",
-          "named": true
-        },
-        {
-          "type": "cast_expression",
           "named": true
         },
         {
@@ -2037,10 +1878,6 @@
           },
           {
             "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
             "named": true
           },
           {
@@ -2173,10 +2010,6 @@
           },
           {
             "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "cast_expression",
             "named": true
           },
           {
@@ -2396,19 +2229,11 @@
     "named": false
   },
   {
-    "type": "as",
-    "named": false
-  },
-  {
     "type": "block",
     "named": false
   },
   {
     "type": "break",
-    "named": false
-  },
-  {
-    "type": "byte",
     "named": false
   },
   {
@@ -2449,10 +2274,6 @@
     "named": true
   },
   {
-    "type": "double",
-    "named": false
-  },
-  {
     "type": "else",
     "named": false
   },
@@ -2466,10 +2287,6 @@
   },
   {
     "type": "false",
-    "named": false
-  },
-  {
-    "type": "float",
     "named": false
   },
   {
@@ -2489,16 +2306,8 @@
     "named": false
   },
   {
-    "type": "int",
-    "named": false
-  },
-  {
     "type": "json_number",
     "named": true
-  },
-  {
-    "type": "long",
-    "named": false
   },
   {
     "type": "macro_key",
@@ -2535,10 +2344,6 @@
   {
     "type": "selector",
     "named": true
-  },
-  {
-    "type": "short",
-    "named": false
   },
   {
     "type": "string",

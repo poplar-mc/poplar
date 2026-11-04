@@ -208,10 +208,9 @@ pub fn addDataGlobal(self: *Compiler, decl: Ast.VarDecl) Compiler.CompileError!v
         return self.addError("'var' declares a whole variable. Set '${s}' in an mcfun", .{decl.target.name});
     }
     var env: Environment = .{};
-    const expression, const cast_type = Data.splitCast(decl.value);
-    const value = try Values.evaluate(self, expression, &env) orelse return;
+    const value = try Values.evaluate(self, decl.value, &env) orelse return;
     if (value == .null) return self.addError("a data variable cannot start as null", .{});
-    const initial_snbt = try Data.castSnbt(self, value, cast_type) orelse return;
+    const initial_snbt = try Values.valueToSnbt(self, value);
 
     const entry = try self.data_globals.getOrPut(self.gpa, try qualifiedKey(self, self.scope.namespace, decl.target.name));
     if (entry.found_existing) {

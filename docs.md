@@ -250,7 +250,6 @@ A `$` variable is NBT. A global is a key in the storage `<namespace>:data`; a lo
 | `0.05f`, `20f` | `0.05f`, `20f` (a float) |
 | `0.05d`, `20d` | `0.05d`, `20d` (a double) |
 | `1b`, `5s`, `5L` | `1b`, `5s`, `5L` (a byte, short and long) |
-| `20 as float` | `20f` |
 | `true` / `false` | `true` / `false` (a byte, `1b` / `0b`) |
 | `"Steve"` | `"Steve"` |
 | `[1, "a"]` | `[1,"a"]` |
@@ -260,10 +259,11 @@ These are the same number forms as Minecraft's SNBT, and suffixes can be upper o
 
 ### Assigning
 
-`$x = ...` takes a constant, another `$` variable or entity data (copied as it is, with its NBT type), a score, or math. A score or math is stored as an `int`; write [`as`](#nbt-types-with-as) for another number type:
+`$x = ...` takes a constant, another `$` variable or entity data (copied as it is, with its NBT type), a score, or math. A score or math is stored as an `int`. A macro argument is written into the command as text, so Minecraft reads its type:
 
 ```poplar
-$ratio = #kills * 2 as float;   // execute store result storage demo:data ratio float 1 run ...
+$count = #kills * 2;            // execute store result storage demo:data count int 1 run ...
+$speed = $(speed);              // data modify storage demo:data speed set value $(speed)
 $copy = @s.$SelectedItem;       // data modify storage demo:data copy set from entity @s SelectedItem
 ```
 
@@ -313,20 +313,15 @@ mcfun inspect() {
 
 `slice` and `str` give a string, so store them in data, pass them to a function or insert them with `{{...}}`. `startsWith` and `endsWith` are conditions for `if` and `while`.
 
-### NBT types with `as`
+### NBT types
 
-The game reads some NBT fields as one type: an entity's `Health` is a float. For a constant, write the suffix: `0.05f`. For a score or math, `as` says which number type to store:
+A number literal says its own NBT type with a suffix: `0.05f`, `1b`, `5L`. A score or math is always stored as an `int`.
 
-| `as` | Suffix |
-|---|---|
-| `byte` | `1b` |
-| `short` | `1s` |
-| `int` | `1` |
-| `long` | `1L` |
-| `float` | `1f` |
-| `double` | `1d` |
+In entity data, the game converts the value to the type of the field: `@s.$Health = #hp;` gives `Health` the value `7.0f`. In storage and in custom data, it stays an `int`. To store a score as another type there, write the command yourself, with the objective from [Scores](#scores):
 
-`as` binds loosest: `#a + 1 as double` means `(#a + 1) as double`. It works on constants (`20 as float` is `20f`, `0.05 as float` is `0.05f`), on scores and math stored into NBT, and on values in a [`with` compound](#macro-arguments). Anywhere else it is an error.
+```mcfunction
+execute store result storage demo:data ratio float 0.05 run scoreboard players get #global demo.kills
+```
 
 **Costs and caveats**
 
@@ -334,6 +329,7 @@ The game reads some NBT fields as one type: an entity's `Health` is a float. For
 - **Decimal and typed numbers are constants for data.** They cost nothing extra, but a score holds only whole numbers (`#x = 0.05;` is an error), and build-time math (`0.5 + 1`) only works on plain whole numbers.
 - **A comparison checks the NBT type too.** `$x == 0.25d` is false if `$x` is `0.25f` or `1`, because it is Minecraft's NBT filter.
 - **A float inserted on its own prints as a long decimal.** With `$x` set to `0.05f`, `/say {{$x}};` says `.050000000745058`, because Minecraft widens it. Inside a compound, it prints as `0.05f`.
+- **`$x = $(key);` stores what the text parses as.** A macro removes a string's quotes, so `"5"` becomes the int `5` and `"minecraft:diamond"` makes Minecraft refuse the function. For a string, write the quotes in a command: `/data modify storage demo:data x set value "$(key)";`. A float is stored as a long double: `0.1f` becomes `0.100000001490116d`.
 - **Math reads an `int`.** In math or a number comparison, `$x` is read with `data get`, which rounds a fraction down.
 - **A literal with game values costs 1 + n commands:** one for the literal and one for each of the n game values.
 - **A game value added to a list costs 2 commands.** A constant, or a copy from other data, is 1 command.
@@ -361,7 +357,7 @@ mcfun check() {
 }
 
 mcfun heal() {
-    @s.$Health = #hp + 4 as float;
+    @s.$Health = #hp + 4;
 }
 ```
 
@@ -376,7 +372,7 @@ A selector followed by `.#` or `.$` names a value of an entity:
 
 - Reads work anywhere a value is expected. `@s.$Health * 10` is one command: `data get entity @s Health 10`.
 - Writes use `data modify`: `@s.$Glowing = true;`. A copy from other NBT keeps its type: `$lastPos = @s.$Pos;`.
-- Storing a score or math into entity data needs `as`, because the game reads each field as one type: `@s.$Health = #hp as float;`.
+- A score or math is stored as an `int`, and the game converts it to the type of the field: `@s.$Health = #hp;` gives `Health` the value `7.0f`.
 - Reads and writes need a selector for one entity (`@s`, `@p`, `@r`, `@n` or `limit=1`).
 
 **Costs and caveats**
@@ -407,13 +403,13 @@ A condition works the same as `execute if` in Minecraft:
 | `!$stats.bonus` | `unless data storage <ns>:data stats.bonus` |
 | `@s.$OnGround == true` | `if data entity @s {OnGround:1b}` |
 | `$name == "Steve"` | `if data storage <ns>:data {name:"Steve"}` |
-| `$ratio == (5 as float)` | `if data storage <ns>:data {ratio:5f}` |
+| `$ratio == 5f` | `if data storage <ns>:data {ratio:5f}` |
 | `block ~ ~-1 ~ #minecraft:logs` | `if block ~ ~-1 ~ #minecraft:logs` |
 | `items entity @s weapon.mainhand #self:swords` | `if items entity @s weapon.mainhand #<ns>:swords` |
 | `!entity @s[type=#minecraft:undead]` | `unless entity @s[type=#minecraft:undead]` |
 | `predicate self:isSitting` | `if predicate <ns>:is_sitting` |
 
-Combine conditions with `and`, `or` and `!`. `as` binds loosest, so put it in brackets inside a comparison: `$ratio == (5 as float)`.
+Combine conditions with `and`, `or` and `!`.
 
 A condition that starts with an `execute if` subcommand is Minecraft text, the same as inside `execute (...)`: `biome`, `block`, `blocks`, `data`, `dimension`, `entity`, `function`, `items`, `loaded`, `predicate`, `score`, `slots` or `stopwatch`, followed by a space. The text ends at `and`, `or` or the closing `)`. It is checked against the command tree, `self:name` is an id in your pack ([ids in commands](#ids-in-commands)), and `{{...}}` inserts a constant or a `$(name)` macro argument:
 
@@ -439,7 +435,7 @@ execute if block ~ ~-1 ~ #minecraft:logs if score #global demo.mana matches 6.. 
 execute if items entity @s weapon.mainhand #demo:swords run return run say sword
 ```
 
-A bare data path tests that the path exists, whatever its value. A bool always exists (`0b` or `1b`), so test it with `== true` or `== false`. Comparing data with a string, bool, list, compound or `as` number is an NBT match; comparing it with a plain number reads it into a score.
+A bare data path tests that the path exists, whatever its value. A bool always exists (`0b` or `1b`), so test it with `== true` or `== false`. Comparing data with a string, bool, list, compound or typed number (`5f`) is an NBT match; comparing it with a plain int reads it into a score.
 
 A condition with only constants is decided by the compiler, and only the branch that is taken is written.
 
@@ -557,11 +553,11 @@ mcfun greet() {
 | `greet() with block ~ ~ ~;` | `function demo:greet with block ~ ~ ~` |
 
 - **A constant compound** goes into the call as it is.
-- **A compound with game values** (`#hp`, `$x`, math, calls) is written to `<namespace>:poplar args` first, one command for each game value. A score or math value is an `int`, unless you write `as` (`{x: #hp as float}`).
+- **A compound with game values** (`#hp`, `$x`, math, calls) is written to `<namespace>:poplar args` first, one command for each game value. A score or math value is an `int`.
 - **A `$` variable or an entity path** is passed with `with storage` or `with entity`. It must hold a compound, and its keys are the argument names.
 - **`entity` and `block`** pass the text after them to Minecraft as it is.
 
-`$(name)` works in a command (`/say Hi $(name);`), in a `{{...}}` insert, and in math or an `if`. In math or an `if`, it goes through a score, so it must be a number. It is a game value, so it cannot be a constant: `var x = $(amount);` is an error. A macro inserts a string **without quotes**, and a list or compound as SNBT: with `{name: "Steve"}`, `/say Hi $(name);` writes `say Hi Steve`.
+`$(name)` works in a command (`/say Hi $(name);`), in a `{{...}}` insert, and in math or an `if`. In math or an `if`, it goes through a score, so it must be a number. `$x = $(name);` writes it into `data modify ... set value`, so any value that parses as NBT works. It is a game value, so it cannot be a constant: `var x = $(amount);` is an error. A macro inserts a string **without quotes**, and a list or compound as SNBT: with `{name: "Steve"}`, `/say Hi $(name);` writes `say Hi Steve`.
 
 The compiler gives an error for an mcfun that uses `$(name)` and is called without `with`. It also gives an error for `load`, `tick` or an [event](#events) callback that uses `$(name)`.
 
@@ -577,7 +573,8 @@ An `mcfun` can call itself. A recursive call would overwrite the temporary score
 
 - **A function that uses `$(name)` is a macro function.** Macro lines are slower than plain lines, because the game builds them again for new values.
 - **Each game value in a `with` compound costs one command.** A constant compound, a `$` variable and an entity path cost nothing extra.
-- **A missing key fails in the game.** The compiler cannot see the keys of a `$` variable, an entity or a block. If one is missing, Minecraft does not run the function.
+- **A missing key in a `$` variable fails in the game.** The compiler checks the keys of a compound written in the call, and gives an error for a variable that is declared as a number, string or list and that no code changes. It cannot see the keys a `$` variable has in the game, or those of an entity or a block. If one is missing, Minecraft does not run the function.
+- **Extra keys are fine.** Minecraft ignores keys the function does not use, and it also accepts a compound for a function that uses none.
 - **A `"` in an argument breaks forwarding.** Generated bodies (`if`, `while`, `execute`) that use `$(name)` receive the arguments as `{name:"$(name)"}`.
 - **Recursion costs a frame per call:** `2 + 2n` commands to save and restore the `n` values that are still needed. Calls that are not recursive cost nothing extra.
 - **Files are snake_case.**
@@ -605,7 +602,7 @@ The compiler checks every command against the command tree of the targeted versi
 src/main.poplar:2:21: unknown mob_effect 'poision'. Did you mean 'poison'?
 ```
 
-Tags, `*`, `$(x)` and ids in other namespaces are not checked. There is no `say(...)` built-in; use `/say`.
+Tags, `*`, `$(x)` and ids in other namespaces are not checked. Selectors are checked too: an unknown option, a quoted value (only `name` and `nbt` accept quotes, as in Minecraft) or an unknown `type=` id is an error. A selector with `$(x)` in it is not checked. There is no `say(...)` built-in; use `/say`.
 
 ### Ids in commands
 
@@ -651,6 +648,7 @@ The compiler checks the name: `'self:isSiting' is not a data file or mcfun of na
 - **No game cost.** The full id is written into the command.
 - **Not in data file JSON.** A JSON body is written as it is, so ids there are written in full (`"#demo:handles"`).
 - **The check does not look at the type.** `predicate self:healPlayer` passes the check because `healPlayer` is an mcfun; the game then finds no predicate with that name.
+- **A name from your pack needs `self:`.** Without a namespace, an id means `minecraft:name`, so `predicate isVehicle` is an error when `isVehicle` is in your pack, and so is any bare id with a capital letter where a function or data file goes. Where Minecraft has its own list of ids, a bare name stays as it is: `/effect give @s speed` is the effect, even with an `mcfun speed`.
 - **`self` is only for commands.** In Poplar code a plain name already means this namespace: write `healPlayer()`, not `self:healPlayer()`.
 
 ### Inserts with `{{...}}`

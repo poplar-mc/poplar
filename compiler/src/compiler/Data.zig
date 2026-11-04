@@ -11,32 +11,23 @@ const Declarations = @import("Declarations.zig");
 const Scores = @import("Scores.zig");
 const Values = @import("Values.zig");
 
-// Sets data in storage or an entity path. `value as float` picks the NBT type of a score or math; without it, the value is an `int`.
-pub fn compileDataAssign(self: *Compiler, target: Ir.DataPath, value_expression: *const Ast.Expr, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!void {
-    const outer_position = self.enterExpression(value_expression);
+// Sets data in storage or an entity path. A score or math is stored as an int.
+pub fn compileDataAssign(self: *Compiler, target: Ir.DataPath, expression: *const Ast.Expr, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!void {
+    const outer_position = self.enterExpression(expression);
     defer self.restorePosition(outer_position);
-    const expression, const cast_type = splitCast(value_expression);
 
     if (!Values.containsRuntimeValue(self, expression, env)) {
         const value = try Values.evaluate(self, expression, env) orelse return;
         if (value == .null) return self.addError("data cannot be set to null", .{});
-        const snbt = try castSnbt(self, value, cast_type) orelse return;
-        return commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
+        return commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = try Values.valueToSnbt(self, value) } });
     }
 
-    if (expression.kind == .call and isStringCall(expression.kind.call)) {
-        if (cast_type != null) return self.addError("'as' sets the type of a number, not of a string", .{});
-        return compileStringInto(self, target, expression.kind.call, env, commands);
-    }
+    if (expression.kind == .call and isStringCall(expression.kind.call)) return compileStringInto(self, target, expression.kind.call, env, commands);
+    if (expression.kind == .list or expression.kind == .compound) return compileLiteralAssign(self, target, expression, env, commands);
 
-    if (expression.kind == .list or expression.kind == .compound) {
-        if (cast_type != null) return self.addError("'as' sets the type of one number, not of a list or compound", .{});
-        return compileLiteralAssign(self, target, expression, env, commands);
-    }
-
-    const is_copy = isDataIdentifier(expression);
-    if (target.holder == .entity and cast_type == null and !is_copy) {
-        return self.addError("a score or math in entity data needs its NBT type: '{s}.${s} = ... as float;' (byte, short, int, long, float, double)", .{ target.holder.entity, target.path });
+    // A macro argument is text in the command, so Minecraft reads its type, as in a hand-written datapack.
+    if (expression.kind == .macro_key) {
+        return commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = try std.fmt.allocPrint(self.gpa, "$({s})", .{expression.kind.macro_key}) } });
     }
 
     if (expression.kind == .identifier) {
@@ -44,10 +35,9 @@ pub fn compileDataAssign(self: *Compiler, target: Ir.DataPath, value_expression:
         switch (identifier.storage) {
             .score => {
                 const score = try Scores.scoreSource(self, identifier, env) orelse return;
-                return commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score, .type = cast_type orelse .int } });
+                return commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
             },
-            // A copy keeps the NBT type, so it is used when no type is given.
-            .data, .entity_data => if (cast_type == null) {
+            .data, .entity_data => {
                 const source = try dataPathOf(self, identifier, env) orelse return;
                 if (std.meta.eql(source.holder, target.holder) and std.mem.eql(u8, source.path, target.path)) return;
                 return commands.append(self.gpa, .{ .data_copy = .{ .target = target, .source = source } });
@@ -59,7 +49,7 @@ pub fn compileDataAssign(self: *Compiler, target: Ir.DataPath, value_expression:
     self.temp_count = 0;
     const temp = try Scores.newTemp(self);
     try Scores.compileInto(self, temp, expression, env, commands);
-    try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = temp, .type = cast_type orelse .int } });
+    try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = temp } });
 }
 
 // A runtime value inside a literal, and where it goes: `[1]` in `pos[1]`, `.hp` in `stats.hp`.
@@ -111,39 +101,6 @@ pub fn literalTemplate(self: *Compiler, expression: *const Ast.Expr, path: []con
 
 pub fn isDataIdentifier(expression: *const Ast.Expr) bool {
     return expression.kind == .identifier and (expression.kind.identifier.storage == .data or expression.kind.identifier.storage == .entity_data);
-}
-
-// `value as float` → `value` and `.float`.
-pub fn splitCast(expression: *const Ast.Expr) struct { *const Ast.Expr, ?Ast.NumberType } {
-    return switch (expression.kind) {
-        .cast => |cast| .{ cast.value, cast.type },
-        else => .{ expression, null },
-    };
-}
-
-// `20 as float` → `20f`, `true as byte` → `1b`. Without `as`, the value is written as it is.
-pub fn castSnbt(self: *Compiler, value: Compiler.Value, cast_type: ?Ast.NumberType) Compiler.CompileError!?[]const u8 {
-    const number_type = cast_type orelse return try Values.valueToSnbt(self, value);
-    return numberSnbt(self, value, number_type);
-}
-
-pub fn numberSnbt(self: *Compiler, value: Compiler.Value, target_type: Ast.NumberType) Compiler.CompileError!?[]const u8 {
-    switch (value) {
-        .number => |number| return try std.fmt.allocPrint(self.gpa, "{d}{s}", .{ number, target_type.suffix() }),
-        .boolean => |boolean| return try std.fmt.allocPrint(self.gpa, "{d}{s}", .{ @intFromBool(boolean), target_type.suffix() }),
-        .typed_number => |number| {
-            const is_whole_type = target_type != .float and target_type != .double;
-            if (number.hasFraction() and is_whole_type) {
-                try self.addError("'as {t}' is a whole number type, so '{s}' cannot be one", .{ target_type, number.text });
-                return null;
-            }
-            return try Values.typedNumberSnbt(self, .{ .text = number.text, .type = target_type });
-        },
-        else => {
-            try self.addError("a {t} needs a number, found {s}", .{ target_type, @tagName(value) });
-            return null;
-        },
-    }
 }
 
 // A `#` variable in `<ns>:data`, or the NBT path of one entity.
@@ -240,9 +197,8 @@ pub fn compileListBuiltin(self: *Compiler, name: []const u8, call: Ast.Call, env
     const value = call.args[arity - 1];
 
     if (!Values.containsRuntimeValue(self, value, env)) {
-        const expression, const cast_type = splitCast(value);
-        const constant = try Values.evaluate(self, expression, env) orelse return;
-        const snbt = try castSnbt(self, constant, cast_type) orelse return;
+        const constant = try Values.evaluate(self, value, env) orelse return;
+        const snbt = try Values.valueToSnbt(self, constant);
         return commands.append(self.gpa, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = snbt } } });
     }
     if (isDataIdentifier(value)) {
@@ -308,7 +264,7 @@ pub fn compileStringInto(self: *Compiler, target: Ir.DataPath, call: Ast.Call, e
         try Scores.compileInto(self, temp, argument, env, commands);
         break :blk temp;
     };
-    try commands.append(self.gpa, .{ .score_to_data = .{ .target = string_scratch, .score = score, .type = .int } });
+    try commands.append(self.gpa, .{ .score_to_data = .{ .target = string_scratch, .score = score } });
     try commands.append(self.gpa, .{ .data_set_string = .{ .target = target, .source = string_scratch } });
 }
 
@@ -460,7 +416,7 @@ test "data variables use storage and macros" {
     , try Writer.renderFunction(arena.allocator(), "ns", program.load.?));
 }
 
-test "reads and writes entity data with types" {
+test "reads and writes entity data" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
@@ -469,10 +425,10 @@ test "reads and writes entity data with types" {
         \\var $pos = 0;
         \\mcfun main() {
         \\    #hp = @s.$Health * 10;
-        \\    @s.$Health = #hp as float;
-        \\    @s.$data.x = #hp + 1 as double;
+        \\    @s.$Health = #hp;
+        \\    @s.$data.x = #hp + 1;
         \\    $pos = @s.$Pos;
-        \\    @s.$Glowing = true as byte;
+        \\    @s.$Glowing = 1b;
         \\}
     );
     const program = try compiler.compile();
@@ -480,9 +436,9 @@ test "reads and writes entity data with types" {
 
     try std.testing.expectEqualStrings(
         \\execute store result score #global ns.hp run data get entity @s Health 10
-        \\execute store result entity @s Health float 1 run scoreboard players get #global ns.hp
+        \\execute store result entity @s Health int 1 run scoreboard players get #global ns.hp
         \\scoreboard players operation #poplar.main.t0 poplar.ns = #global ns.hp
-        \\execute store result entity @s data.x double 1 run scoreboard players add #poplar.main.t0 poplar.ns 1
+        \\execute store result entity @s data.x int 1 run scoreboard players add #poplar.main.t0 poplar.ns 1
         \\data modify storage ns:data pos set from entity @s Pos
         \\data modify entity @s Glowing set value 1b
         \\
@@ -499,47 +455,49 @@ test "SNBT numbers are written as they are, and scores reject them" {
         \\var #hp = 0;
         \\mcfun main() {
         \\    $small = -0.5d;
-        \\    $small = 0.05 as float;
         \\    if ($small == 0.05f) { /say same; }
         \\    if ($small == -0.5d) { /say negative; }
         \\    #hp = 0.05;
         \\    #hp = 5b;
         \\    if (#hp > 0.5f) { /say big; }
         \\    $small = 0.5 + 1;
-        \\    $small = 0.5 as int;
         \\}
     );
     const program = try compiler.compile();
     const errors = compiler.errors.items;
-    try std.testing.expectEqual(5, errors.len);
+    try std.testing.expectEqual(4, errors.len);
     try std.testing.expectEqualStrings("a score holds whole numbers, so it cannot hold '0.05'", errors[0].message);
     try std.testing.expectEqualStrings("a score has no number types: write '5' with no suffix", errors[1].message);
     try std.testing.expectEqualStrings("a score holds whole numbers with no suffix, so it cannot be compared with '0.5'", errors[2].message);
     try std.testing.expectEqualStrings("build-time math only works on whole numbers with no suffix, so '+' cannot be used here", errors[3].message);
-    try std.testing.expectEqualStrings("'as int' is a whole number type, so '0.5' cannot be one", errors[4].message);
 
     const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
     try std.testing.expect(std.mem.indexOf(u8, load, "small set value 0.05f") != null);
     try std.testing.expect(std.mem.indexOf(u8, load, "item set value {myNum:0.05f,count:1b,list:[5s,5L,0.5]}") != null);
     const main = try Compiler.renderForTest(arena.allocator(), program, "main");
-    try std.testing.expect(std.mem.indexOf(u8, main, "data modify storage ns:data small set value -0.5d\ndata modify storage ns:data small set value 0.05f\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, main, "data modify storage ns:data small set value -0.5d\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, main, "{small:0.05f}") != null);
     try std.testing.expect(std.mem.indexOf(u8, main, "{small:-0.5d}") != null);
 }
 
-test "a score or math is stored as an int unless 'as' gives the type" {
+test "a score or math is stored as an int, and a macro argument as its own text" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\var #a = 3;
-        \\var $ratio = 0 as float;
+        \\var $ratio = 0f;
         \\var $speeds = [1, 2];
         \\mcfun heal() { /say $(label) $(amount); }
         \\mcfun main() {
-        \\    $ratio = #a * 2 as float;
+        \\    $ratio = #a * 2;
         \\    $speeds = #a;
-        \\    heal() with {amount: #a as double, label: "hi"};
+        \\    heal() with {amount: #a, label: "hi"};
+        \\}
+        \\mcfun setSpeed() {
+        \\    $ratio = $(speed);
+        \\    @s.$Health = $(speed);
+        \\    $speeds = {first: $(speed)};
         \\}
     );
     const program = try compiler.compile();
@@ -547,13 +505,20 @@ test "a score or math is stored as an int unless 'as' gives the type" {
 
     try std.testing.expectEqualStrings(
         \\scoreboard players operation #poplar.main.t0 poplar.ns = #global ns.a
-        \\execute store result storage ns:data ratio float 1 run scoreboard players operation #poplar.main.t0 poplar.ns *= #poplar.c2 poplar.ns
+        \\execute store result storage ns:data ratio int 1 run scoreboard players operation #poplar.main.t0 poplar.ns *= #poplar.c2 poplar.ns
         \\execute store result storage ns:data speeds int 1 run scoreboard players get #global ns.a
-        \\execute store result storage ns:poplar args.amount double 1 run scoreboard players get #global ns.a
+        \\execute store result storage ns:poplar args.amount int 1 run scoreboard players get #global ns.a
         \\data modify storage ns:poplar args.label set value "hi"
         \\function ns:heal with storage ns:poplar args
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
+    try std.testing.expectEqualStrings(
+        \\$data modify storage ns:data ratio set value $(speed)
+        \\$data modify entity @s Health set value $(speed)
+        \\data modify storage ns:data speeds set value {first:0}
+        \\$data modify storage ns:data speeds.first set value $(speed)
+        \\
+    , try Compiler.renderForTest(arena.allocator(), program, "setSpeed"));
     const load = try Writer.renderFunction(arena.allocator(), "ns", program.load.?);
     try std.testing.expect(std.mem.indexOf(u8, load, "ratio set value 0f") != null);
     try std.testing.expect(std.mem.indexOf(u8, load, "speeds set value [1,2]") != null);
@@ -571,7 +536,7 @@ test "paths, literals with runtime parts, list helpers and data conditions" {
         \\var $flag = true;
         \\mcfun main() {
         \\    $stats.hp = #x;
-        \\    $pos = [#x as double, 1];
+        \\    $pos = [#x, 1];
         \\    append($names, "Steve");
         \\    append($names, #x);
         \\    #x = len($names);
@@ -586,7 +551,7 @@ test "paths, literals with runtime parts, list helpers and data conditions" {
     try std.testing.expectEqualStrings(
         \\execute store result storage ns:data stats.hp int 1 run scoreboard players get #global ns.x
         \\data modify storage ns:data pos set value [0,1]
-        \\execute store result storage ns:data pos[0] double 1 run scoreboard players get #global ns.x
+        \\execute store result storage ns:data pos[0] int 1 run scoreboard players get #global ns.x
         \\data modify storage ns:data names append value "Steve"
         \\data modify storage ns:data names append value 0
         \\execute store result storage ns:data names[-1] int 1 run scoreboard players get #global ns.x

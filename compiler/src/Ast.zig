@@ -70,7 +70,7 @@ pub const Stmt = struct {
 // `entity_data` is the NBT of an entity: `@s.$Health`. The name is the NBT path.
 pub const Storage = enum { compile_time, score, data, entity_data };
 
-// The NBT number types of `x as float`.
+// The NBT number types of a number literal: `0.05f`, `1b`.
 pub const NumberType = enum {
     byte,
     short,
@@ -160,7 +160,7 @@ pub const CommandPart = struct {
     content: Content,
 };
 
-// An expression and where it starts. An infix, a cast or a call starts at its left side.
+// An expression and where it starts. An infix or a call starts at its left side.
 pub const Expr = struct {
     line: usize,
     column: usize,
@@ -176,7 +176,6 @@ pub const Expr = struct {
         prefix: Prefix,
         infix: Infix,
         call: Call,
-        cast: Cast,
         list: []const *Expr,
         compound: []const Entry,
         // `@a` on its own, as a value: `actionBar(@a, "hi")`.
@@ -192,12 +191,6 @@ pub const Expr = struct {
 pub const Entry = struct {
     key: []const u8,
     value: *Expr,
-};
-
-// `value as float`
-pub const Cast = struct {
-    value: *Expr,
-    type: NumberType,
 };
 
 pub const Prefix = struct {

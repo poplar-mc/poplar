@@ -238,7 +238,10 @@ pub fn checkMinecraftText(self: *Compiler, parts: []const Ast.CommandPart, built
         const start = text_id.at - prefix.len;
         var colon = start;
         while (colon < built.text.len and isNamespaceChar(built.text[colon])) colon += 1;
-        if (colon >= built.text.len or built.text[colon] != ':') continue;
+        if (colon >= built.text.len or built.text[colon] != ':') {
+            if (text_id.can_be_pack_name) try checkBareName(self, parts, built, column, start);
+            continue;
+        }
         const written = built.text[start..colon];
 
         // A storage or bossbar id is not a Poplar declaration: `self:` only gives it the namespace.
@@ -265,6 +268,23 @@ pub fn checkMinecraftText(self: *Compiler, parts: []const Ast.CommandPart, built
     }
     try resolved.appendSlice(self.gpa, built.text[copied..]);
     return resolved.items;
+}
+
+// A name with no namespace means `minecraft:name`, so a name from this pack needs `self:`.
+fn checkBareName(self: *Compiler, parts: []const Ast.CommandPart, built: Compiler.CommandText, column: usize, start: usize) Compiler.CompileError!void {
+    var end = start;
+    while (end < built.text.len and isIdChar(built.text[end])) end += 1;
+    const name = built.text[start..end];
+    const namespace = self.scope.namespace;
+    const in_pack = try idOf(self, namespace, name) != null;
+    const source_name = if (in_pack) name else try declarationWithFileName(self, namespace, name) orelse {
+        // An id cannot have a capital letter, so this is a typo of a name from this pack, or a mistake.
+        for (name) |ch| {
+            if (std.ascii.isUpper(ch)) return self.addErrorAt(column + sourceOffset(parts, built.text_starts, start), "'{s}' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:{s}'", .{ name, name });
+        }
+        return;
+    };
+    try self.addErrorAt(column + sourceOffset(parts, built.text_starts, start), "'{s}' is in this pack, but with no namespace it means 'minecraft:{s}'. Write 'self:{s}'", .{ name, name, source_name });
 }
 
 pub fn idBefore(_: void, a: Commands.Id, b: Commands.Id) bool {
@@ -326,6 +346,40 @@ pub fn unknownIdMessage(self: *Compiler, written: []const u8, namespace: []const
     }
     const names = try declaredNames(self, namespace);
     return std.fmt.allocPrint(self.gpa, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, Declarations.Suggestion{ .closest = Commands.closestId(names, name) } });
+}
+
+test "a bare name from this pack is an error where it can only be a function or a data file" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try Compiler.compileForTest(arena.allocator(),
+        \\predicate isVehicle { "type": "minecraft:random_chance", "chance": 1.0 }
+        \\functionTag greeters { "values": [] }
+        \\lootTable "minecraft:entities/zombie" { "pools": [] }
+        \\mcfun speed() { /effect give @s speed; }
+        \\mcfun zombie() { /summon zombie; /kill @e[type=zombie,tag=speed,team=speed]; /say speed; }
+        \\mcfun main() {
+        \\    /execute if predicate isVehicle run say x;
+        \\    /execute if predicate is_vehicle run say x;
+        \\    if (predicate isVehicle) { /say x; }
+        \\    /function speed;
+        \\    /function #greeters;
+        \\    /kill @e[predicate=isVehicle];
+        \\    /loot give @s loot entities/zombie;
+        \\    /execute if predicate other run say x;
+        \\    /execute if predicate isMissing run say x;
+        \\    /data get storage speed x;
+        \\}
+    );
+    _ = try compiler.compile();
+    const errors = compiler.errors.items;
+    try std.testing.expectEqual(7, errors.len);
+    try std.testing.expectEqualStrings("'isMissing' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:isMissing'", errors[6].message);
+    try std.testing.expectEqualStrings("'isVehicle' is in this pack, but with no namespace it means 'minecraft:isVehicle'. Write 'self:isVehicle'", errors[0].message);
+    try std.testing.expectEqual(27, errors[0].column);
+    try std.testing.expectEqualStrings("'is_vehicle' is in this pack, but with no namespace it means 'minecraft:is_vehicle'. Write 'self:isVehicle'", errors[1].message);
+    try std.testing.expectEqualStrings("'speed' is in this pack, but with no namespace it means 'minecraft:speed'. Write 'self:speed'", errors[3].message);
+    try std.testing.expectEqualStrings("'greeters' is in this pack, but with no namespace it means 'minecraft:greeters'. Write 'self:greeters'", errors[4].message);
 }
 
 test "inserts compile-time and runtime values into commands" {

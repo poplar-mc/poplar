@@ -52,6 +52,9 @@ pub const Id = struct {
     // True where the id names a function or a data file (`function`, `predicate`, a tag). False for other ids,
     // such as a storage or a bossbar, which are not declared in Poplar.
     names_declaration: bool,
+    // True where a bare name can only be a mistake for a pack's own name: a function or a data file. False where the
+    // compiler knows the vanilla ids, so `speed` in `effect give @s speed` is the effect, even with an `mcfun speed`.
+    can_be_pack_name: bool,
 };
 
 pub fn check(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!?Failure {
@@ -74,10 +77,13 @@ const Walk = struct {
         at: usize,
         expected: []const u8,
         out_of_range: bool = false,
+        // A finished message, for a problem inside an argument.
+        message: ?[]const u8 = null,
         // The registry when the id is not in it.
         unknown_in: ?[]const u8 = null,
 
         fn describe(problem: Problem, gpa: std.mem.Allocator, text: []const u8, registries: *const Registries) std.mem.Allocator.Error![]const u8 {
+            if (problem.message) |message| return message;
             const found = text[problem.at..readBalanced(text, problem.at)];
             if (problem.unknown_in) |registry| {
                 const id = registryId(found).?;
@@ -152,7 +158,9 @@ const Walk = struct {
         const word = walk.text[start..end];
         if (isIdParser(parser, properties)) {
             const offset: usize = if (std.mem.startsWith(u8, word, "#")) 1 else 0;
-            walk.addIdStart(start + offset, !eql(parser, "minecraft:resource_location"));
+            const names_declaration = !eql(parser, "minecraft:resource_location");
+            const has_vanilla_ids = if (registryOf(parser, properties)) |registry| walk.registries.map.contains(registry) else false;
+            walk.addIdStart(start + offset, names_declaration, names_declaration and !has_vanilla_ids);
         } else if (isEntityParser(parser) and std.mem.startsWith(u8, word, "@")) {
             var quote: ?u8 = null;
             for (word, 0..) |ch, index| {
@@ -164,13 +172,15 @@ const Walk = struct {
                 if (ch != '=') continue;
                 var value = index + 1;
                 while (value < word.len and (word[value] == '!' or word[value] == '#')) value += 1;
-                walk.addIdStart(start + value, true);
+                const key_start = if (std.mem.lastIndexOfAny(u8, word[0..index], "[,")) |separator| separator + 1 else 0;
+                const key = std.mem.trim(u8, word[key_start..index], " ");
+                walk.addIdStart(start + value, true, eql(key, "predicate"));
             }
         }
     }
 
-    fn addIdStart(walk: *Walk, at: usize, names_declaration: bool) void {
-        walk.ids.append(walk.gpa, .{ .at = at, .names_declaration = names_declaration }) catch {
+    fn addIdStart(walk: *Walk, at: usize, names_declaration: bool, can_be_pack_name: bool) void {
+        walk.ids.append(walk.gpa, .{ .at = at, .names_declaration = names_declaration, .can_be_pack_name = can_be_pack_name }) catch {
             walk.out_of_memory = true;
         };
     }
@@ -223,7 +233,14 @@ const Walk = struct {
                 return null;
             }
         } else if (isEntityParser(parser)) {
-            if (isEntity(word)) return end;
+            if (isEntity(word)) {
+                const failure = selectorFailure(walk.gpa, walk.registries, word) catch {
+                    walk.out_of_memory = true;
+                    return null;
+                } orelse return end;
+                walk.fail(.{ .at = pos + failure.at, .expected = "", .message = failure.message });
+                return null;
+            }
         } else if (eql(parser, "minecraft:block_pos") or eql(parser, "minecraft:vec3")) {
             return walk.readCoordinates(pos, 3);
         } else if (eql(parser, "minecraft:vec2") or eql(parser, "minecraft:column_pos") or eql(parser, "minecraft:rotation")) {
@@ -380,6 +397,77 @@ fn isCoordinate(word: []const u8) bool {
     return true;
 }
 
+// The options of a selector, as the game knows them.
+const selector_options = [_][]const u8{ "advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit", "name", "nbt", "predicate", "scores", "sort", "tag", "team", "type", "x", "x_rotation", "y", "y_rotation", "z" };
+
+pub fn checkSelector(self: *const Self, gpa: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
+    return selectorFailure(gpa, &self.registries, selector);
+}
+
+// What the game rejects inside `@e[...]`, where it would refuse the whole function. `at` is an offset in `selector`.
+fn selectorFailure(gpa: std.mem.Allocator, registries: *const Registries, selector: []const u8) std.mem.Allocator.Error!?Failure {
+    if (selector.len < 4 or selector[0] != '@' or selector[2] != '[') return null;
+    const close = selector.len - 1;
+
+    var pos: usize = 3;
+    while (pos < close) {
+        const end = optionEnd(selector, pos, close);
+        defer pos = end + 1;
+        const separator = std.mem.indexOfScalarPos(u8, selector[0..end], pos, '=') orelse continue;
+        const key = std.mem.trim(u8, selector[pos..separator], " ");
+
+        var known = false;
+        for (selector_options) |option| known = known or eql(option, key);
+        if (!known) {
+            // Option names are short, so only a near match is worth suggesting.
+            if (closestId(&selector_options, key)) |closest| {
+                if (editDistance(key, closest).? <= 2) return .{ .message = try std.fmt.allocPrint(gpa, "unknown selector option '{s}'. Did you mean '{s}'?", .{ key, closest }), .at = pos };
+            }
+            return .{ .message = try std.fmt.allocPrint(gpa, "unknown selector option '{s}'", .{key}), .at = pos };
+        }
+
+        var value_start = separator + 1;
+        while (value_start < end and (selector[value_start] == ' ' or selector[value_start] == '!')) value_start += 1;
+        const value = std.mem.trimEnd(u8, selector[value_start..end], " ");
+        if (value.len == 0) continue;
+
+        // The game reads a quoted `name`, and quotes inside the NBT of `nbt`. Every other option refuses them.
+        if ((value[0] == '"' or value[0] == '\'') and !eql(key, "name") and !eql(key, "nbt")) {
+            return .{ .message = try std.fmt.allocPrint(gpa, "selector option '{s}' cannot have quotes: write {s}={s}", .{ key, key, std.mem.trim(u8, value, "\"'") }), .at = value_start };
+        }
+        if (!eql(key, "type")) continue;
+        const id = registryId(value) orelse continue;
+        const ids = registries.map.get("entity_type") orelse continue;
+        for (ids) |known_id| {
+            if (eql(known_id, id)) break;
+        } else {
+            const closest = closestId(ids, id) orelse return .{ .message = try std.fmt.allocPrint(gpa, "unknown entity_type '{s}'", .{id}), .at = value_start };
+            return .{ .message = try std.fmt.allocPrint(gpa, "unknown entity_type '{s}'. Did you mean '{s}'?", .{ id, closest }), .at = value_start };
+        }
+    }
+    return null;
+}
+
+// The `,` or closing `]` that ends the option at `start`, outside quotes and brackets.
+fn optionEnd(selector: []const u8, start: usize, close: usize) usize {
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+    for (selector[start..close], start..) |ch, index| {
+        if (quote) |q| {
+            if (ch == q) quote = null;
+            continue;
+        }
+        switch (ch) {
+            '"', '\'' => quote = ch,
+            '[', '{' => depth += 1,
+            ']', '}' => depth -|= 1,
+            ',' => if (depth == 0) return index,
+            else => {},
+        }
+    }
+    return close;
+}
+
 fn isEntity(word: []const u8) bool {
     if (word.len == 0) return false;
     if (word[0] != '@') return true;
@@ -454,6 +542,33 @@ fn describeParser(parser: []const u8) []const u8 {
 
 fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+test "checks the options of a selector the way the game does" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const tree = try load(arena.allocator());
+
+    const valid = [_][]const u8{
+        "execute as @e[type=zombie,tag=a,name=\"a b\",nbt={Tags:[\"x,y\"]},scores={a=1..},limit=1] run say x",
+        "execute as @e[ type = !minecraft:zombie , type = !skeleton ] run say x",
+        "execute as @e[type=#minecraft:undead,type=#self:mobs,predicate=self:lucky] run say x",
+        "execute as @e[] run say x",
+    };
+    for (valid) |text| {
+        if ((try tree.checkText(arena.allocator(), text, &.{"self"})).failure) |failure| {
+            std.debug.print("'{s}': {s}\n", .{ text, failure.message });
+            return error.TestUnexpectedResult;
+        }
+    }
+
+    const quoted = (try tree.check(arena.allocator(), "execute as @e[type=\"minecraft:zombie\"] run say x")).?;
+    try std.testing.expectEqualStrings("selector option 'type' cannot have quotes: write type=minecraft:zombie", quoted.message);
+    try std.testing.expectEqual(19, quoted.at);
+    try std.testing.expectEqualStrings("selector option 'tag' cannot have quotes: write tag=a", (try tree.check(arena.allocator(), "execute as @e[tag=!\"a\"] run say x")).?.message);
+    try std.testing.expectEqualStrings("unknown entity_type 'zombiee'. Did you mean 'zombie'?", (try tree.check(arena.allocator(), "execute as @e[type=!zombiee] run say x")).?.message);
+    try std.testing.expectEqualStrings("unknown selector option 'tagg'. Did you mean 'tag'?", (try tree.check(arena.allocator(), "kill @e[tagg=a]")).?.message);
+    try std.testing.expectEqualStrings("unknown selector option 'foo'", (try tree.check(arena.allocator(), "kill @e[foo=1]")).?.message);
 }
 
 test "finds ids in id arguments and selectors, not in text" {

@@ -254,15 +254,11 @@
         },
         {
           "name": "keyword.operator.word.poplar",
-          "match": "\\b(and|or|as|with)\\b"
+          "match": "\\b(and|or|with)\\b"
         },
         {
           "name": "constant.language.poplar",
           "match": "\\b(true|false|null)\\b"
-        },
-        {
-          "name": "support.type.poplar",
-          "match": "(?<=\\bas)\\s*\\b(byte|short|int|long|float|double)\\b"
         },
         {
           "comment": "`magic` in `magic:heal()`, and the name in `namespace combat;` / `import magic;`",

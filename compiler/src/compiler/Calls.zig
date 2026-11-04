@@ -32,6 +32,12 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
 
     if (Data.isDataIdentifier(value)) {
         const path = try Data.dataPathOf(self, value.kind.identifier, env) orelse return null;
+        if (try nonCompoundGlobal(self, value.kind.identifier, env)) |initial| {
+            const outer_position = self.enterExpression(value);
+            defer self.restorePosition(outer_position);
+            try self.addError("'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ value.kind.identifier.name, initial, value.kind.identifier.name, initial });
+            return null;
+        }
         return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .data_path = path } } };
     }
     const entries = switch (value.kind) {
@@ -43,6 +49,17 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
             return null;
         },
     };
+
+    for (keys.keys()) |key| {
+        for (entries) |entry| {
+            if (std.mem.eql(u8, entry.key, key)) break;
+        } else {
+            const outer_position = self.enterExpression(value);
+            defer self.restorePosition(outer_position);
+            try self.addError("mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ function.name, key, key });
+            return null;
+        }
+    }
 
     var is_inline = true;
     for (entries) |entry| {
@@ -63,7 +80,7 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
     const scores = try self.gpa.alloc(?Ir.Score, entries.len);
     for (entries, scores) |entry, *score| {
         score.* = null;
-        const entry_value, _ = Data.splitCast(entry.value);
+        const entry_value = entry.value;
         if (!Values.containsRuntimeValue(self, entry_value, env) or entry_value.kind == .macro_key) continue;
         if (entry_value.kind == .call and Data.isStringCall(entry_value.kind.call)) continue;
         if (entry_value.kind == .list or entry_value.kind == .compound) continue;
@@ -81,9 +98,9 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
         const outer_position = self.enterExpression(entry.value);
         defer self.restorePosition(outer_position);
         const target: Ir.DataPath = .inStorage(.args, try Values.snbtKey(self, entry.key));
-        const entry_value, const cast_type = Data.splitCast(entry.value);
+        const entry_value = entry.value;
         if (entry_score) |score| {
-            try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score, .type = cast_type orelse .int } });
+            try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
         } else if (entry_value.kind == .call and Data.isStringCall(entry_value.kind.call) and Values.containsRuntimeValue(self, entry_value, env)) {
             try Data.compileStringInto(self, target, entry_value.kind.call, env, commands);
         } else if (Data.isDataIdentifier(entry_value)) {
@@ -97,6 +114,37 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
         }
     }
     return .{ .function_with = .{ .name = located.ir_name, .arguments = .args_storage } };
+}
+
+// The initial value of a whole `$` global that is not a compound and that no code changes. A global that code sets
+// can hold a compound by the time of the call, so it is not reported. Null otherwise.
+fn nonCompoundGlobal(self: *Compiler, identifier: Ast.Identifier, env: *const Environment) Compiler.CompileError!?[]const u8 {
+    if (identifier.storage != .data or !std.mem.eql(u8, Compiler.pathRoot(identifier.name), identifier.name)) return null;
+    if (identifier.namespace == null and Compiler.localOf(env, '$', identifier.name) != null) return null;
+    const namespace = try Declarations.resolveNamespace(self, identifier.namespace) orelse return null;
+    const global = self.data_globals.get(try Declarations.qualifiedKey(self, namespace, identifier.name)) orelse return null;
+    if (global.initial_snbt[0] == '{') return null;
+    for (self.functions.values()) |located| {
+        if (setsData(located.function.body, identifier.name)) return null;
+    }
+    return global.initial_snbt;
+}
+
+// True if a statement assigns `$name`, or a raw command names it. A raw command is not read, so any mention counts.
+fn setsData(body: []const Ast.Stmt, name: []const u8) bool {
+    for (body) |statement| switch (statement.kind) {
+        .assign => |assign| if (assign.target.storage == .data and std.mem.eql(u8, Compiler.pathRoot(assign.target.name), name)) return true,
+        .@"if" => |if_statement| {
+            if (setsData(if_statement.then_body, name)) return true;
+            if (if_statement.else_body) |else_body| if (setsData(else_body, name)) return true;
+        },
+        .@"while" => |loop| if (setsData(loop.body, name)) return true,
+        .@"for" => |loop| if (setsData(loop.body, name)) return true,
+        .execute => |execute| if (setsData(execute.body, name)) return true,
+        .command => |command| if (std.mem.indexOf(u8, command.text, name) != null) return true,
+        else => {},
+    };
+    return false;
 }
 
 // `{a: ..., b: ...}` for the keys an mcfun uses, for error messages.
@@ -115,13 +163,12 @@ pub fn argumentSnbt(self: *Compiler, arg: *const Ast.Expr, env: *Environment) Co
     defer self.restorePosition(outer_position);
     if (arg.kind == .macro_key) return try std.fmt.allocPrint(self.gpa, "\"$({s})\"", .{arg.kind.macro_key});
 
-    const expression, const cast_type = Data.splitCast(arg);
-    const value = try Values.evaluate(self, expression, env) orelse return null;
+    const value = try Values.evaluate(self, arg, env) orelse return null;
     if (value == .null) {
         try self.addError("null cannot be passed to an mcfun", .{});
         return null;
     }
-    return try Data.castSnbt(self, value, cast_type);
+    return try Values.valueToSnbt(self, value);
 }
 
 // Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use them.
@@ -249,7 +296,6 @@ pub fn collectExpressionCalls(
             try collectExpressionCalls(self, infix.left, calls);
             try collectExpressionCalls(self, infix.right, calls);
         },
-        .cast => |cast| try collectExpressionCalls(self, cast.value, calls),
         .minecraft_check => |parts| try collectInsertCalls(self, parts, calls),
         .list => |elements| for (elements) |element| try collectExpressionCalls(self, element, calls),
         .compound => |entries| for (entries) |entry| try collectExpressionCalls(self, entry.value, calls),
@@ -388,6 +434,41 @@ test "with compounds become macro arguments" {
         \\function ns:heal with storage ns:poplar args
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
+}
+
+test "with: a compound must have the keys the body uses, and a declared non-compound is an error" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try Compiler.compileForTest(arena.allocator(),
+        \\var $num = 0.05f;
+        \\var $list = [1];
+        \\var $later = 0;
+        \\var $raw = 0;
+        \\var $comp = {a: 1};
+        \\var #hp = 0;
+        \\mcfun two() { if ($(a) > 0) { /say $(b); } }
+        \\mcfun plain() { /say x; }
+        \\mcfun set() { $later = {a: 1, b: 2}; /data modify storage self:data raw set value {a: 1, b: 2}; }
+        \\mcfun main() {
+        \\    two() with {a: 1};
+        \\    two() with {a: #hp};
+        \\    two() with {a: 1, b: 2, extra: 3};
+        \\    plain() with {a: 1};
+        \\    two() with $comp;
+        \\    two() with $later;
+        \\    two() with $raw;
+        \\    two() with $num;
+        \\    two() with $list;
+        \\}
+    );
+    _ = try compiler.compile();
+    const errors = compiler.errors.items;
+    try std.testing.expectEqual(4, errors.len);
+    try std.testing.expectEqualStrings("mcfun 'two' uses '$(b)', but this compound has no key 'b'", errors[0].message);
+    try std.testing.expectEqualStrings("mcfun 'two' uses '$(b)', but this compound has no key 'b'", errors[1].message);
+    try std.testing.expectEqualStrings("'with' needs a compound, but '$num' is 0.05f. Declare it as a compound: 'var $num = {name: 0.05f};'", errors[2].message);
+    try std.testing.expectEqualStrings("'with' needs a compound, but '$list' is [1]. Declare it as a compound: 'var $list = {name: [1]};'", errors[3].message);
 }
 
 test "mcfun call errors" {

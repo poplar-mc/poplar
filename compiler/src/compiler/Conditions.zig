@@ -68,7 +68,7 @@ pub fn minecraftCheck(self: *Compiler, parts: []const Ast.CommandPart, column: u
 }
 
 // `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
-pub fn dataCondition(self: *Compiler, identifier: Ast.Identifier, value: Compiler.Value, cast_type: ?Ast.NumberType, negated: bool, env: *const Environment) Compiler.CompileError!?Compiler.Condition {
+pub fn dataCondition(self: *Compiler, identifier: Ast.Identifier, value: Compiler.Value, negated: bool, env: *const Environment) Compiler.CompileError!?Compiler.Condition {
     const path = try Data.dataPathOf(self, identifier, env) orelse return null;
     if (std.mem.indexOfAny(u8, path.path, "[\"") != null) {
         try self.addError("a condition on '{s}' is not supported yet: the path must only have keys", .{identifier.name});
@@ -80,7 +80,7 @@ pub fn dataCondition(self: *Compiler, identifier: Ast.Identifier, value: Compile
     var depth: usize = 0;
     while (keys.next()) |key| : (depth += 1) try filter.print(self.gpa, "{{{s}:", .{key});
     // Minecraft stores a bool as a byte, so the filter says `1b` or `0b`.
-    const snbt = if (value == .boolean) (if (value.boolean) "1b" else "0b") else try Data.castSnbt(self, value, cast_type) orelse return null;
+    const snbt = if (value == .boolean) (if (value.boolean) "1b" else "0b") else try Values.valueToSnbt(self, value);
     try filter.appendSlice(self.gpa, snbt);
     try filter.appendNTimes(self.gpa, '}', depth);
 
@@ -112,7 +112,7 @@ pub fn lowerComparison(self: *Compiler, infix: Ast.Infix, env: *Environment, neg
     };
 }
 
-// `==` between data and a compile-time string, bool, list, compound or `as` number is an NBT filter.
+// `==` between data and a compile-time string, bool, list, compound or typed number is an NBT filter.
 // A number comparison still goes through a score, which also works for other number types.
 pub fn dataComparison(self: *Compiler, data_side: *const Ast.Expr, other: *const Ast.Expr, env: *Environment, negated: bool) Compiler.CompileError!?Compiler.Condition {
     const outer_position = self.enterExpression(other);
@@ -121,9 +121,8 @@ pub fn dataComparison(self: *Compiler, data_side: *const Ast.Expr, other: *const
         try self.addError("comparing two runtime values that are not numbers is not supported yet", .{});
         return null;
     }
-    const expression, const cast_type = Data.splitCast(other);
-    const value = try Values.evaluate(self, expression, env) orelse return null;
-    return dataCondition(self, data_side.kind.identifier, value, cast_type, negated, env);
+    const value = try Values.evaluate(self, other, env) orelse return null;
+    return dataCondition(self, data_side.kind.identifier, value, negated, env);
 }
 
 // True when one side is data and the other is a compile-time value that is not a plain int.
@@ -132,7 +131,7 @@ pub fn isTextComparison(self: *Compiler, left: *const Ast.Expr, right: *const As
     for ([_]*const Ast.Expr{ left, right }) |side| {
         if (Data.isDataIdentifier(side) or Values.containsRuntimeValue(self, side, env)) continue;
         switch (side.kind) {
-            .string, .boolean, .list, .compound, .cast, .typed_number => return true,
+            .string, .boolean, .list, .compound, .typed_number => return true,
             .prefix => |prefix| if (prefix.operand.kind == .typed_number) return true,
             else => {},
         }
