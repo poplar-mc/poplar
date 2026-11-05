@@ -46,7 +46,6 @@ Then `poplar new my_pack` makes a project, and `poplar build` writes the datapac
 | `schema/`, `tools/` | The `poplar.json` schema, and the test harness |
 | `install.sh`, `install.ps1` | The install scripts |
 | `.github/workflows/release.yml` | Builds the release archives when a release is published |
-| `editors/` | The Tree-sitter grammar (editor extensions are separate repos, such as `poplar-gram`, that fetch it from here) and a TextMate grammar |
 | `examples/` | Example Poplar projects |
 
 ## Build from source
@@ -60,9 +59,7 @@ zig build -Doptimize=ReleaseSafe -p ~/.local    # install `poplar` and its std o
 Publish a release on GitHub with a tag such as `v0.1.0`. The release workflow then builds Poplar for Linux, macOS and Windows (x86_64 and arm64) and attaches `poplar-<os>-<arch>.tar.gz` (or `.zip` on Windows) to it. The install scripts always take the latest release. Set the version in `build.zig.zon` to match the tag, because `poplar --version` prints it.
 
 ## Editor
-`poplar lsp` is the language server. The Gram (Zed) extension is in the `poplar-gram` repo.
-
-The grammar's generated parser (`editors/tree-sitter-poplar/src/`) is committed, because editors compile it and do not generate it. After a change to `grammar.js`, run `tree-sitter generate` in that folder.
+`poplar lsp` is the language server. The Gram (Zed) extension and the grammars are in [poplar-editor-extensions](https://github.com/poplar-mc/poplar-editor-extensions).
 
 ## License
 
