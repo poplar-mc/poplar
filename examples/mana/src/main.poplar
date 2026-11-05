@@ -24,10 +24,10 @@ mcfun regen() {
 
 mcfun cast() {
     if (@s.#mana < 30) {
-        /tellraw @s {{ {text: "Not enough mana", color: "red"} }};
+        /tellraw @s {text: "Not enough mana", color: "red"};
         return;
     }
     @s.#mana = @s.#mana - 30;
     /effect give @s speed 5 1;
-    /tellraw @s {{ {text: "Whoosh!", color: "aqua"} }};
+    /tellraw @s {text: "Whoosh!", color: "aqua"};
 }

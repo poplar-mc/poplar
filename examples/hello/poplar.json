@@ -1,1 +1,1 @@
-{ "$schema": "../../compiler/schema/poplar.schema.json", "description": "Hello from Poplar" }
+{ "$schema": "../../schema/poplar.schema.json", "description": "Hello from Poplar" }

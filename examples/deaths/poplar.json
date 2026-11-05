@@ -1,1 +1,1 @@
-{ "$schema": "../../compiler/schema/poplar.schema.json", "description": "Death messages and counters" }
+{ "$schema": "../../schema/poplar.schema.json", "description": "Death messages and counters" }

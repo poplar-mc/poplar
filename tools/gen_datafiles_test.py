@@ -4,7 +4,7 @@
     python3 tools/gen_datafiles_test.py zig-pkg/<mcmeta package>            the test
     python3 tools/gen_datafiles_test.py zig-pkg/<mcmeta package> --missing  every tag also names a missing file
 
-Run it in compiler/ after a Minecraft update. With --missing the server must fail to start, with an error for every
+Run it at the top of the repo after a Minecraft update. With --missing the server must fail to start, with an error for every
 type; a type without an error is in the wrong folder. The server stops at the first stage that fails, so a few types
 that load later only show up once the earlier ones are fixed.
 """

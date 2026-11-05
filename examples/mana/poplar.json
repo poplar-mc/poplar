@@ -1,1 +1,1 @@
-{ "$schema": "../../compiler/schema/poplar.schema.json", "description": "Per-player mana and a /trigger cast spell" }
+{ "$schema": "../../schema/poplar.schema.json", "description": "Per-player mana and a /trigger cast spell" }

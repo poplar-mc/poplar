@@ -4,7 +4,7 @@ namespace toolkit;
 mcfun describeHeld() {
     // A bare data path in `if` checks that it exists, the same as `execute if data`.
     if (!@s.$SelectedItem) {
-        /tellraw @s {{ {text: "Your hand is empty", color: "gray"} }};
+        /tellraw @s {text: "Your hand is empty", color: "gray"};
         return;
     }
 

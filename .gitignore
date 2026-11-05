@@ -4,10 +4,13 @@ zig-out/
 zig-pkg/
 
 # e2e: the Minecraft server and its world
-compiler/.e2e/
+.e2e/
 
 # Poplar output
 poplar-out/
 
 # OS
 .DS_Store
+
+# Release archives
+dist/

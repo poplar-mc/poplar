@@ -20,21 +20,20 @@ jobs:
           version: 0.17.0
 
       - name: Build and package
-        working-directory: compiler
         run: |
           set -eu
-          mkdir -p ../dist
+          mkdir -p dist
           for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
             arch="${target%%-*}"
             os="${target#*-}"
             name="poplar-$os-$arch"
-            zig build -Doptimize=ReleaseSafe -Dtarget="$target" -p "../dist/$name"
-            rm -f "../dist/$name/bin/"*.pdb
-            cp ../LICENSE "../dist/$name/"
+            zig build -Doptimize=ReleaseSafe -Dtarget="$target" -p "dist/$name"
+            rm -f "dist/$name/bin/"*.pdb
+            cp LICENSE "dist/$name/"
             if [ "$os" = windows ]; then
-              (cd "../dist/$name" && zip -qr "../$name.zip" bin lib LICENSE)
+              (cd "dist/$name" && zip -qr "../$name.zip" bin lib LICENSE)
             else
-              tar -czf "../dist/$name.tar.gz" -C "../dist/$name" bin lib LICENSE
+              tar -czf "dist/$name.tar.gz" -C "dist/$name" bin lib LICENSE
             fi
           done
 
