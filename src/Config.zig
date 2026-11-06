@@ -13,29 +13,29 @@ pub const PackFormat = struct {
     }
 };
 
-// 1.21.9. Older versions also need the old `pack_format` and `supported_formats` fields in pack.mcmeta.
+/// 1.21.9. Older versions also need the old `pack_format` and `supported_formats` fields in pack.mcmeta.
 pub const oldest_format: PackFormat = .{ .major = 88 };
 
 pub const file_name = "poplar.json";
 
 pub const ParseError = error{InvalidConfig} || std.mem.Allocator.Error;
 
-// Where and why `poplar.json` is invalid. Line 0 means the problem has no position in the file.
+/// Where and why `poplar.json` is invalid. Line 0 means the problem has no position in the file.
 pub const Problem = struct {
     line: usize = 0,
     column: usize = 0,
     message: []const u8 = "",
 };
 
-// The name of the built pack: `poplar-out/<name>/` and `poplar-out/<name>.zip`.
+/// The name of the built pack: `poplar-out/<name>/` and `poplar-out/<name>.zip`.
 zip_name: []const u8,
 namespace: []const u8,
-// A JSON text component, already written as JSON.
+/// A JSON text component, already written as JSON.
 description: []const u8,
 min_format: PackFormat,
 max_format: PackFormat,
 
-// The Minecraft version that the command data comes from.
+/// The Minecraft version that the command data comes from.
 const McmetaVersion = struct { name: []const u8, data_pack_version: u32, data_pack_version_minor: u32 };
 
 fn mcmetaVersion(arena: std.mem.Allocator) !McmetaVersion {
@@ -51,7 +51,7 @@ pub fn minecraftVersion(arena: std.mem.Allocator) ![]const u8 {
     return (try mcmetaVersion(arena)).name;
 }
 
-// Reads `poplar.json` from the project folder. A missing file gives the defaults.
+/// Reads `poplar.json` from the project folder. A missing file gives the defaults.
 pub fn load(arena: std.mem.Allocator, io: std.Io, project_dir: std.Io.Dir, folder_name: []const u8, problem: *Problem) !Config {
     const json = project_dir.readFileAlloc(io, file_name, arena, .unlimited) catch |err| switch (err) {
         error.FileNotFound => "{}",
@@ -139,7 +139,7 @@ fn failWithoutPosition(arena: std.mem.Allocator, problem: *Problem, comptime for
     return error.InvalidConfig;
 }
 
-// Reads the fields one token at a time, so that each problem has the line and column of its field.
+/// Reads the fields one token at a time, so that each problem has the line and column of its field.
 const FieldReader = struct {
     arena: std.mem.Allocator,
     scanner: std.json.Scanner,
@@ -160,7 +160,7 @@ const FieldReader = struct {
         };
     }
 
-    // `121` or `[121, 0]`, the same as in pack.mcmeta.
+    /// `121` or `[121, 0]`, the same as in pack.mcmeta.
     fn readFormat(reader: *FieldReader, field: []const u8) ParseError!PackFormat {
         switch (try reader.next()) {
             .number, .allocated_number => |number| return .{ .major = try reader.parseNumber(number, field) },
@@ -190,7 +190,7 @@ const FieldReader = struct {
         return std.fmt.parseInt(u32, number, 10) catch reader.fail("\"{s}\" must contain whole numbers", .{field});
     }
 
-    // Any JSON value, for example a text component. It is written to pack.mcmeta as it is.
+    /// Any JSON value, for example a text component. It is written to pack.mcmeta as it is.
     fn readJson(reader: *FieldReader) ParseError![]const u8 {
         const value = std.json.Value.jsonParse(reader.arena, &reader.scanner, .{ .max_value_len = std.json.default_max_value_len }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,

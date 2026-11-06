@@ -34,38 +34,38 @@ pub const McfunDeclaration = struct {
     path: []const u8,
     mcfun: *const ast.Mcfun,
     origin: Origin,
-    // The namespace of the file, and the namespaces it imports.
+    /// The namespace of the file, and the namespaces it imports.
     namespace: []const u8,
     imports: []const ast.NamespaceName,
-    // The name in the IR: `combat:heal`, or `heal` in the pack namespace.
+    /// The name in the IR: `combat:heal`, or `heal` in the pack namespace.
     ir_name: []const u8,
 };
 
-// Where a source file comes from: the project's `src/` or the standard library.
+/// Where a source file comes from: the project's `src/` or the standard library.
 pub const Origin = enum { project, std };
 
-// The namespace of the standard library. Its files are written into the pack namespace, under `std/`.
+/// The namespace of the standard library. Its files are written into the pack namespace, under `std/`.
 pub const std_namespace = "std";
 
-// `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the callback.
-// `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run `/trigger <name>`.
+/// `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the callback.
+/// `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run `/trigger <name>`.
 pub const Event = struct {
-    // `onEvent` and `onDeath` count a criteria; the player events are fixed patterns (see `load.appendEventFunctions`).
+    /// `onEvent` and `onDeath` count a criteria; the player events are fixed patterns (see `load.appendEventFunctions`).
     pub const Kind = enum { criteria, trigger, first_join, join, respawn };
 
     kind: Kind,
     criteria: []const u8 = "",
-    // The IR name of the callback mcfun.
+    /// The IR name of the callback mcfun.
     callback: []const u8,
-    // The output namespace of the `load` that registered it. The objective is `<namespace>.event_<n>`.
+    /// The output namespace of the `load` that registered it. The objective is `<namespace>.event_<n>`.
     namespace: ?[]const u8,
-    // The objective name of `onTrigger`. A trigger is disabled after each use, so `poplar/tick` enables it again.
+    /// The objective name of `onTrigger`. A trigger is disabled after each use, so `poplar/tick` enables it again.
     trigger: ?[]const u8 = null,
 };
 
 pub const Value = Environment.Value;
 
-// The holder of the global value of each `#var`. A `#` holder is hidden from the sidebar.
+/// The holder of the global value of each `#var`. A `#` holder is hidden from the sidebar.
 pub const global_holder = "#global";
 
 pub const GlobalScore = struct {
@@ -73,34 +73,34 @@ pub const GlobalScore = struct {
     line: usize,
     initial_value: i32,
     name: []const u8,
-    // Null for the pack namespace.
+    /// Null for the pack namespace.
     output_namespace: ?[]const u8,
 };
 
 pub const CommandText = struct {
     text: []const u8,
-    // Where each part starts in `text`, for mapping errors back to the source.
+    /// Where each part starts in `text`, for mapping errors back to the source.
     text_starts: []const usize,
-    // True if a `{{$x}}` insert makes the text a macro line for a helper function.
+    /// True if a `{{$x}}` insert makes the text a macro line for a helper function.
     is_macro: bool,
     uses_macro_keys: bool,
-    // The runtime values that the text uses, each one time.
+    /// The runtime values that the text uses, each one time.
     inserts: []const Insert,
 };
 
-// A runtime value in `{{...}}`: `{{$stats.hp}}` is `$(stats_hp)` in the macro line. A macro argument is a
-// top-level key, so any value that is not a whole `$` var is copied into `<ns>:poplar macro` under its name first.
+/// A runtime value in `{{...}}`: `{{$stats.hp}}` is `$(stats_hp)` in the macro line. A macro argument is a
+/// top-level key, so any value that is not a whole `$` var is copied into `<ns>:poplar macro` under its name first.
 pub const Insert = struct {
     pub const Source = union(enum) {
         data: ir.DataPath,
-        // A score, math or a value call, computed just before the helper is called.
+        /// A score, math or a value call, computed just before the helper is called.
         value: *const ast.Expression,
     };
 
     macro_name: []const u8,
     source: Source,
 
-    // A whole `$` var is read from `<ns>:data` as it is.
+    /// A whole `$` var is read from `<ns>:data` as it is.
     pub fn isWholeDataVar(insert: Insert) bool {
         if (insert.source != .data or insert.source.data.holder != .storage) return false;
         return std.mem.eql(u8, insert.macro_name, insert.source.data.path);
@@ -123,15 +123,15 @@ pub const LocalVariable = struct {
 pub const GlobalData = struct {
     path: []const u8,
     line: usize,
-    // The initial value as SNBT: `20`, `20f`, `{hp:20}`.
+    /// The initial value as SNBT: `20`, `20f`, `{hp:20}`.
     initial_snbt: []const u8,
     name: []const u8,
-    // Null for the pack namespace.
+    /// Null for the pack namespace.
     output_namespace: ?[]const u8,
     storage: ir.Storage,
 };
 
-// Checks in OR-of-ANDs form: the condition is true if every check in one clause passes.
+/// Checks in OR-of-ANDs form: the condition is true if every check in one clause passes.
 pub const Condition = union(enum) {
     constant: bool,
     clauses: []const []const ir.Check,
@@ -152,59 +152,59 @@ errors: std.ArrayList(Error) = .empty,
 generated: std.ArrayList(ir.McFunction) = .empty,
 temp_count: usize = 0,
 generated_count: usize = 0,
-// Where the compiler is: the source position for errors, the namespace, and the mcfun.
+/// Where the compiler is: the source position for errors, the namespace, and the mcfun.
 position: SourcePosition = .{},
 scope: Scope = .{},
 mcfun: CurrentMcfun = .{},
-// The imports of each namespace, from all its files. They decide the order of the `load` and `tick` functions.
+/// The imports of each namespace, from all its files. They decide the order of the `load` and `tick` functions.
 namespace_imports: std.StringArrayHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
-// The namespaces with an `mcfun load` or `mcfun tick`.
+/// The namespaces with an `mcfun load` or `mcfun tick`.
 load_namespaces: std.StringArrayHashMapUnmanaged(void) = .empty,
 tick_namespaces: std.StringArrayHashMapUnmanaged(void) = .empty,
-// For each mcfun, the mcfuns that its body calls.
+/// For each mcfun, the mcfuns that its body calls.
 mcfun_calls: std.StringHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
-// Set when a recursive call saves temps, so that `poplar/load` clears the stack.
+/// Set when a recursive call saves temps, so that `poplar/load` clears the stack.
 uses_stack: bool = false,
-// `{a:"$(a)"}` for the macro arguments that the current mcfun uses. Calls to its generated functions pass it on.
+/// `{a:"$(a)"}` for the macro arguments that the current mcfun uses. Calls to its generated functions pass it on.
 forwarded_args: ?[]const u8 = null,
-// The `$(name)` keys that the current mcfun uses.
+/// The `$(name)` keys that the current mcfun uses.
 macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
-// The test function of the innermost `while`, for `break` and `continue`.
+/// The test function of the innermost `while`, for `break` and `continue`.
 current_loop: ?[]const u8 = null,
-// True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
+/// True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
 return_through_body: bool = false,
-// The namespace of the pack. `text(#hp)` writes it into a text component.
+/// The namespace of the pack. `text(#hp)` writes it into a text component.
 pack_namespace: []const u8 = "ns",
-// True while a namespace's `mcfun load` is compiled. Only there `onEvent` is allowed.
+/// True while a namespace's `mcfun load` is compiled. Only there `onEvent` is allowed.
 in_load: bool = false,
 events: std.ArrayList(Event) = .empty,
-// Removes every data local of the current mcfun. It runs at each exit, so no value is left for the next call.
+/// Removes every data local of the current mcfun. It runs at each exit, so no value is left for the next call.
 current_cleanup: []const ir.Command = &.{},
-// The locals that are visible at the statement being compiled. A recursive call saves them.
+/// The locals that are visible at the statement being compiled. A recursive call saves them.
 live_locals: std.ArrayList(Environment.Local) = .empty,
-// `#i_countdown` → where it comes from, so two different locals cannot get the same generated name.
+/// `#i_countdown` → where it comes from, so two different locals cannot get the same generated name.
 local_names: std.StringHashMapUnmanaged(LocalOrigin) = .empty,
-// Every local declaration, for the language server.
+/// Every local declaration, for the language server.
 locals: std.ArrayList(LocalVariable) = .empty,
 data_files: std.ArrayList(ir.DataFile) = .empty,
-// `data/<ns>/<folder>/<path>.json` → where it is declared, so two declarations cannot write one file.
+/// `data/<ns>/<folder>/<path>.json` → where it is declared, so two declarations cannot write one file.
 data_file_paths: std.StringHashMapUnmanaged([]const u8) = .empty,
-// The file path of each data file of a namespace, by its source name: `combat:isSitting` → `is_sitting`,
-// `combat:checks/never` → itself. `self:name` and `ns:name` in Minecraft text look names up here and in `functions`.
+/// The file path of each data file of a namespace, by its source name: `combat:isSitting` → `is_sitting`,
+/// `combat:checks/never` → itself. `self:name` and `ns:name` in Minecraft text look names up here and in `functions`.
 data_file_names: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-// `self`, `std` and the namespaces of the project's files: the ones whose ids in commands can be Poplar names.
+/// `self`, `std` and the namespaces of the project's files: the ones whose ids in commands can be Poplar names.
 poplar_namespaces: []const []const u8 = &.{"self"},
-// The namespace of each source file (by its display path), for the language server.
+/// The namespace of each source file (by its display path), for the language server.
 file_namespaces: std.StringHashMapUnmanaged([]const u8) = .empty,
-// The data files with an identifier name, for the language server.
+/// The data files with an identifier name, for the language server.
 named_data_files: std.StringArrayHashMapUnmanaged(NamedDataFile) = .empty,
 
 pub fn init(arena: std.mem.Allocator, command_tree: *const CommandTree) Compiler {
     return .{ .arena = arena, .command_tree = command_tree };
 }
 
-// `mcfun load` and `mcfun tick` of each namespace are run by the game. A program without a `namespace` line
-// (in tests) is in the pack namespace.
+/// `mcfun load` and `mcfun tick` of each namespace are run by the game. A program without a `namespace` line
+/// (in tests) is in the pack namespace.
 pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origin: Origin) CompileError!void {
     self.position.path = path;
     self.scope = self.scopeOf(if (program.namespace) |namespace| namespace.name else self.pack_namespace, program.imports);
@@ -430,8 +430,8 @@ fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment
     }
 }
 
-// Compiles an `execute (...)` body. A body that can `return` is always a function, called as
-// `if function ...`: it returns 1 for each entity that returns from the mcfun, and then the mcfun returns.
+/// Compiles an `execute (...)` body. A body that can `return` is always a function, called as
+/// `if function ...`: it returns 1 for each entity that returns from the mcfun, and then the mcfun returns.
 pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Environment, loop: ?[]const u8) CompileError!?ir.Command {
     const outer_loop = self.current_loop;
     const outer_through_body = self.return_through_body;
@@ -454,14 +454,14 @@ pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Envir
     return try self.onBodyReturn(name);
 }
 
-// `execute if function <body> run ...`: when the body returned, return from this function too.
+/// `execute if function <body> run ...`: when the body returned, return from this function too.
 fn onBodyReturn(self: *Compiler, body_name: []const u8) CompileError!ir.Command {
     const pass_on: ir.Command = if (self.return_through_body) .{ .return_value = 1 } else .{ .return_run = try self.createCommand(.{ .score_get = try self.resultScore() }) };
     const checks = try self.arena.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .function_returns = body_name } }});
     return .{ .execute = .{ .checks = checks, .run = try self.createCommand(pass_on) } };
 }
 
-// The value of a `return` inside a `while` or `execute (...)` body, on its way out.
+/// The value of a `return` inside a `while` or `execute (...)` body, on its way out.
 fn resultScore(self: *Compiler) CompileError!ir.Score {
     return .{ .holder = try std.fmt.allocPrint(self.arena, "#poplar.{s}.result", .{self.mcfun.folder}), .namespace = self.scope.output_namespace };
 }
@@ -483,8 +483,8 @@ fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment, com
     }
 }
 
-// `var #i = 10;` in `mcfun countdown` is the fake player `#i_countdown` in `<ns>`. `var $names = [];` is
-// `names_countdown` in `<ns>:data`. The value is set here, on every call.
+/// `var #i = 10;` in `mcfun countdown` is the fake player `#i_countdown` in `<ns>`. `var $names = [];` is
+/// `names_countdown` in `<ns>:data`. The value is set here, on every call.
 fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const name = var_decl.target.name;
     const sigil: u8 = if (kind == .score) '#' else '$';
@@ -529,9 +529,9 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     });
 }
 
-// `data remove` for each data local declared anywhere in the body. A failed `set from` keeps the old value, so
-// without this a local could hold a value from an earlier call. `data remove` on a missing key fails without effect.
-// A score local needs nothing: every score write (`set`, `operation`, `store result`) overwrites it, and a failure writes 0.
+/// `data remove` for each data local declared anywhere in the body. A failed `set from` keeps the old value, so
+/// without this a local could hold a value from an earlier call. `data remove` on a missing key fails without effect.
+/// A score local needs nothing: every score write (`set`, `operation`, `store result`) overwrites it, and a failure writes 0.
 fn localCleanup(self: *Compiler, body: []const ast.Statement) CompileError![]const ir.Command {
     var names: std.StringArrayHashMapUnmanaged(void) = .empty;
     try collectDataLocalNames(self.arena, body, &names);
@@ -558,7 +558,7 @@ fn collectDataLocalNames(arena: std.mem.Allocator, body: []const ast.Statement, 
     };
 }
 
-// The `$(name)` keys that a body uses, in expressions and in Minecraft text.
+/// The `$(name)` keys that a body uses, in expressions and in Minecraft text.
 pub fn collectMacroKeys(arena: std.mem.Allocator, body: []const ast.Statement, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (body) |statement| switch (statement.kind) {
         .var_decl => |var_decl| try collectExpressionMacroKeys(arena, var_decl.value, keys),
@@ -630,7 +630,7 @@ fn sameOrigin(a: LocalOrigin, b: LocalOrigin) bool {
     return std.mem.eql(u8, a.name, b.name) and std.mem.eql(u8, a.owner, b.owner);
 }
 
-// `stats` in `stats.inventory[0]`.
+/// `stats` in `stats.inventory[0]`.
 pub fn pathRoot(path: []const u8) []const u8 {
     const end = std.mem.indexOfAny(u8, path, ".[") orelse path.len;
     return path[0..end];
@@ -662,7 +662,7 @@ fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, command
     }
 }
 
-// The local `#name` or `$name` that is visible here.
+/// The local `#name` or `$name` that is visible here.
 pub fn localOf(env: *const Environment, sigil: u8, name: []const u8) ?Environment.Local {
     var buffer: [256]u8 = undefined;
     const key = std.fmt.bufPrint(&buffer, "{c}{s}", .{ sigil, name }) catch return null;
@@ -699,7 +699,7 @@ fn ifContainsJump(if_statement: ast.If) bool {
     return containsJump(if_statement.then_body) or containsJump(else_body);
 }
 
-// `return`, `break` or `continue` of this loop level. A `break` in an inner `while` belongs to that loop.
+/// `return`, `break` or `continue` of this loop level. A `break` in an inner `while` belongs to that loop.
 fn containsJump(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
@@ -715,7 +715,7 @@ fn containsJump(body: []const ast.Statement) bool {
     return false;
 }
 
-// True if the body can leave this loop level with `break` or `return`.
+/// True if the body can leave this loop level with `break` or `return`.
 fn containsExit(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
@@ -731,8 +731,8 @@ fn containsExit(body: []const ast.Statement) bool {
     return false;
 }
 
-// True if the then body and every `else if` and `else` body end with `return`, `break` or `continue`.
-// The final `else` is optional.
+/// True if the then body and every `else if` and `else` body end with `return`, `break` or `continue`.
+/// The final `else` is optional.
 fn branchesEndWithJump(if_statement: ast.If) bool {
     if (!endsWithJump(if_statement.then_body)) return false;
 
@@ -788,7 +788,7 @@ fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, commands:
     }
 }
 
-// Each branch returns from the wrapper, so later branches and the else body run only if no earlier branch ran.
+/// Each branch returns from the wrapper, so later branches and the else body run only if no earlier branch ran.
 fn appendBranches(
     self: *Compiler,
     if_statement: ast.If,
@@ -834,7 +834,7 @@ fn appendBranches(
     try self.compileBlock(else_body, &else_env, wrapper);
 }
 
-// `kind` names a generated function for a body with more than one command: `if` or `execute`.
+/// `kind` names a generated function for a body with more than one command: `if` or `execute`.
 fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *Environment, kind: []const u8) CompileError!?ir.Command {
     var branch_env: Environment = .{ .outer = env, .runtime_branch = true };
     var body_commands: std.ArrayList(ir.Command) = .empty;
@@ -924,7 +924,7 @@ fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environme
     try commands.append(self.arena, .{ .return_run = try self.createCommand(read) });
 }
 
-// Wraps a command in `return run`, unless it already returns.
+/// Wraps a command in `return run`, unless it already returns.
 fn returnRun(self: *Compiler, command: ir.Command) CompileError!ir.Command {
     return switch (command) {
         .return_run, .return_value, .return_macro_argument => command,
@@ -932,7 +932,7 @@ fn returnRun(self: *Compiler, command: ir.Command) CompileError!ir.Command {
     };
 }
 
-// A loop is two functions: `while_<n>` tests the condition and runs `while_<n>_body`, which runs `while_<n>` again.
+/// A loop is two functions: `while_<n>` tests the condition and runs `while_<n>_body`, which runs `while_<n>` again.
 fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const test_name = try self.newGeneratedName("while");
     const body_name = try std.fmt.allocPrint(self.arena, "{s}_body", .{test_name});
@@ -989,7 +989,7 @@ fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *
     try commands.append(self.arena, .{ .execute = .{ .checks = checks, .run = pass_on } });
 }
 
-// `continue` of this loop level.
+/// `continue` of this loop level.
 fn containsContinue(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
@@ -1040,7 +1040,7 @@ pub const SourcePosition = struct {
     column: ?usize = null,
 };
 
-// The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (null: the pack).
+/// The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (null: the pack).
 pub const Scope = struct {
     namespace: []const u8 = "ns",
     imports: []const ast.NamespaceName = &.{},
@@ -1048,14 +1048,14 @@ pub const Scope = struct {
 };
 
 pub const CurrentMcfun = struct {
-    // As it appears in generated names (`ir.generatedFolder`): `heal`, or `std.clamp` for std.
+    /// As it appears in generated names (`ir.generatedFolder`): `heal`, or `std.clamp` for std.
     folder: []const u8 = "",
-    // The IR name (`combat:heal`), and the key with the source namespace (`combat:heal`, `std:clamp`).
+    /// The IR name (`combat:heal`), and the key with the source namespace (`combat:heal`, `std:clamp`).
     name: []const u8 = "",
     key: []const u8 = "",
 };
 
-// Errors inside an expression point to where it starts. Returns the outer position for `restorePosition`.
+/// Errors inside an expression point to where it starts. Returns the outer position for `restorePosition`.
 pub fn enterExpression(self: *Compiler, expression: *const ast.Expression) SourcePosition {
     const outer: SourcePosition = .{ .path = self.position.path, .line = self.position.line, .column = self.position.column };
     self.position.line = expression.line;

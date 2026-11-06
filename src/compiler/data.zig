@@ -1,4 +1,5 @@
-// NBT data: assigning, paths and literals, list builtins, and the string helpers.
+//! NBT data: assigning, paths and literals, list builtins, and the string helpers.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -11,7 +12,7 @@ const declarations = @import("declarations.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
-// Sets data in storage or an entity path. A score or math is stored as an int.
+/// Sets data in storage or an entity path. A score or math is stored as an int.
 pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
@@ -52,13 +53,13 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
     try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = temp } });
 }
 
-// A runtime value inside a literal, and where it goes: `[1]` in `pos[1]`, `.hp` in `stats.hp`.
+/// A runtime value inside a literal, and where it goes: `[1]` in `pos[1]`, `.hp` in `stats.hp`.
 pub const LiteralPart = struct {
     path: []const u8,
     value: *const ast.Expression,
 };
 
-// `$pos = [#x, #y, 0];` sets the literal with a `0` for each runtime part, then stores each part at its path.
+/// `$pos = [#x, #y, 0];` sets the literal with a `0` for each runtime part, then stores each part at its path.
 pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     var parts: std.ArrayList(LiteralPart) = .empty;
     const template = try literalTemplate(compiler, expression, "", env, &parts) orelse return;
@@ -70,7 +71,7 @@ pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression
     }
 }
 
-// The literal as a value, with `0` in the place of each runtime part.
+/// The literal as a value, with `0` in the place of each runtime part.
 fn literalTemplate(compiler: *Compiler, expression: *const ast.Expression, path: []const u8, env: *Environment, parts: *std.ArrayList(LiteralPart)) Compiler.CompileError!?Compiler.Value {
     if (!values.containsRuntimeValue(compiler, expression, env)) return try values.evaluate(compiler, expression, env);
 
@@ -103,7 +104,7 @@ pub fn isDataIdentifier(expression: *const ast.Expression) bool {
     return expression.kind == .identifier and (expression.kind.identifier.kind == .data or expression.kind.identifier.kind == .entity_data);
 }
 
-// A `$` variable in `<ns>:data`, or the NBT path of one entity.
+/// A `$` variable in `<ns>:data`, or the NBT path of one entity.
 pub fn dataPathOf(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.DataPath {
     if (identifier.kind == .entity_data) return entityDataPath(compiler, identifier);
     return dataPath(compiler, identifier, env);
@@ -114,7 +115,7 @@ pub fn entityDataPath(compiler: *Compiler, identifier: ast.Identifier) Compiler.
     return .ofEntity(identifier.selector.?, identifier.name);
 }
 
-// Checks that the root of a `$` path is declared, and gives the path in `<ns>:data`.
+/// Checks that the root of a `$` path is declared, and gives the path in `<ns>:data`.
 pub fn dataPath(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.DataPath {
     const name = identifier.name;
     const root = Compiler.pathRoot(name);
@@ -131,20 +132,20 @@ pub fn dataPath(compiler: *Compiler, identifier: ast.Identifier, env: *const Env
     return path;
 }
 
-// A data local in `<ns>:data` of the mcfun's namespace, or in `<pack>:std` for std.
+/// A data local in `<ns>:data` of the mcfun's namespace, or in `<pack>:std` for std.
 pub fn dataLocal(compiler: *const Compiler, key_name: []const u8) ir.DataPath {
     var path: ir.DataPath = .inStorage(storageOf(compiler.scope.namespace), key_name);
     path.namespace = compiler.scope.output_namespace;
     return path;
 }
 
-// std shares the pack namespace, so its `$` variables have their own storage, apart from the pack's.
+/// std shares the pack namespace, so its `$` variables have their own storage, apart from the pack's.
 pub fn storageOf(namespace: []const u8) ir.Storage {
     return if (std.mem.eql(u8, namespace, Compiler.std_namespace)) .std else .data;
 }
 
-// `text(#hp)` → `{score:{name:"#global",objective:"<ns>.hp"}}`, `text($x)` → `{storage:"<ns>:data",nbt:"x"}`,
-// `text(@s.$Name)` → `{entity:"@s",nbt:"Name"}`. A compile-time value becomes a string.
+/// `text(#hp)` → `{score:{name:"#global",objective:"<ns>.hp"}}`, `text($x)` → `{storage:"<ns>:data",nbt:"x"}`,
+/// `text(@s.$Name)` → `{entity:"@s",nbt:"Name"}`. A compile-time value becomes a string.
 pub fn textComponent(compiler: *Compiler, argument: *const ast.Expression, env: *Environment) Compiler.CompileError!?Compiler.Value {
     if (argument.kind == .identifier) {
         const identifier = argument.kind.identifier;
@@ -170,7 +171,7 @@ pub fn textComponent(compiler: *Compiler, argument: *const ast.Expression, env: 
     return .{ .string = try values.valueToText(compiler, value) };
 }
 
-// `append($list, v)`, `prepend($list, v)`, `insert($list, i, v)` and `remove($list, i)`.
+/// `append($list, v)`, `prepend($list, v)`, `insert($list, i, v)` and `remove($list, i)`.
 pub fn compileListBuiltin(compiler: *Compiler, name: []const u8, call: ast.Call, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     if (std.mem.eql(u8, name, "len")) return compiler.addError("'len' gives a value. Use it as one: '#n = len($list);'", .{});
     const arity: usize = if (std.mem.eql(u8, name, "insert")) 3 else 2;
@@ -212,7 +213,7 @@ pub fn compileListBuiltin(compiler: *Compiler, name: []const u8, call: ast.Call,
     try compileDataAssign(compiler, element, value, env, commands);
 }
 
-// The first argument of a list helper: a `$` variable or entity data.
+/// The first argument of a list helper: a `$` variable or entity data.
 fn listArgument(compiler: *Compiler, name: []const u8, argument: *const ast.Expression, env: *const Environment) Compiler.CompileError!?ir.DataPath {
     const outer_position = compiler.enterExpression(argument);
     defer compiler.restorePosition(outer_position);
@@ -223,7 +224,7 @@ fn listArgument(compiler: *Compiler, name: []const u8, argument: *const ast.Expr
     return dataPathOf(compiler, argument.kind.identifier, env);
 }
 
-// `slice(text, start, end)` and `str(value)` give a string. `startsWith` and `endsWith` are conditions.
+/// `slice(text, start, end)` and `str(value)` give a string. `startsWith` and `endsWith` are conditions.
 pub fn isStringCall(call: ast.Call) bool {
     return calls.isBuiltinCall(call, "slice") or calls.isBuiltinCall(call, "str");
 }
@@ -232,13 +233,13 @@ pub fn isStringTest(call: ast.Call) bool {
     return calls.isBuiltinCall(call, "startsWith") or calls.isBuiltinCall(call, "endsWith");
 }
 
-// The result of a nested string helper, and the substring that `startsWith` and `endsWith` compare.
+/// The result of a nested string helper, and the substring that `startsWith` and `endsWith` compare.
 pub const string_scratch: ir.DataPath = .inStorage(.poplar, "string");
 
 pub const string_test_key = "string_test";
 
-// `data modify <target> set string <source> [start] [end]`. A score or math goes into the scratch value first,
-// because `set string` reads data: a number there becomes its text.
+/// `data modify <target> set string <source> [start] [end]`. A score or math goes into the scratch value first,
+/// because `set string` reads data: a number there becomes its text.
 pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Call, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const outer_position = compiler.enterExpression(call.callee);
     defer compiler.restorePosition(outer_position);
@@ -268,7 +269,7 @@ pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Cal
     try commands.append(compiler.arena, .{ .data_set_string = .{ .target = target, .source = string_scratch } });
 }
 
-// The data that a string helper reads: a `$` path, entity data, or another string helper (through the scratch value).
+/// The data that a string helper reads: a `$` path, entity data, or another string helper (through the scratch value).
 fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.DataPath {
     if (isDataIdentifier(argument)) return try dataPathOf(compiler, argument.kind.identifier, env);
     if (argument.kind == .call and isStringCall(argument.kind.call)) {
@@ -292,8 +293,8 @@ fn constantIndex(compiler: *Compiler, expression: *const ast.Expression, env: *E
     return scores.toScoreValue(compiler, value);
 }
 
-// `startsWith(text, "minecraft:")`: the first characters go into the test value, which starts as "" so that a
-// text that is too short (the `set string` fails) does not match. Then one NBT filter compares them.
+/// `startsWith(text, "minecraft:")`: the first characters go into the test value, which starts as "" so that a
+/// text that is too short (the `set string` fails) does not match. Then one NBT filter compares them.
 pub fn stringTest(compiler: *Compiler, call: ast.Call, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.CompileError!?Compiler.Condition {
     const name = call.callee.kind.identifier.name;
     if (call.args.len != 2) {
@@ -324,7 +325,7 @@ fn constantString(compiler: *Compiler, expression: *const ast.Expression, env: *
     return null;
 }
 
-// The string helpers on constants run when the pack is built. Indices count UTF-16 units, the same as the game.
+/// The string helpers on constants run when the pack is built. Indices count UTF-16 units, the same as the game.
 pub fn evaluateStringCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler.CompileError!?Compiler.Value {
     const name = call.callee.kind.identifier.name;
     const arity_ok = if (calls.isBuiltinCall(call, "slice")) call.args.len == 2 or call.args.len == 3 else if (calls.isBuiltinCall(call, "str")) call.args.len == 1 else call.args.len == 2;
@@ -375,7 +376,7 @@ pub fn evaluateStringCall(compiler: *Compiler, call: ast.Call, env: *Environment
     return .{ .string = sliced };
 }
 
-// `len($list)`: `data get` on a list, compound or string gives its size.
+/// `len($list)`: `data get` on a list, compound or string gives its size.
 pub fn compileLength(compiler: *Compiler, target: ir.Score, call: ast.Call, env: *const Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     if (call.args.len != 1) return compiler.addError("'len' expects 1 argument, found {d}", .{call.args.len});
     const argument = call.args[0];

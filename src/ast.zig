@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const Program = struct {
-    // `namespace combat;`, the first statement of every file. Null when it is missing.
+    /// `namespace combat;`, the first statement of every file. Null when it is missing.
     namespace: ?NamespaceName,
     imports: []const NamespaceName,
     mcfuns: []const Mcfun,
@@ -9,7 +9,7 @@ pub const Program = struct {
     data_files: []const DataFile,
 };
 
-// `import magic;` or `namespace magic;`: a namespace name and where it is written.
+/// `import magic;` or `namespace magic;`: a namespace name and where it is written.
 pub const NamespaceName = struct {
     name: []const u8,
     line: usize,
@@ -22,12 +22,12 @@ pub const Global = struct {
     column: usize,
 };
 
-// `predicate isSneaking { json }`: a JSON file in the pack.
+/// `predicate isSneaking { json }`: a JSON file in the pack.
 pub const DataFile = struct {
     pub const Name = union(enum) {
-        // `isSneaking`: the file `is_sneaking`, and a constant with its id.
+        /// `isSneaking`: the file `is_sneaking`, and a constant with its id.
         identifier: []const u8,
-        // `"minecraft:entities/zombie"`: the resource id as written.
+        /// `"minecraft:entities/zombie"`: the resource id as written.
         id: []const u8,
     };
 
@@ -66,7 +66,7 @@ pub const Statement = struct {
     kind: Kind,
 };
 
-// The NBT number types of a number literal: `0.05f`, `1b`.
+/// The NBT number types of a number literal: `0.05f`, `1b`.
 pub const NumberType = enum {
     byte,
     short,
@@ -87,7 +87,7 @@ pub const NumberType = enum {
     }
 };
 
-// `0.05f`, `1b` or `0.05`: an SNBT number as written, so `0.05` stays exact. A null type is a plain decimal, a double.
+/// `0.05f`, `1b` or `0.05`: an SNBT number as written, so `0.05` stays exact. A null type is a plain decimal, a double.
 pub const TypedNumber = struct {
     text: []const u8,
     type: ?NumberType,
@@ -98,14 +98,14 @@ pub const TypedNumber = struct {
 };
 
 pub const Identifier = struct {
-    // `entity_data` is the NBT of an entity: `@s.$Health`. The name is the NBT path.
+    /// `entity_data` is the NBT of an entity: `@s.$Health`. The name is the NBT path.
     pub const Kind = enum { compile_time, score, data, entity_data };
 
     name: []const u8,
     kind: Kind,
-    // `magic` in `magic:heal()` or `#magic:mana`. Null means the namespace of the file.
+    /// `magic` in `magic:heal()` or `#magic:mana`. Null means the namespace of the file.
     namespace: ?[]const u8 = null,
-    // Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
+    /// Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
     selector: ?[]const u8 = null,
 };
 
@@ -148,7 +148,7 @@ pub const Command = struct {
     parts: []const CommandPart,
 };
 
-// `offset` is where the part starts in the command text.
+/// `offset` is where the part starts in the command text.
 pub const CommandPart = struct {
     pub const Content = union(enum) {
         text: []const u8,
@@ -159,7 +159,7 @@ pub const CommandPart = struct {
     content: Content,
 };
 
-// An expression and where it starts. An infix or a call starts at its left side.
+/// An expression and where it starts. An infix or a call starts at its left side.
 pub const Expression = struct {
     line: usize,
     column: usize,
@@ -177,16 +177,16 @@ pub const Expression = struct {
         call: Call,
         list: []const *Expression,
         compound: []const Entry,
-        // `@a` on its own, as a value: `actionBar(@a, "hi")`.
+        /// `@a` on its own, as a value: `actionBar(@a, "hi")`.
         selector: []const u8,
-        // `block ~ ~-1 ~ stone` in a condition: the text after `execute if`, with `{{...}}` inserts.
+        /// `block ~ ~-1 ~ stone` in a condition: the text after `execute if`, with `{{...}}` inserts.
         minecraft_check: []const CommandPart,
-        // `$(name)`: a macro argument of the mcfun, known when the call starts.
+        /// `$(name)`: a macro argument of the mcfun, known when the call starts.
         macro_key: []const u8,
     };
 };
 
-// One `key: value` of a compound literal.
+/// One `key: value` of a compound literal.
 pub const Entry = struct {
     key: []const u8,
     value: *Expression,
@@ -208,10 +208,10 @@ pub const Infix = struct {
 };
 
 pub const Call = struct {
-    // `f() with {name: "Steve"}`, `f() with $player` or `f() with entity @s`.
+    /// `f() with {name: "Steve"}`, `f() with $player` or `f() with entity @s`.
     pub const With = union(enum) {
         value: *Expression,
-        // `entity @s` or `block ~ ~ ~`, as it is written.
+        /// `entity @s` or `block ~ ~ ~`, as it is written.
         raw: []const u8,
     };
 

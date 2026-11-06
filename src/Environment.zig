@@ -11,7 +11,7 @@ pub const Value = union(enum) {
     null,
     list: []const Value,
     compound: []const Entry,
-    // A `#` or `$` variable declared in a function body. Its key in the environment has the sigil: `#i`.
+    /// A `#` or `$` variable declared in a function body. Its key in the environment has the sigil: `#i`.
     local: Local,
 
     pub const Entry = struct {
@@ -20,13 +20,13 @@ pub const Value = union(enum) {
     };
 };
 
-// A local is a global with a generated name: `#i_countdown` for a score, `i_countdown` in `<ns>:data` for data.
+/// A local is a global with a generated name: `#i_countdown` for a score, `i_countdown` in `<ns>:data` for data.
 pub const Local = struct {
     pub const Kind = enum { score, data };
 
     kind: Kind,
     generated_name: []const u8,
-    // The mcfun that the local belongs to.
+    /// The mcfun that the local belongs to.
     owner: []const u8,
 };
 
@@ -34,7 +34,7 @@ pub const AssignResult = enum { assigned, not_found, crosses_runtime_branch };
 
 store: std.StringHashMapUnmanaged(Value) = .empty,
 outer: ?*Environment = null,
-// True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
+/// True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
 runtime_branch: bool = false,
 
 pub fn get(self: *const Environment, name: []const u8) ?Value {
@@ -43,7 +43,7 @@ pub fn get(self: *const Environment, name: []const u8) ?Value {
     return null;
 }
 
-// Returns false if the name is already visible, so names cannot be shadowed.
+/// Returns false if the name is already visible, so names cannot be shadowed.
 pub fn declare(self: *Environment, arena: std.mem.Allocator, name: []const u8, value: Value) std.mem.Allocator.Error!bool {
     if (self.get(name) != null) return false;
 

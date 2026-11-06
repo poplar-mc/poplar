@@ -14,10 +14,10 @@ pub const out_dir_name = "poplar-out";
 pub const Mode = enum { write, check };
 
 pub const Summary = struct {
-    // `zipName`, the name of the pack.
+    /// `zipName`, the name of the pack.
     name: []const u8,
     function_count: usize,
-    // `poplar-out/<zipName>`, or null for `.check`.
+    /// `poplar-out/<zipName>`, or null for `.check`.
     pack_path: ?[]const u8 = null,
     zip_path: ?[]const u8 = null,
 
@@ -26,7 +26,7 @@ pub const Summary = struct {
     }
 };
 
-// The folder name that a source's display path starts with.
+/// The folder name that a source's display path starts with.
 fn originFolder(origin: Compiler.Origin) []const u8 {
     return switch (origin) {
         .project => "src",
@@ -34,13 +34,13 @@ fn originFolder(origin: Compiler.Origin) []const u8 {
     };
 }
 
-// A file to load. The path is relative to the folder of its origin.
+/// A file to load. The path is relative to the folder of its origin.
 const SourceFile = struct {
     origin: Compiler.Origin,
     path: []const u8,
 };
 
-// An error in the user's files. A line of 0 means that it has no position in a file.
+/// An error in the user's files. A line of 0 means that it has no position in a file.
 pub const Diagnostic = struct {
     path: []const u8,
     line: usize,
@@ -49,26 +49,26 @@ pub const Diagnostic = struct {
 };
 
 pub const Options = struct {
-    // The folder of the standard library, which `import std;` loads.
+    /// The folder of the standard library, which `import std;` loads.
     std_path: []const u8,
     mode: Mode,
-    // Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
+    /// Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
     overlay: ?*const std.StringHashMapUnmanaged([]const u8) = null,
-    // The language server loads the command tree one time and passes it in.
+    /// The language server loads the command tree one time and passes it in.
     command_tree: ?*const CommandTree = null,
 };
 
 pub const Result = struct {
-    // Null when there were errors.
+    /// Null when there were errors.
     summary: ?Summary = null,
     diagnostics: []const Diagnostic = &.{},
-    // Null when the compile stopped before the compiler ran (no project, or a bad poplar.json).
+    /// Null when the compile stopped before the compiler ran (no project, or a bad poplar.json).
     compiler: ?*Compiler = null,
-    // Display path (`src/main.poplar`, `std/math.poplar`) → absolute path, for every file that was read.
+    /// Display path (`src/main.poplar`, `std/math.poplar`) → absolute path, for every file that was read.
     files: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
 };
 
-// Compiles the project in `project_path`, and writes the pack in `.write` mode. Errors in the user's files are in the result, not printed.
+/// Compiles the project in `project_path`, and writes the pack in `.write` mode. Errors in the user's files are in the result, not printed.
 pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, options: Options) !Result {
     var diagnostics: std.ArrayList(Diagnostic) = .empty;
     const cwd = std.Io.Dir.cwd();
@@ -152,25 +152,25 @@ fn onlyDiagnostic(arena: std.mem.Allocator, path: []const u8, line: usize, colum
     return .{ .diagnostics = try arena.dupe(Diagnostic, &.{.{ .path = path, .line = line, .column = column, .message = message }}) };
 }
 
-// Where `zig build` installs the standard library: `lib/poplar/std` next to the `bin` folder of the binary.
+/// Where `zig build` installs the standard library: `lib/poplar/std` next to the `bin` folder of the binary.
 pub fn installedStdPath(arena: std.mem.Allocator, io: std.Io) ![]const u8 {
     const exe_dir = try std.process.executableDirPathAlloc(io, arena);
     return std.fs.path.join(arena, &.{ exe_dir, "..", "lib", "poplar", "std" });
 }
 
-// Parses every `.poplar` file in `src/`, and the standard library when a file imports `std`, and gives each
-// program to the compiler.
+/// Parses every `.poplar` file in `src/`, and the standard library when a file imports `std`, and gives each
+/// program to the compiler.
 const Loader = struct {
     arena: std.mem.Allocator,
     io: std.Io,
     src_dir: std.Io.Dir,
-    // The absolute path of `src_dir`.
+    /// The absolute path of `src_dir`.
     src_path: []const u8,
     std_path: []const u8,
     overlay: ?*const std.StringHashMapUnmanaged([]const u8),
     compiler: *Compiler,
     diagnostics: *std.ArrayList(Diagnostic),
-    // Opened when a file imports `std`, so projects without it do not need the folder.
+    /// Opened when a file imports `std`, so projects without it do not need the folder.
     std_dir: ?std.Io.Dir = null,
     std_real_path: []const u8 = "",
     files: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
@@ -179,7 +179,7 @@ const Loader = struct {
         if (loader.std_dir) |dir| dir.close(loader.io);
     }
 
-    // Returns false if there were errors.
+    /// Returns false if there were errors.
     fn load(loader: *Loader) !bool {
         const arena = loader.arena;
         var has_errors = false;
@@ -233,8 +233,8 @@ const Loader = struct {
         program: ast.Program,
     };
 
-    // Parses one file. Null if it has no `namespace` line. After another parse error the rest still loads,
-    // so the editor knows its names.
+    /// Parses one file. Null if it has no `namespace` line. After another parse error the rest still loads,
+    /// so the editor knows its names.
     fn parse(loader: *Loader, file: SourceFile, has_errors: *bool) !?LoadedProgram {
         const arena = loader.arena;
         const display_path = try std.fs.path.join(arena, &.{ originFolder(file.origin), file.path });
@@ -254,7 +254,7 @@ const Loader = struct {
         return .{ .origin = file.origin, .display_path = display_path, .program = program };
     }
 
-    // The text of a file: from the overlay when an editor has it open, else from the disk. Null if it does not exist.
+    /// The text of a file: from the overlay when an editor has it open, else from the disk. Null if it does not exist.
     fn read(loader: *Loader, file: SourceFile, display_path: []const u8) !?[]const u8 {
         const root_path = switch (file.origin) {
             .project => loader.src_path,
@@ -290,7 +290,7 @@ const Loader = struct {
     }
 };
 
-// Every `.poplar` file under `dir`, sorted, so the build does not depend on the order of the file system.
+/// Every `.poplar` file under `dir`, sorted, so the build does not depend on the order of the file system.
 fn sourceFiles(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, origin: Compiler.Origin) ![]const SourceFile {
     var iterable = try dir.openDir(io, ".", .{ .iterate = true });
     defer iterable.close(io);
@@ -312,7 +312,7 @@ fn lessThanPath(_: void, a: SourceFile, b: SourceFile) bool {
     return std.mem.lessThan(u8, a.path, b.path);
 }
 
-// Writes the files of a new project into `dir`. It never overwrites a file.
+/// Writes the files of a new project into `dir`. It never overwrites a file.
 pub fn writeNewProject(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, name: []const u8) !void {
     const namespace = try namespaceFromName(arena, name);
 
@@ -347,7 +347,7 @@ fn writeNewFile(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8)
     try file.writeStreamingAll(io, data);
 }
 
-// `My Pack` → `my_pack`. A namespace may only use a-z, 0-9, `_`, `.` and `-`.
+/// `My Pack` → `my_pack`. A namespace may only use a-z, 0-9, `_`, `.` and `-`.
 fn namespaceFromName(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
     const namespace = try arena.alloc(u8, name.len);
     for (name, namespace) |ch, *out| {
@@ -430,7 +430,7 @@ test "only the std mcfuns that the project calls are written, under std/" {
     try std.testing.expectEqualDeep(&[_][]const u8{ "main", "std/double", "std/fromCommand", "std/twice" }, names.items);
 }
 
-// Loads the files of `src_dir`, as `compile` does.
+/// Loads the files of `src_dir`, as `compile` does.
 fn loadForTest(arena: std.mem.Allocator, io: std.Io, src_dir: std.Io.Dir, std_path: []const u8, compiler: *Compiler) !bool {
     var diagnostics: std.ArrayList(Diagnostic) = .empty;
     var loader: Loader = .{

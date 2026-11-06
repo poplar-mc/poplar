@@ -1,4 +1,5 @@
-// Build-time values: evaluating constant expressions, and writing values as text or SNBT.
+//! Build-time values: evaluating constant expressions, and writing values as text or SNBT.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -31,7 +32,7 @@ pub fn containsRuntimeValue(compiler: *const Compiler, expression: *const ast.Ex
     };
 }
 
-// `text(x)` and `len(x)` on a compile-time value are known when the pack is built.
+/// `text(x)` and `len(x)` on a compile-time value are known when the pack is built.
 fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler.CompileError!?Compiler.Value {
     if (call.callee.kind != .identifier) {
         try compiler.addError("only named functions can be called", .{});
@@ -219,7 +220,7 @@ fn checkedNumber(compiler: *Compiler, result: error{ Overflow, DivisionByZero }!
     return .{ .number = number };
 }
 
-// Same result as Java's Math.floorMod, which Minecraft uses for `%=`.
+/// Same result as Java's Math.floorMod, which Minecraft uses for `%=`.
 fn floorMod(a: i64, b: i64) error{DivisionByZero}!i64 {
     if (b == 0) return error.DivisionByZero;
     if (b == -1) return 0;
@@ -282,13 +283,13 @@ pub fn valueToText(compiler: *Compiler, value: Compiler.Value) Compiler.CompileE
     };
 }
 
-// `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is a double.
+/// `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is a double.
 fn typedNumberSnbt(compiler: *Compiler, number: ast.TypedNumber) Compiler.CompileError![]const u8 {
     const suffix = if (number.type) |number_type| number_type.suffix() else "";
     return std.mem.concat(compiler.arena, u8, &.{ number.text, suffix });
 }
 
-// A key is written as it is when it is a plain name, else in quotes.
+/// A key is written as it is when it is a plain name, else in quotes.
 pub fn snbtKey(compiler: *Compiler, key: []const u8) Compiler.CompileError![]const u8 {
     for (key) |ch| {
         if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-' and ch != '.' and ch != '+') return valueToSnbt(compiler, .{ .string = key });

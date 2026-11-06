@@ -5,7 +5,7 @@ const CommandTree = @This();
 const commands_json = @embedFile("commands.json");
 const registries_json = @embedFile("registries.json");
 
-// The ids of each registry, without `minecraft:`: `mob_effect` → `absorption`, `bad_omen`, ...
+/// The ids of each registry, without `minecraft:`: `mob_effect` → `absorption`, `bad_omen`, ...
 pub const Registries = std.json.ArrayHashMap([]const []const u8);
 
 pub const Node = struct {
@@ -42,22 +42,22 @@ pub fn load(arena: std.mem.Allocator) !CommandTree {
 
 pub const Checked = struct {
     failure: ?Failure = null,
-    // Each id in an id position (after a `#`), such as `self:heal` in `function self:heal` or `magic:undead`
-    // in `@e[type=#magic:undead]`. Text arguments, such as the message of `say`, have none.
+    /// Each id in an id position (after a `#`), such as `self:heal` in `function self:heal` or `magic:undead`
+    /// in `@e[type=#magic:undead]`. Text arguments, such as the message of `say`, have none.
     ids: []const Id = &.{},
 };
 
 pub const Id = struct {
     at: usize,
-    // True where the id names a function or a data file (`function`, `predicate`, a tag). False for other ids,
-    // such as a storage or a bossbar, which are not declared in Poplar.
+    /// True where the id names a function or a data file (`function`, `predicate`, a tag). False for other ids,
+    /// such as a storage or a bossbar, which are not declared in Poplar.
     names_declaration: bool,
-    // True where a bare name can only be a mistake for a pack's own name: a function or a data file. False where the
-    // compiler knows the vanilla ids, so `speed` in `effect give @s speed` is the effect, even with an `mcfun speed`.
+    /// True where a bare name can only be a mistake for a pack's own name: a function or a data file. False where the
+    /// compiler knows the vanilla ids, so `speed` in `effect give @s speed` is the effect, even with an `mcfun speed`.
     can_be_pack_name: bool,
 };
 
-// `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
+/// `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
 pub fn checkText(self: *const CommandTree, arena: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
     var walk: Walk = .{ .arena = arena, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
     if (try walk.matchChildren(&self.root, 0)) return .{ .ids = walk.ids.items };
@@ -71,9 +71,9 @@ const Walk = struct {
         at: usize,
         expected: []const u8,
         out_of_range: bool = false,
-        // A finished message, for a problem inside an argument.
+        /// A finished message, for a problem inside an argument.
         message: ?[]const u8 = null,
-        // The registry when the id is not in it.
+        /// The registry when the id is not in it.
         unknown_in: ?[]const u8 = null,
 
         fn describe(problem: Problem, arena: std.mem.Allocator, text: []const u8, registries: *const Registries) std.mem.Allocator.Error![]const u8 {
@@ -96,7 +96,7 @@ const Walk = struct {
     text: []const u8,
     poplar_namespaces: []const []const u8,
     furthest: ?Problem = null,
-    // Only filled on the path that matches, because each argument adds its ids after the rest matched.
+    /// Only filled on the path that matches, because each argument adds its ids after the rest matched.
     ids: std.ArrayList(Id) = .empty,
 
     fn matchChildren(walk: *Walk, node: *const Node, pos: usize) std.mem.Allocator.Error!bool {
@@ -145,7 +145,7 @@ const Walk = struct {
         return walk.matchChildren(next, end + 1);
     }
 
-    // `self:heal` or `#magic:swords` in an id argument, and `type=#magic:undead` in a selector.
+    /// `self:heal` or `#magic:swords` in an id argument, and `type=#magic:undead` in a selector.
     fn addIdStarts(walk: *Walk, parser: []const u8, properties: Properties, start: usize, end: usize) std.mem.Allocator.Error!void {
         const word = walk.text[start..end];
         if (isIdParser(parser, properties)) {
@@ -175,7 +175,7 @@ const Walk = struct {
         try walk.ids.append(walk.arena, .{ .at = at, .names_declaration = names_declaration, .can_be_pack_name = can_be_pack_name });
     }
 
-    // `execute ... run` has no children, no redirect and is not executable. It continues from the root.
+    /// `execute ... run` has no children, no redirect and is not executable. It continues from the root.
     fn continuation(walk: *Walk, node: *const Node) ?*const Node {
         if (node.redirect) |path| {
             var target = walk.root;
@@ -243,7 +243,7 @@ const Walk = struct {
         return null;
     }
 
-    // Only vanilla ids are checked: a tag, `*`, or an id in another namespace (the pack's own) passes.
+    /// Only vanilla ids are checked: a tag, `*`, or an id in another namespace (the pack's own) passes.
     fn isUnknownId(walk: *const Walk, registry: []const u8, word: []const u8) bool {
         const id = registryId(word) orelse return false;
         const ids = walk.registries.map.get(registry) orelse return false;
@@ -277,7 +277,7 @@ const Walk = struct {
     }
 };
 
-// Reads to the next space that is outside quotes and brackets.
+/// Reads to the next space that is outside quotes and brackets.
 fn readBalanced(text: []const u8, start: usize) usize {
     var pos = start;
     var depth: usize = 0;
@@ -313,7 +313,7 @@ fn parseNumber(parser: []const u8, word: []const u8) ?f64 {
     return @floatFromInt(int);
 }
 
-// The registry that an argument names: `minecraft:resource` with `registry: minecraft:mob_effect` → `mob_effect`.
+/// The registry that an argument names: `minecraft:resource` with `registry: minecraft:mob_effect` → `mob_effect`.
 fn registryOf(parser: []const u8, properties: Properties) ?[]const u8 {
     if (eql(parser, "minecraft:item_stack") or eql(parser, "minecraft:item_predicate")) return "item";
     if (eql(parser, "minecraft:block_state") or eql(parser, "minecraft:block_predicate")) return "block";
@@ -327,7 +327,7 @@ fn registryOf(parser: []const u8, properties: Properties) ?[]const u8 {
     return null;
 }
 
-// `minecraft:stone[lit=true]` → `stone`. Null for a tag, `*`, or another namespace (the pack's own).
+/// `minecraft:stone[lit=true]` → `stone`. Null for a tag, `*`, or another namespace (the pack's own).
 fn registryId(word: []const u8) ?[]const u8 {
     if (word.len == 0 or word[0] == '#' or word[0] == '*') return null;
     const end = std.mem.indexOfAny(u8, word, "[{") orelse word.len;
@@ -337,7 +337,7 @@ fn registryId(word: []const u8) ?[]const u8 {
     return id[separator + 1 ..];
 }
 
-// The id with the smallest edit distance, if it is 3 or less.
+/// The id with the smallest edit distance, if it is 3 or less.
 pub fn closestId(ids: []const []const u8, id: []const u8) ?[]const u8 {
     var best: ?[]const u8 = null;
     var best_distance: usize = 4;
@@ -351,7 +351,7 @@ pub fn closestId(ids: []const []const u8, id: []const u8) ?[]const u8 {
     return best;
 }
 
-// Levenshtein distance. Null for words longer than 64 characters.
+/// Levenshtein distance. Null for words longer than 64 characters.
 fn editDistance(a: []const u8, b: []const u8) ?usize {
     if (a.len > 64 or b.len > 64) return null;
     var previous: [65]usize = undefined;
@@ -368,7 +368,7 @@ fn editDistance(a: []const u8, b: []const u8) ?usize {
     return previous[b.len];
 }
 
-// Minecraft checks a macro argument when the macro runs, so any argument kind accepts it here.
+/// Minecraft checks a macro argument when the macro runs, so any argument kind accepts it here.
 fn isMacroWord(word: []const u8) bool {
     return std.mem.indexOf(u8, word, "$(") != null;
 }
@@ -385,14 +385,14 @@ fn isCoordinate(word: []const u8) bool {
     return true;
 }
 
-// The options of a selector, as the game knows them.
+/// The options of a selector, as the game knows them.
 const selector_options = [_][]const u8{ "advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit", "name", "nbt", "predicate", "scores", "sort", "tag", "team", "type", "x", "x_rotation", "y", "y_rotation", "z" };
 
 pub fn checkSelector(self: *const CommandTree, arena: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
     return selectorFailure(arena, &self.registries, selector);
 }
 
-// What the game rejects inside `@e[...]`, where it would refuse the whole function. `at` is an offset in `selector`.
+/// What the game rejects inside `@e[...]`, where it would refuse the whole function. `at` is an offset in `selector`.
 fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, selector: []const u8) std.mem.Allocator.Error!?Failure {
     if (selector.len < 4 or selector[0] != '@' or selector[2] != '[') return null;
     const close = selector.len - 1;
@@ -436,7 +436,7 @@ fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, sele
     return null;
 }
 
-// The `,` or closing `]` that ends the option at `start`, outside quotes and brackets.
+/// The `,` or closing `]` that ends the option at `start`, outside quotes and brackets.
 fn optionEnd(selector: []const u8, start: usize, close: usize) usize {
     var depth: usize = 0;
     var quote: ?u8 = null;

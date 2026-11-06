@@ -1,6 +1,7 @@
-// The data file types: the word in `predicate isSneaking { ... }` → the folder in `data/<ns>/`.
-// The data folders of mcmeta 26.3, in camelCase, without `worldgen/`. `item_modifier` is not in mcmeta,
-// because vanilla has none. Tags (`itemTag`) are found from the registries.
+//! The data file types: the word in `predicate isSneaking { ... }` → the folder in `data/<ns>/`.
+//! The data folders of mcmeta 26.3, in camelCase, without `worldgen/`. `item_modifier` is not in mcmeta,
+//! because vanilla has none. Tags (`itemTag`) are found from the registries.
+
 const std = @import("std");
 
 pub const folders = std.StaticStringMap([]const u8).initComptime(.{
@@ -65,8 +66,8 @@ pub const folders = std.StaticStringMap([]const u8).initComptime(.{
     .{ "worldPreset", "worldgen/world_preset" },
 });
 
-// `itemTag` → `tags/item`, `biomeTag` → `tags/worldgen/biome`, `functionTag` → `tags/function`.
-// A registry in `worldgen/` comes first, so `structureTag` is the worldgen structure.
+/// `itemTag` → `tags/item`, `biomeTag` → `tags/worldgen/biome`, `functionTag` → `tags/function`.
+/// A registry in `worldgen/` comes first, so `structureTag` is the worldgen structure.
 pub fn tagFolder(arena: std.mem.Allocator, word: []const u8, registries: *const std.array_hash_map.String([]const []const u8)) std.mem.Allocator.Error!?[]const u8 {
     if (!std.mem.endsWith(u8, word, "Tag") or word.len == "Tag".len) return null;
     const registry = try snakeCase(arena, word[0 .. word.len - "Tag".len]);

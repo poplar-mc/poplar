@@ -45,15 +45,15 @@ fn showHelpOrVersion(ctx: zli.CommandContext) !void {
     try ctx.writer.print("poplar {s} (Minecraft {s})\n", .{ build_options.version, try Config.minecraftVersion(arena.allocator()) });
 }
 
-// Exits with code 1 after a command printed its own error messages.
+/// Exits with code 1 after a command printed its own error messages.
 pub fn fail(ctx: zli.CommandContext) noreturn {
     ctx.writer.flush() catch {};
     std.process.exit(1);
 }
 
-// What `main` passes to every command.
+/// What `main` passes to every command.
 pub const Shared = struct {
-    // The folder of the standard library, which `import std;` loads.
+    /// The folder of the standard library, which `import std;` loads.
     std_path: []const u8,
     color: bool,
     environ_map: *const std.process.Environ.Map,
@@ -75,12 +75,12 @@ pub fn output(ctx: zli.CommandContext) Output {
     return .{ .writer = ctx.writer, .color = shared(ctx).color };
 }
 
-// `1 ms`, for the time a build takes.
+/// `1 ms`, for the time a build takes.
 pub fn elapsedMilliseconds(ctx: zli.CommandContext, started: std.Io.Timestamp) i64 {
     return started.untilNow(ctx.io, .awake).toMilliseconds();
 }
 
-// The project folder: the optional `dir` argument, or the current folder.
+/// The project folder: the optional `dir` argument, or the current folder.
 pub fn projectPath(ctx: zli.CommandContext) []const u8 {
     return ctx.getArg("dir") orelse ".";
 }

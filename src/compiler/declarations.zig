@@ -1,4 +1,5 @@
-// Names and namespaces: registering mcfuns, globals and data files, and finding what a name refers to.
+//! Names and namespaces: registering mcfuns, globals and data files, and finding what a name refers to.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -13,31 +14,31 @@ const data = @import("data.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
-// `combat:heal`: how declarations are keyed in the compiler.
+/// `combat:heal`: how declarations are keyed in the compiler.
 pub fn qualifiedKey(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
     return std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ namespace, name });
 }
 
-// Where the files of a namespace go. Null is the pack namespace, which std is written into.
+/// Where the files of a namespace go. Null is the pack namespace, which std is written into.
 pub fn outputNamespace(compiler: *const Compiler, namespace: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, namespace, Compiler.std_namespace) or std.mem.eql(u8, namespace, compiler.pack_namespace)) return null;
     return namespace;
 }
 
-// The path of an mcfun in its output namespace: `heal`, and `std/clamp` for std, which shares the pack namespace.
+/// The path of an mcfun in its output namespace: `heal`, and `std/clamp` for std, which shares the pack namespace.
 pub fn outputPath(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
     if (!std.mem.eql(u8, namespace, Compiler.std_namespace)) return name;
     return std.fmt.allocPrint(compiler.arena, "std/{s}", .{name});
 }
 
-// The IR name of an mcfun: `combat:heal`, `heal` in the pack namespace, `std/clamp` for std.
+/// The IR name of an mcfun: `combat:heal`, `heal` in the pack namespace, `std/clamp` for std.
 pub fn functionName(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
     const path = try outputPath(compiler, namespace, name);
     const output = outputNamespace(compiler, namespace) orelse return path;
     return std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ output, path });
 }
 
-// The namespace that a name refers to: its own `magic:`, which the file must import, or the current one.
+/// The namespace that a name refers to: its own `magic:`, which the file must import, or the current one.
 pub fn resolveNamespace(compiler: *Compiler, namespace: ?[]const u8) Compiler.CompileError!?[]const u8 {
     const name = namespace orelse return compiler.scope.namespace;
     if (std.mem.eql(u8, name, compiler.scope.namespace) or isImported(compiler, name)) return name;
@@ -129,7 +130,7 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
 
 pub const JsonPosition = struct { line: usize, column: usize };
 
-// Where the JSON body stops being valid, as a line and column in the source file.
+/// Where the JSON body stops being valid, as a line and column in the source file.
 fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?JsonPosition {
     var scanner: std.json.Scanner = .initCompleteInput(compiler.arena, data_file.json);
     defer scanner.deinit();
@@ -159,8 +160,8 @@ pub const Suggestion = struct {
     }
 };
 
-// A name that the project and std both define is reported in the project file, where it can be renamed.
-// Otherwise the later definition is reported.
+/// A name that the project and std both define is reported in the project file, where it can be renamed.
+/// Otherwise the later definition is reported.
 pub fn addDuplicateError(compiler: *Compiler, existing: Compiler.McfunDeclaration, later: Compiler.McfunDeclaration) Compiler.CompileError!void {
     const project_side, const other = if (existing.origin != .std and later.origin == .std) .{ existing, later } else .{ later, existing };
     compiler.position.path = project_side.path;
@@ -226,12 +227,12 @@ fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!v
 }
 
 pub const FoundMcfun = struct {
-    // `combat:heal`, the key in `mcfuns` and `mcfun_calls`.
+    /// `combat:heal`, the key in `mcfuns` and `mcfun_calls`.
     key: []const u8,
     declaration: Compiler.McfunDeclaration,
 };
 
-// `heal` in this namespace or `magic:heal` in an imported one. Null after an error.
+/// `heal` in this namespace or `magic:heal` in an imported one. Null after an error.
 pub fn findMcfun(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!?FoundMcfun {
     const namespace = try resolveNamespace(compiler, identifier.namespace) orelse return null;
     const mcfun_key = try qualifiedKey(compiler, namespace, identifier.name);
@@ -242,7 +243,7 @@ pub fn findMcfun(compiler: *Compiler, identifier: ast.Identifier) Compiler.Compi
     return .{ .key = mcfun_key, .declaration = declaration };
 }
 
-// The namespaces other than the pack namespace that have mcfuns: each one gets its own `poplar.<ns>` objective for temps and locals.
+/// The namespaces other than the pack namespace that have mcfuns: each one gets its own `poplar.<ns>` objective for temps and locals.
 pub fn outputNamespaces(compiler: *Compiler) Compiler.CompileError![]const []const u8 {
     var namespaces: std.StringArrayHashMapUnmanaged(void) = .empty;
     for (compiler.mcfuns.values()) |declaration| {

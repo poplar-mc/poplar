@@ -5,10 +5,10 @@ const Allocator = std.mem.Allocator;
 
 const manifest_url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const eula_url = "https://aka.ms/MinecraftEULA";
-// The harness says this after each test, so it knows where the output of the test ends.
+/// The harness says this after each test, so it knows where the output of the test ends.
 const end_marker = "poplar-e2e-end";
 
-// A flat world needs its layers in `generator-settings`, or the server logs an error.
+/// A flat world needs its layers in `generator-settings`, or the server logs an error.
 const server_properties =
     \\level-type=minecraft\:flat
     \\generator-settings={"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":3}],"biome":"minecraft:plains"}
@@ -79,7 +79,7 @@ pub fn main(init: std.process.Init) !void {
     std.process.exit(@intCast(@min(failed, 255)));
 }
 
-// Returns the number of failed tests.
+/// Returns the number of failed tests.
 fn run(arena: Allocator, io: Io, options: Options) !usize {
     const cwd = Io.Dir.cwd();
 
@@ -124,7 +124,7 @@ fn run(arena: Allocator, io: Io, options: Options) !usize {
     return failed;
 }
 
-// The version JSON is kept in the cache, so a run with the jar already there needs no network.
+/// The version JSON is kept in the cache, so a run with the jar already there needs no network.
 fn loadVersionInfo(arena: Allocator, io: Io, cache_dir: Io.Dir, version_id: []const u8) !VersionInfo {
     const cache_name = try std.fmt.allocPrint(arena, "{s}.json", .{version_id});
 
@@ -201,7 +201,7 @@ fn checkJava(arena: Allocator, io: Io, version_id: []const u8, required: u32) !v
     }
 }
 
-// Builds each folder in the tests folder with poplar, and copies its datapack into the world.
+/// Builds each folder in the tests folder with poplar, and copies its datapack into the world.
 fn buildTestProjects(arena: Allocator, io: Io, options: Options, server_dir: Io.Dir, failed: *usize) ![]const TestProject {
     var tests_dir = try Io.Dir.cwd().openDir(io, options.tests_path, .{ .iterate = true });
     defer tests_dir.close(io);
@@ -241,7 +241,7 @@ fn buildTestProjects(arena: Allocator, io: Io, options: Options, server_dir: Io.
     return projects.items;
 }
 
-// A copy, not a symlink: Minecraft rejects datapacks that are symlinks.
+/// A copy, not a symlink: Minecraft rejects datapacks that are symlinks.
 fn copyTree(arena: Allocator, io: Io, source_dir: Io.Dir, source_path: []const u8, dest_dir: Io.Dir, dest_path: []const u8) !void {
     var source = try source_dir.openDir(io, source_path, .{ .iterate = true });
     defer source.close(io);
@@ -259,7 +259,7 @@ fn copyTree(arena: Allocator, io: Io, source_dir: Io.Dir, source_path: []const u
     }
 }
 
-// Starts the server, runs `function <name>:test` for each project, and compares the `[Server]` messages.
+/// Starts the server, runs `function <name>:test` for each project, and compares the `[Server]` messages.
 fn runServer(arena: Allocator, io: Io, server_path: []const u8, jar_path: []const u8, projects: []const TestProject) !usize {
     std.debug.print("starting the Minecraft server\n", .{});
     var child = try std.process.spawn(io, .{
@@ -336,7 +336,7 @@ fn runServer(arena: Allocator, io: Io, server_path: []const u8, jar_path: []cons
     return failed;
 }
 
-// `[12:00:00] [Server thread/INFO]: [Not Secure] [Server] hello` → `hello`. `[Not Secure] ` is not always there.
+/// `[12:00:00] [Server thread/INFO]: [Not Secure] [Server] hello` → `hello`. `[Not Secure] ` is not always there.
 fn serverMessage(line: []const u8) ?[]const u8 {
     const log_prefix = "]: ";
     const message_start = (std.mem.indexOf(u8, line, log_prefix) orelse return null) + log_prefix.len;

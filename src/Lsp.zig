@@ -13,7 +13,7 @@ const Token = @import("Token.zig");
 
 const Lsp = @This();
 
-// The last compile of one project. Hover, definition and completion read it.
+/// The last compile of one project. Hover, definition and completion read it.
 const Analysis = struct {
     arena: std.heap.ArenaAllocator,
     project_root: []const u8,
@@ -73,9 +73,9 @@ io: std.Io,
 transport: *lsp.Transport,
 std_path: []const u8,
 offset_encoding: lsp.offsets.Encoding = .@"utf-16",
-// URI → the text in the editor, which can be unsaved.
+/// URI → the text in the editor, which can be unsaved.
 documents: std.StringHashMapUnmanaged([]u8) = .empty,
-// URI → the project root, for each file that has diagnostics in the editor now.
+/// URI → the project root, for each file that has diagnostics in the editor now.
 published: std.StringHashMapUnmanaged([]const u8) = .empty,
 command_tree_arena: std.heap.ArenaAllocator,
 command_tree: ?CommandTree = null,
@@ -151,7 +151,7 @@ pub fn shutdown(_: *Lsp, _: std.mem.Allocator, _: void) ?void {
     return null;
 }
 
-// `lsp.basic_server.run` returns after this message, but only if the Handler has this function.
+/// `lsp.basic_server.run` returns after this message, but only if the Handler has this function.
 pub fn exit(_: *Lsp, _: std.mem.Allocator, _: void) void {}
 
 pub fn @"textDocument/didOpen"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidOpenParams) !void {
@@ -288,17 +288,17 @@ pub fn @"textDocument/completion"(self: *Lsp, arena: std.mem.Allocator, params: 
     return .{ .completion_items = items.items };
 }
 
-// A name of this namespace without its `ns:`, any other with it: `heal`, `magic:fireball`.
+/// A name of this namespace without its `ns:`, any other with it: `heal`, `magic:fireball`.
 fn completionLabel(key: []const u8, own_prefix: []const u8) []const u8 {
     return if (std.mem.startsWith(u8, key, own_prefix)) key[own_prefix.len..] else key;
 }
 
-// The server sends no requests, so no response is expected.
+/// The server sends no requests, so no response is expected.
 pub fn onResponse(_: *Lsp, _: std.mem.Allocator, response: lsp.JsonRPCMessage.Response) void {
     std.log.warn("unexpected response from the editor: {?}", .{response.id});
 }
 
-// Compiles the project of `uri` with the open documents and shows its errors in the editor.
+/// Compiles the project of `uri` with the open documents and shows its errors in the editor.
 fn check(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !void {
     const analysis = try self.analyze(arena, uri) orelse return;
 
@@ -356,7 +356,7 @@ fn publish(self: *Lsp, arena: std.mem.Allocator, uri: []const u8, diagnostics: [
     );
 }
 
-// The last analysis if it has the file of `uri`, else a new one.
+/// The last analysis if it has the file of `uri`, else a new one.
 fn analysisFor(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     const path = try uriToPath(arena, uri) orelse return null;
     if (self.analysis) |analysis| {
@@ -365,7 +365,7 @@ fn analysisFor(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysi
     return self.analyze(arena, uri);
 }
 
-// Compiles the project that has the file of `uri`. Null if the file is in no project.
+/// Compiles the project that has the file of `uri`. Null if the file is in no project.
 fn analyze(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     const path = try uriToPath(arena, uri) orelse return null;
     const project_root = if (self.analysis != null and self.analysis.?.contains(path))
@@ -401,7 +401,7 @@ fn analyze(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     return analysis;
 }
 
-// The nearest folder with `poplar.json`, or else the folder that holds the `src/` that the file is in.
+/// The nearest folder with `poplar.json`, or else the folder that holds the `src/` that the file is in.
 fn findProjectRoot(self: *Lsp, arena: std.mem.Allocator, file_path: []const u8) !?[]const u8 {
     var above_src: ?[]const u8 = null;
     var directory = std.fs.path.dirname(file_path);
@@ -413,7 +413,7 @@ fn findProjectRoot(self: *Lsp, arena: std.mem.Allocator, file_path: []const u8) 
     return above_src;
 }
 
-// The text of a file: from the editor when it is open, else from the disk.
+/// The text of a file: from the editor when it is open, else from the disk.
 fn textOf(self: *Lsp, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (self.documents.get(try pathToUri(arena, path))) |text| return text;
     return std.Io.Dir.cwd().readFileAlloc(self.io, path, arena, .unlimited) catch "";
@@ -421,13 +421,13 @@ fn textOf(self: *Lsp, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
 
 const Word = struct {
     kind: enum { name, score, data, entity_data },
-    // Without the sigil. A data path goes up to the end of the part under the cursor: `stats.maxHp`.
+    /// Without the sigil. A data path goes up to the end of the part under the cursor: `stats.maxHp`.
     text: []const u8,
-    // `magic` in `magic:heal` or `#magic:mana`.
+    /// `magic` in `magic:heal` or `#magic:mana`.
     namespace: ?[]const u8 = null,
 };
 
-// The name under the cursor, with its sigil: `#hp`, `$stats.maxHp`, `@s.$Health` or `clamp`.
+/// The name under the cursor, with its sigil: `#hp`, `$stats.maxHp`, `@s.$Health` or `clamp`.
 fn wordAt(text: []const u8, index: usize) ?Word {
     var start = @min(index, text.len);
     var end = start;
@@ -447,7 +447,7 @@ fn wordAt(text: []const u8, index: usize) ?Word {
     return .{ .kind = .name, .text = text[start..end], .namespace = namespace };
 }
 
-// `magic:` right before `start`: the namespace, and where it starts. Otherwise null and `start`.
+/// `magic:` right before `start`: the namespace, and where it starts. Otherwise null and `start`.
 fn namespaceBefore(text: []const u8, start: usize) struct { ?[]const u8, usize } {
     if (start == 0 or text[start - 1] != ':') return .{ null, start };
     var namespace_start = start - 1;
@@ -456,7 +456,7 @@ fn namespaceBefore(text: []const u8, start: usize) struct { ?[]const u8, usize }
     return .{ text[namespace_start .. start - 1], namespace_start };
 }
 
-// `combat:heal`: how the compiler keys the declaration that `word` names, from the namespace of its file.
+/// `combat:heal`: how the compiler keys the declaration that `word` names, from the namespace of its file.
 fn wordKey(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, word: Word, name: []const u8) ![]const u8 {
     const namespace = word.namespace orelse compiler.file_namespaces.get(place.path) orelse compiler.pack_namespace;
     return std.fmt.allocPrint(arena, "{s}:{s}", .{ namespace, name });
@@ -470,7 +470,7 @@ fn isPathChar(char: u8) bool {
     return isNameChar(char) or char == '.' or char == '[' or char == ']' or char == '-';
 }
 
-// The cursor in the compiler's terms: a display path such as `src/main.poplar`, and a line that starts at 1.
+/// The cursor in the compiler's terms: a display path such as `src/main.poplar`, and a line that starts at 1.
 const Place = struct {
     path: []const u8,
     line: usize,
@@ -481,7 +481,7 @@ fn placeOf(arena: std.mem.Allocator, analysis: *const Analysis, uri: []const u8,
     return .{ .path = analysis.displayPath(path) orelse "", .line = position.line + 1 };
 }
 
-// The function that contains `place`: the last one that starts above it in the same file.
+/// The function that contains `place`: the last one that starts above it in the same file.
 fn enclosingMcfun(compiler: *const Compiler, place: Place) ?[]const u8 {
     var nearest: ?*const ast.Mcfun = null;
     for (compiler.mcfuns.values()) |declaration| {
@@ -491,7 +491,7 @@ fn enclosingMcfun(compiler: *const Compiler, place: Place) ?[]const u8 {
     return if (nearest) |mcfun| mcfun.name else null;
 }
 
-// The local `name` that is visible at `place`: the nearest one declared above it in the same function.
+/// The local `name` that is visible at `place`: the nearest one declared above it in the same function.
 fn findLocal(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, kind: Environment.Local.Kind, name: []const u8) !?Compiler.LocalVariable {
     var found: ?Compiler.LocalVariable = null;
     for (try visibleLocals(arena, compiler, place, kind)) |local| {
@@ -501,7 +501,7 @@ fn findLocal(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, 
     return found;
 }
 
-// The locals of the function at `place` that are declared above it. Block scope is not checked.
+/// The locals of the function at `place` that are declared above it. Block scope is not checked.
 fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, kind: Environment.Local.Kind) ![]const Compiler.LocalVariable {
     const owner = enclosingMcfun(compiler, place) orelse return &.{};
     var visible: std.ArrayList(Compiler.LocalVariable) = .empty;
@@ -513,7 +513,7 @@ fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Pla
     return visible.items;
 }
 
-// The hover text for a word, in Markdown.
+/// The hover text for a word, in Markdown.
 fn describe(self: *Lsp, arena: std.mem.Allocator, analysis: *Analysis, word: Word, place: Place) !?[]const u8 {
     if (word.kind == .entity_data) {
         return try std.fmt.allocPrint(arena, "Entity NBT `{s}`. The compiler does not check the path.", .{word.text});
@@ -554,7 +554,7 @@ fn describe(self: *Lsp, arena: std.mem.Allocator, analysis: *Analysis, word: Wor
     }
 }
 
-// `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
+/// `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
 fn signature(arena: std.mem.Allocator, mcfun: *const ast.Mcfun) ![]const u8 {
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
     try Compiler.collectMacroKeys(arena, mcfun.body, &keys);
@@ -562,7 +562,7 @@ fn signature(arena: std.mem.Allocator, mcfun: *const ast.Mcfun) ![]const u8 {
     return std.fmt.allocPrint(arena, "mcfun {s}() with {{{s}}}", .{ mcfun.name, try std.mem.join(arena, ", ", keys.keys()) });
 }
 
-// The `//` lines right above line `line` (1-based), without the slashes.
+/// The `//` lines right above line `line` (1-based), without the slashes.
 fn docComment(arena: std.mem.Allocator, source: []const u8, line: usize) ![]const u8 {
     var lines: std.ArrayList([]const u8) = .empty;
     var all_lines = std.mem.splitScalar(u8, source, '\n');
@@ -579,8 +579,8 @@ fn docComment(arena: std.mem.Allocator, source: []const u8, line: usize) ![]cons
     return std.mem.join(arena, "\n", lines.items);
 }
 
-// Poplar lines and columns start at 1 and count bytes. The range ends at the end of the word at the start,
-// or covers the line when there is no column.
+/// Poplar lines and columns start at 1 and count bytes. The range ends at the end of the word at the start,
+/// or covers the line when there is no column.
 fn diagnosticRange(text: []const u8, line: usize, column: ?usize, encoding: lsp.offsets.Encoding) lsp.types.Range {
     if (line == 0) return .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
 
@@ -686,7 +686,7 @@ test "converts Windows paths to URIs and back" {
     try std.testing.expectEqualStrings("/home/me/a b.poplar", (try uriToPath(arena.allocator(), "file:///home/me/a%20b.poplar")).?);
 }
 
-// Collects the messages that the server writes, instead of stdout.
+/// Collects the messages that the server writes, instead of stdout.
 const TestTransport = struct {
     transport: lsp.Transport = .{ .vtable = &.{ .readJsonMessage = readJsonMessage, .writeJsonMessage = writeJsonMessage } },
     written: std.Io.Writer.Allocating,

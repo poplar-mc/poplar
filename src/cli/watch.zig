@@ -23,17 +23,17 @@ pub fn register(init_options: zli.InitOptions) !*zli.Command {
     return command;
 }
 
-// `--world`: after each build, the pack is copied into `<world>/datapacks/`. Minecraft does not follow
-// symbolic links unless they are allowed in `allowed_symlinks.txt`, so it is a copy.
+/// `--world`: after each build, the pack is copied into `<world>/datapacks/`. Minecraft does not follow
+/// symbolic links unless they are allowed in `allowed_symlinks.txt`, so it is a copy.
 const WorldCopy = struct {
-    // The copy has this file, so `watch` only replaces a folder that it made itself.
+    /// The copy has this file, so `watch` only replaces a folder that it made itself.
     const marker_name = ".poplar-watch";
 
     datapacks_path: []const u8,
-    // Where the world came from, such as ` (POPLAR_WORLD from .env)`, or empty for `--world`.
+    /// Where the world came from, such as ` (POPLAR_WORLD from .env)`, or empty for `--world`.
     source: []const u8,
     copied_before: bool = false,
-    // Set after an error, so that it is printed one time.
+    /// Set after an error, so that it is printed one time.
     failed: bool = false,
 
     fn update(copy: *WorldCopy, ctx: zli.CommandContext, arena: std.mem.Allocator, project_path: []const u8, pack_path: []const u8) !void {
@@ -75,7 +75,7 @@ const WorldCopy = struct {
         copy.copied_before = true;
     }
 
-    // Nothing there yet, a link from an older `watch`, or a copy with the marker.
+    /// Nothing there yet, a link from an older `watch`, or a copy with the marker.
     fn isReplaceable(io: std.Io, datapacks: std.Io.Dir, name: []const u8) !bool {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
         if (datapacks.readLink(io, name, &buffer)) |_| return true else |err| switch (err) {
@@ -98,7 +98,7 @@ const World = struct {
     source: []const u8,
 };
 
-// `--world`, else `POPLAR_WORLD` from the environment, else from the project's `.env`. Null when none is set.
+/// `--world`, else `POPLAR_WORLD` from the environment, else from the project's `.env`. Null when none is set.
 fn chooseWorld(ctx: zli.CommandContext, arena: std.mem.Allocator, project_path: []const u8) !?World {
     const flag = ctx.flag("world", []const u8);
     if (flag.len > 0) return .{ .path = flag, .source = "" };
@@ -116,7 +116,7 @@ fn chooseWorld(ctx: zli.CommandContext, arena: std.mem.Allocator, project_path: 
     }
 }
 
-// The shell turns `~/` into the home folder for `--world`, but not for a variable.
+/// The shell turns `~/` into the home folder for `--world`, but not for a variable.
 fn expandHome(ctx: zli.CommandContext, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (!std.mem.startsWith(u8, path, "~/")) return path;
     const environment = root.environment(ctx);
@@ -124,7 +124,7 @@ fn expandHome(ctx: zli.CommandContext, arena: std.mem.Allocator, path: []const u
     return std.fs.path.join(arena, &.{ home, path[2..] });
 }
 
-// The `datapacks` folder of the world, made if the world has none yet. Null after an error is printed.
+/// The `datapacks` folder of the world, made if the world has none yet. Null after an error is printed.
 fn datapacksPath(ctx: zli.CommandContext, arena: std.mem.Allocator, world: World) !?[]const u8 {
     const cwd = std.Io.Dir.cwd();
     const out = root.output(ctx);
@@ -191,7 +191,7 @@ fn rebuild(ctx: zli.CommandContext, project_path: []const u8, world_copy: ?*Worl
     try ctx.writer.flush();
 }
 
-// A hash of the path, size and change time of poplar.json and of every file in src/.
+/// A hash of the path, size and change time of poplar.json and of every file in src/.
 fn fingerprint(gpa: std.mem.Allocator, io: std.Io, project_path: []const u8) !u64 {
     var hasher: std.hash.Wyhash = .init(0);
     var project_dir = try std.Io.Dir.cwd().openDir(io, project_path, .{});

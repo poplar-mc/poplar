@@ -1,5 +1,6 @@
-// A `.env` file: `KEY=VALUE` lines, `#` comments, an optional `export ` and optional quotes around the value.
-// There is no variable expansion and no multi-line value.
+//! A `.env` file: `KEY=VALUE` lines, `#` comments, an optional `export ` and optional quotes around the value.
+//! There is no variable expansion and no multi-line value.
+
 const std = @import("std");
 
 pub const file_name = ".env";
@@ -7,11 +8,11 @@ pub const file_name = ".env";
 pub const Lookup = union(enum) {
     value: []const u8,
     missing,
-    // The 1-based number of a line that is not `KEY=VALUE`.
+    /// The 1-based number of a line that is not `KEY=VALUE`.
     invalid_line: usize,
 };
 
-// The value of `key` in the `.env` file of the project folder. The last line with the key wins.
+/// The value of `key` in the `.env` file of the project folder. The last line with the key wins.
 pub fn read(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, key: []const u8) !Lookup {
     var project_dir = try std.Io.Dir.cwd().openDir(io, project_path, .{});
     defer project_dir.close(io);

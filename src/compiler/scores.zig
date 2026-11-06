@@ -1,4 +1,5 @@
-// Score math: computing into a score, operands, temps and constants.
+//! Score math: computing into a score, operands, temps and constants.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -22,7 +23,7 @@ pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expre
     try appendOperation(compiler, commands, target, .assign, temp);
 }
 
-// `#n = 3 + #n` is the same as `#n = #n + 3`, which is computed in `#n` with no temp.
+/// `#n = 3 + #n` is the same as `#n = #n + 3`, which is computed in `#n` with no temp.
 fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) Compiler.CompileError!?*const ast.Expression {
     if (expression.kind != .infix) return null;
     const infix = expression.kind.infix;
@@ -118,15 +119,15 @@ fn appendOperation(compiler: *Compiler, commands: *std.ArrayList(ir.Command), ta
     try commands.append(compiler.arena, .{ .score_operation = .{ .target = target, .op = op, .source = source } });
 }
 
-// Resolves a score that is read. An entity score must name one entity.
+/// Resolves a score that is read. An entity score must name one entity.
 pub fn scoreSource(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.Score {
     const score = try resolveScore(compiler, identifier, env) orelse return null;
     if (!try checkSingleEntity(compiler, identifier)) return null;
     return score;
 }
 
-// `#x` is the global value of objective `<ns>.x`. `@s.#x` is the value of an entity in the same objective.
-// A local `#x` is the fake player `#x_<mcfun>` in `<ns>`.
+/// `#x` is the global value of objective `<ns>.x`. `@s.#x` is the value of an entity in the same objective.
+/// A local `#x` is the fake player `#x_<mcfun>` in `<ns>`.
 pub fn resolveScore(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.Score {
     if (Compiler.localOf(env, '#', identifier.name)) |local| {
         if (identifier.selector != null) {
@@ -199,7 +200,7 @@ pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
     return tempScore(compiler, compiler.temp_count);
 }
 
-// Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.
+/// Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.
 pub fn tempScore(compiler: *Compiler, index: usize) Compiler.CompileError!ir.Score {
     return .{ .holder = try std.fmt.allocPrint(compiler.arena, "#poplar.{s}.t{d}", .{ compiler.mcfun.folder, index }), .namespace = compiler.scope.output_namespace };
 }
@@ -226,8 +227,8 @@ fn referencesScore(expression: *const ast.Expression, target: ast.Identifier) bo
     };
 }
 
-// The target can only be computed in place if it is read before it is first written,
-// which is true when it appears only as the leftmost operand.
+/// The target can only be computed in place if it is read before it is first written,
+/// which is true when it appears only as the leftmost operand.
 fn isSafeInPlace(expression: *const ast.Expression, target: ast.Identifier) bool {
     return switch (expression.kind) {
         .infix => |infix| isSafeInPlace(infix.left, target) and !referencesScore(infix.right, target),

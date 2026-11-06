@@ -30,7 +30,7 @@ lexer: Lexer,
 current: Token = undefined,
 peek: Token = undefined,
 errors: std.ArrayList(Error) = .empty,
-// What the end of the input is called in a message. An insert has its own.
+/// What the end of the input is called in a message. An insert has its own.
 end_of_input: []const u8 = "end of file",
 
 pub fn init(arena: std.mem.Allocator, lexer: Lexer) ParseError!Parser {
@@ -92,7 +92,7 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
     };
 }
 
-// `import magic;`
+/// `import magic;`
 fn parseImport(self: *Parser) ParseError!?ast.NamespaceName {
     const line = self.current.line;
     const column = self.current.column;
@@ -106,7 +106,7 @@ fn parseImport(self: *Parser) ParseError!?ast.NamespaceName {
     return .{ .name = name, .line = line, .column = column };
 }
 
-// `namespace combat;`
+/// `namespace combat;`
 fn parseNamespaceStatement(self: *Parser) ParseError!?ast.NamespaceName {
     const line = self.current.line;
     const column = self.current.column;
@@ -116,7 +116,7 @@ fn parseNamespaceStatement(self: *Parser) ParseError!?ast.NamespaceName {
     return .{ .name = name, .line = line, .column = column };
 }
 
-// `bs.math`: identifiers joined by `.`, starting at the current token.
+/// `bs.math`: identifiers joined by `.`, starting at the current token.
 fn parseNamespaceName(self: *Parser) ParseError!?[]const u8 {
     var name: std.ArrayList(u8) = .empty;
     try name.appendSlice(self.arena, self.current.literal);
@@ -128,7 +128,7 @@ fn parseNamespaceName(self: *Parser) ParseError!?[]const u8 {
     return name.items;
 }
 
-// `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie" { ... }`. The Compiler checks the type word.
+/// `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie" { ... }`. The Compiler checks the type word.
 fn parseDataFile(self: *Parser) ParseError!?ast.DataFile {
     const type_word = self.current.literal;
     const line = self.current.line;
@@ -214,7 +214,7 @@ fn parseBlock(self: *Parser) ParseError!?[]const ast.Statement {
     return try statements.toOwnedSlice(self.arena);
 }
 
-// Skips the rest of a broken statement, so one mistake gives one error.
+/// Skips the rest of a broken statement, so one mistake gives one error.
 fn skipStatement(self: *Parser) ParseError!void {
     var depth: usize = 0;
 
@@ -230,8 +230,8 @@ fn skipStatement(self: *Parser) ParseError!void {
     }
 }
 
-// Skips the rest of a broken declaration, so a statement in its body is not read as a declaration. It stops
-// after the `;`, `}` or JSON body that ends the declaration, or before a word that starts a new one.
+/// Skips the rest of a broken declaration, so a statement in its body is not read as a declaration. It stops
+/// after the `;`, `}` or JSON body that ends the declaration, or before a word that starts a new one.
 fn skipToDeclaration(self: *Parser) ParseError!void {
     var depth: usize = if (self.currentIs(.left_brace)) 1 else 0;
 
@@ -295,8 +295,8 @@ fn parseCommandStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     return .{ .command = command };
 }
 
-// Splits command text into plain text and `{{expr}}` inserts.
-// `text_column` is the column where `text` starts in the file, so an expression in an insert has its real position.
+/// Splits command text into plain text and `{{expr}}` inserts.
+/// `text_column` is the column where `text` starts in the file, so an expression in an insert has its real position.
 fn parseCommandParts(self: *Parser, text: []const u8, text_column: usize) ParseError!?[]const ast.CommandPart {
     var parts: std.ArrayList(ast.CommandPart) = .empty;
     var pos: usize = 0;
@@ -545,7 +545,7 @@ fn parseNumber(self: *Parser) ParseError!?ast.Expression.Kind {
     return .{ .typed_number = number };
 }
 
-// Only `\"` and `\\` are allowed, because a string ends up in a one-line command or in SNBT.
+/// Only `\"` and `\\` are allowed, because a string ends up in a one-line command or in SNBT.
 fn decodeString(self: *Parser, literal: []const u8) ParseError!?[]const u8 {
     if (std.mem.indexOfScalar(u8, literal, '\\') == null) return literal;
 
@@ -589,7 +589,7 @@ fn parseInfix(self: *Parser, left: *ast.Expression) ParseError!?*ast.Expression 
     return try self.createExpression(left.line, left.column, .{ .infix = .{ .op = op, .left = left, .right = right } });
 }
 
-// `[1, 2, 3]`
+/// `[1, 2, 3]`
 fn parseListLiteral(self: *Parser) ParseError!?[]const *ast.Expression {
     var elements: std.ArrayList(*ast.Expression) = .empty;
     while (!self.peekIs(.right_bracket)) {
@@ -602,7 +602,7 @@ fn parseListLiteral(self: *Parser) ParseError!?[]const *ast.Expression {
     return try elements.toOwnedSlice(self.arena);
 }
 
-// `{hp: 20, "custom name": "x"}`
+/// `{hp: 20, "custom name": "x"}`
 fn parseCompoundLiteral(self: *Parser) ParseError!?[]const ast.Entry {
     var entries: std.ArrayList(ast.Entry) = .empty;
     while (!self.peekIs(.right_brace)) {
@@ -666,7 +666,7 @@ fn createExpression(self: *Parser, line: usize, column: usize, kind: ast.Express
     return expression;
 }
 
-// Illegal and unclosed tokens are reported here and skipped, so they do not cause more errors later.
+/// Illegal and unclosed tokens are reported here and skipped, so they do not cause more errors later.
 fn nextToken(self: *Parser) ParseError!void {
     self.current = self.peek;
     self.peek = self.lexer.nextToken();
@@ -684,7 +684,7 @@ fn nextToken(self: *Parser) ParseError!void {
     }
 }
 
-// Reads `x`, `#x`, `$x`, an entity score such as `@s.#mana`, or entity data such as `@s.$Health`.
+/// Reads `x`, `#x`, `$x`, an entity score such as `@s.#mana`, or entity data such as `@s.$Health`.
 fn parseIdentifier(self: *Parser) ParseError!?ast.Identifier {
     if (self.currentIs(.identifier) and (self.peekIs(.colon) or self.peekIs(.dot))) return self.parseQualifiedName();
     if (!self.currentIs(.selector)) return self.currentIdentifier();
@@ -701,7 +701,7 @@ fn parseIdentifier(self: *Parser) ParseError!?ast.Identifier {
     return .{ .name = name, .kind = .score, .selector = selector, .namespace = namespace };
 }
 
-// `magic:heal` or `bs.math:clamp` as a value or a callee.
+/// `magic:heal` or `bs.math:clamp` as a value or a callee.
 fn parseQualifiedName(self: *Parser) ParseError!?ast.Identifier {
     const namespace = try self.parseNamespaceName() orelse return null;
     if (!try self.expectPeek(.colon)) return null;
@@ -721,7 +721,7 @@ fn currentIdentifier(self: *const Parser) ?ast.Identifier {
     return .{ .name = name, .kind = kind, .namespace = namespace };
 }
 
-// The lexer keeps `magic:` on a `#` or `$` name: `magic:item.count` → `item.count` in `magic`.
+/// The lexer keeps `magic:` on a `#` or `$` name: `magic:item.count` → `item.count` in `magic`.
 fn splitNamespace(literal: []const u8) struct { []const u8, ?[]const u8 } {
     const colon = std.mem.indexOfScalar(u8, literal, ':') orelse return .{ literal, null };
     const path_start = std.mem.indexOfAny(u8, literal, "[\"") orelse literal.len;
@@ -747,7 +747,7 @@ fn expectPeek(self: *Parser, tag: Token.Tag) ParseError!bool {
     return false;
 }
 
-// How a message names a token that `expectPeek` wants.
+/// How a message names a token that `expectPeek` wants.
 fn expectedText(tag: Token.Tag) []const u8 {
     return switch (tag) {
         .semicolon => "';'",
@@ -776,7 +776,7 @@ fn peekPrecedence(self: *const Parser) Precedence {
     return precedenceOf(self.peek.tag);
 }
 
-// Only the tokens that `precedenceOf` gives a precedence reach this. A `(` is a call.
+/// Only the tokens that `precedenceOf` gives a precedence reach this. A `(` is a call.
 fn infixOperator(tag: Token.Tag) ast.Infix.Operator {
     return switch (tag) {
         .plus => .add,
@@ -814,7 +814,7 @@ fn addError(self: *Parser, comptime format: []const u8, args: anytype) ParseErro
     try self.appendError(.{ .line = self.current.line, .column = self.current.column, .message = message });
 }
 
-// Only the first error on a line is kept. Later ones on that line are usually caused by it.
+/// Only the first error on a line is kept. Later ones on that line are usually caused by it.
 fn appendError(self: *Parser, err: Error) ParseError!void {
     if (self.errors.getLastOrNull()) |last| {
         if (last.line == err.line) return;

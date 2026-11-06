@@ -41,7 +41,7 @@ pub fn writeDatapack(
     }
 }
 
-// Writes a `minecraft:<tag_name>` function tag with the functions in order.
+/// Writes a `minecraft:<tag_name>` function tag with the functions in order.
 fn writeFunctionTag(
     io: std.Io,
     arena: std.mem.Allocator,
@@ -67,7 +67,7 @@ fn writeFunctionTag(
     try out_dir.writeFile(io, .{ .sub_path = tag_dir_path ++ "/" ++ tag_name ++ ".json", .data = tag });
 }
 
-// Writes a zip of the pack folder with no compression, so `pack.mcmeta` is at the root of the zip.
+/// Writes a zip of the pack folder with no compression, so `pack.mcmeta` is at the root of the zip.
 pub fn writeZip(io: std.Io, arena: std.mem.Allocator, pack_dir: std.Io.Dir, out_dir: std.Io.Dir, zip_name: []const u8) !void {
     var bytes: std.ArrayList(u8) = .empty;
     var central_directory: std.ArrayList(u8) = .empty;
@@ -122,10 +122,10 @@ pub fn writeZip(io: std.Io, arena: std.mem.Allocator, pack_dir: std.Io.Dir, out_
     try out_dir.writeFile(io, .{ .sub_path = zip_name, .data = bytes.items });
 }
 
-// Version 2.0 of the zip format: stored files with no compression.
+/// Version 2.0 of the zip format: stored files with no compression.
 const zip_version = 20;
 
-// The fields that the local header and the central directory header share, from "version needed" to "name length".
+/// The fields that the local header and the central directory header share, from "version needed" to "name length".
 const ZipEntryHeader = struct {
     crc: u32,
     size: u32,
@@ -279,7 +279,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespa
     }
 }
 
-// `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become one.
+/// `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become one.
 fn renderRun(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespace: []const u8, run: ir.Command) std.mem.Allocator.Error!void {
     const start = text.items.len;
     try text.appendSlice(arena, " run ");
@@ -319,8 +319,8 @@ fn renderCheck(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespace: []
     }
 }
 
-// Minecraft function names cannot have capitals, so a camelCase name is written in snake_case:
-// `playerDied` → `player_died`, `poplar/usedCarrot/if_0` → `poplar/used_carrot/if_0`.
+/// Minecraft function names cannot have capitals, so a camelCase name is written in snake_case:
+/// `playerDied` → `player_died`, `poplar/usedCarrot/if_0` → `poplar/used_carrot/if_0`.
 const FunctionPath = struct {
     name: []const u8,
 
@@ -340,7 +340,7 @@ pub fn functionPath(name: []const u8) FunctionPath {
     return .{ .name = name };
 }
 
-// `combat:healPlayer` → `combat:heal_player`. A name without a namespace is in the pack namespace.
+/// `combat:healPlayer` → `combat:heal_player`. A name without a namespace is in the pack namespace.
 const FunctionId = struct {
     pack_namespace: []const u8,
     name: []const u8,
@@ -360,7 +360,7 @@ fn splitFunctionName(pack_namespace: []const u8, name: []const u8) struct { []co
     return .{ namespace orelse pack_namespace, path };
 }
 
-// `storage ns:data hp` or `entity @s Health`, the target of `data` and `execute store`.
+/// `storage ns:data hp` or `entity @s Health`, the target of `data` and `execute store`.
 const DataPathText = struct {
     namespace: []const u8,
     data_path: ir.DataPath,
@@ -392,7 +392,7 @@ const ObjectiveText = struct {
     namespace: []const u8,
     objective: ?[]const u8,
 
-    // Poplar's own objective is `poplar.<ns>`, so a trigger can have the name of its namespace.
+    /// Poplar's own objective is `poplar.<ns>`, so a trigger can have the name of its namespace.
     pub fn format(self: ObjectiveText, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.objective) |objective| return writer.print("{s}.{s}", .{ self.namespace, objective });
         try writer.print("poplar.{s}", .{self.namespace});

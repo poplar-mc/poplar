@@ -1,5 +1,6 @@
-// Lines for people: a green ✓ or a red ✗ at the start, and dim details. There are colors only in a terminal,
-// and not when NO_COLOR is set (https://no-color.org).
+//! Lines for people: a green ✓ or a red ✗ at the start, and dim details. There are colors only in a terminal,
+//! and not when NO_COLOR is set (https://no-color.org).
+
 const std = @import("std");
 const project = @import("../project.zig");
 
@@ -36,19 +37,19 @@ pub fn success(self: Output, comptime format: []const u8, args: anytype) std.Io.
     try self.writer.print("{s}✓{s} " ++ format ++ "\n", .{ self.green(), self.reset() } ++ args);
 }
 
-// Failures go to stderr, so they still show when the normal output is piped somewhere.
+/// Failures go to stderr, so they still show when the normal output is piped somewhere.
 pub fn failure(self: Output, comptime format: []const u8, args: anytype) void {
     self.writer.flush() catch {};
     std.debug.print("{s}✗{s} " ++ format ++ "\n", .{ self.red(), self.reset() } ++ args);
 }
 
-// Something that works, but likely not as the user wants. It goes to stderr, like a failure.
+/// Something that works, but likely not as the user wants. It goes to stderr, like a failure.
 pub fn warning(self: Output, comptime format: []const u8, args: anytype) void {
     self.writer.flush() catch {};
     std.debug.print("{s}!{s} " ++ format ++ "\n", .{ self.yellow(), self.reset() } ++ args);
 }
 
-// `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position.
+/// `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position.
 pub fn diagnostics(self: Output, list: []const project.Diagnostic) void {
     for (list) |diagnostic| {
         const message: Capitalized = .{ .text = diagnostic.message };
@@ -66,8 +67,8 @@ pub fn diagnostics(self: Output, list: []const project.Diagnostic) void {
     }
 }
 
-// The compiler's messages start in lowercase, which the language server shows as it is. On the command line
-// each line starts with a capital letter.
+/// The compiler's messages start in lowercase, which the language server shows as it is. On the command line
+/// each line starts with a capital letter.
 const Capitalized = struct {
     text: []const u8,
 
@@ -78,7 +79,7 @@ const Capitalized = struct {
     }
 };
 
-// `✗ 2 errors, nothing was written`
+/// `✗ 2 errors, nothing was written`
 pub fn errorCount(self: Output, count: usize, rest: []const u8) void {
     self.failure("{d} error{s}{s}", .{ count, if (count == 1) "" else "s", rest });
 }

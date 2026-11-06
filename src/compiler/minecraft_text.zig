@@ -1,4 +1,5 @@
-// Minecraft text: `/commands`, `execute (...)`, `{{...}}` inserts and macro lines, and `self:` ids.
+//! Minecraft text: `/commands`, `execute (...)`, `{{...}}` inserts and macro lines, and `self:` ids.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -11,7 +12,7 @@ const declarations = @import("declarations.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
-// `text_column` is the column where the command text starts, after the `/`.
+/// `text_column` is the column where the command text starts, after the `/`.
 pub fn compileCommand(compiler: *Compiler, command: ast.Command, text_column: usize, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     var command_text = try buildCommandText(compiler, command.parts, env) orelse return;
     command_text.text = try checkMinecraftText(compiler, command.parts, command_text, text_column, "", "") orelse return;
@@ -24,8 +25,8 @@ pub fn compileCommand(compiler: *Compiler, command: ast.Command, text_column: us
     try callMacroHelper(compiler, name, command_text, command_text.uses_macro_keys, env, commands);
 }
 
-// The storage that holds every insert, when each one is a whole `$` variable of the same storage: the helper can
-// then read them from it as they are.
+/// The storage that holds every insert, when each one is a whole `$` variable of the same storage: the helper can
+/// then read them from it as they are.
 fn sharedStorage(inserts: []const Compiler.Insert) ?ir.DataStorage {
     var shared: ?ir.DataStorage = null;
     for (inserts) |insert| {
@@ -41,8 +42,8 @@ fn sharedStorage(inserts: []const Compiler.Insert) ?ir.DataStorage {
     return shared;
 }
 
-// A macro call gets its arguments from one place. A helper that also needs the macro arguments of the mcfun,
-// or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro arguments, then each value it uses.
+/// A macro call gets its arguments from one place. A helper that also needs the macro arguments of the mcfun,
+/// or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro arguments, then each value it uses.
 fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Compiler.CommandText, needs_macro_keys: bool, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     if (!needs_macro_keys) if (sharedStorage(command_text.inserts)) |storage| {
         return commands.append(compiler.arena, .{ .function_with = .{ .name = name, .arguments = .{ .data_storage = storage } } });
@@ -96,8 +97,8 @@ pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environme
     try callMacroHelper(compiler, name, subcommands, compiler.forwarded_args != null, env, commands);
 }
 
-// Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line. `$(key)` in the
-// text uses the mcfun's macro arguments.
+/// Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line. `$(key)` in the
+/// text uses the mcfun's macro arguments.
 pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env: *Environment) Compiler.CompileError!?Compiler.CommandText {
     var text: std.ArrayList(u8) = .empty;
     const text_starts = try compiler.arena.alloc(usize, parts.len);
@@ -144,8 +145,8 @@ pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env
     };
 }
 
-// Where the value of a runtime insert comes from, and its macro name. The same value again in the line
-// gives the insert that is already there.
+/// Where the value of a runtime insert comes from, and its macro name. The same value again in the line
+/// gives the insert that is already there.
 fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, used: []const Compiler.Insert) Compiler.CompileError!?Compiler.Insert {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
@@ -196,7 +197,7 @@ fn isUsedMacroName(compiler: *const Compiler, name: []const u8, used: []const Co
     return compiler.macro_keys.contains(name);
 }
 
-// Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.
+/// Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.
 fn sourceOffset(parts: []const ast.CommandPart, text_starts: []const usize, at: usize) usize {
     var source_offset = at;
     for (parts, text_starts) |part, text_start| {
@@ -209,7 +210,7 @@ fn sourceOffset(parts: []const ast.CommandPart, text_starts: []const usize, at: 
     return source_offset;
 }
 
-// `stats.inventory[0]` → `stats_inventory_0_`: a name that a macro line can use.
+/// `stats.inventory[0]` → `stats_inventory_0_`: a name that a macro line can use.
 fn macroName(arena: std.mem.Allocator, path: []const u8) Compiler.CompileError![]const u8 {
     const name = try arena.dupe(u8, path);
     for (name) |*ch| {
@@ -218,8 +219,8 @@ fn macroName(arena: std.mem.Allocator, path: []const u8) Compiler.CompileError![
     return name;
 }
 
-// Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each `self:name` and
-// `ns:name` of a declaration into its id. `column` is where the text starts in the source. Null after an error.
+/// Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each `self:name` and
+/// `ns:name` of a declaration into its id. `column` is where the text starts in the source. Null after an error.
 pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, built: Compiler.CommandText, column: usize, comptime prefix: []const u8, comptime suffix: []const u8) Compiler.CompileError!?[]const u8 {
     const full_text = try std.fmt.allocPrint(compiler.arena, prefix ++ "{s}" ++ suffix, .{built.text});
     const checked = try compiler.command_tree.checkText(compiler.arena, full_text, compiler.poplar_namespaces);
@@ -270,7 +271,7 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
     return resolved.items;
 }
 
-// A name with no namespace means `minecraft:name`, so a name from this pack needs `self:`.
+/// A name with no namespace means `minecraft:name`, so a name from this pack needs `self:`.
 fn checkBareName(compiler: *Compiler, parts: []const ast.CommandPart, built: Compiler.CommandText, column: usize, start: usize) Compiler.CompileError!void {
     var end = start;
     while (end < built.text.len and isIdChar(built.text[end])) end += 1;
@@ -299,8 +300,8 @@ fn isIdChar(ch: u8) bool {
     return std.ascii.isAlphanumeric(ch) or std.mem.indexOfScalar(u8, "_-./", ch) != null;
 }
 
-// The namespace whose Poplar names an id in Minecraft text uses: `self:`, or a namespace of the pack that the file
-// imports. Null for any other id, such as `minecraft:stone`, which is left as it is.
+/// The namespace whose Poplar names an id in Minecraft text uses: `self:`, or a namespace of the pack that the file
+/// imports. Null for any other id, such as `minecraft:stone`, which is left as it is.
 fn sourceNamespaceOf(compiler: *Compiler, written: []const u8) Compiler.CompileError!?[]const u8 {
     if (std.mem.eql(u8, written, "self")) return compiler.scope.namespace;
     if (!compiler.namespace_imports.contains(written)) return null;
@@ -308,7 +309,7 @@ fn sourceNamespaceOf(compiler: *Compiler, written: []const u8) Compiler.CompileE
     return null;
 }
 
-// `combat:healPlayer` → `combat:heal_player`, `std:clamp` → `<pack>:std/clamp`, `combat:isSitting` → `combat:is_sitting`.
+/// `combat:healPlayer` → `combat:heal_player`, `std:clamp` → `<pack>:std/clamp`, `combat:isSitting` → `combat:is_sitting`.
 fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError!?[]const u8 {
     const output = declarations.outputNamespace(compiler, namespace) orelse compiler.pack_namespace;
     const name_key = try declarations.qualifiedKey(compiler, namespace, name);
@@ -317,7 +318,7 @@ fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.C
     return try std.fmt.allocPrint(compiler.arena, "{s}:{f}", .{ output, datapack_writer.functionPath(try declarations.outputPath(compiler, namespace, name)) });
 }
 
-// The source names of the data files and mcfuns of a namespace.
+/// The source names of the data files and mcfuns of a namespace.
 fn declaredNames(compiler: *Compiler, namespace: []const u8) Compiler.CompileError![]const []const u8 {
     const key_prefix = try declarations.qualifiedKey(compiler, namespace, "");
     var names: std.ArrayList([]const u8) = .empty;
@@ -329,7 +330,7 @@ fn declaredNames(compiler: *Compiler, namespace: []const u8) Compiler.CompileErr
     return names.items;
 }
 
-// The source name whose file is `file_name`: `healPlayer` for `heal_player`.
+/// The source name whose file is `file_name`: `healPlayer` for `heal_player`.
 fn declarationWithFileName(compiler: *Compiler, namespace: []const u8, file_name: []const u8) Compiler.CompileError!?[]const u8 {
     for (try declaredNames(compiler, namespace)) |declared| {
         const declared_file = compiler.data_file_names.get(try declarations.qualifiedKey(compiler, namespace, declared)) orelse

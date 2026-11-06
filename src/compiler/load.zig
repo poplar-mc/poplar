@@ -1,4 +1,5 @@
-// What the game runs on its own: `poplar/load`, the `load` and `tick` of each namespace, and events.
+//! What the game runs on its own: `poplar/load`, the `load` and `tick` of each namespace, and events.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -12,8 +13,8 @@ const declarations = @import("declarations.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
-// The IR names of `load` or `tick` of each namespace that has one. A namespace comes after the namespaces it
-// imports. Namespaces that import each other are in alphabetical order.
+/// The IR names of `load` or `tick` of each namespace that has one. A namespace comes after the namespaces it
+/// imports. Namespaces that import each other are in alphabetical order.
 pub fn hookNames(compiler: *Compiler, namespaces: std.StringArrayHashMapUnmanaged(void), hook: []const u8) Compiler.CompileError![]const []const u8 {
     var names: std.ArrayList([]const u8) = .empty;
     for (try namespaceOrder(compiler)) |namespace| {
@@ -45,7 +46,7 @@ fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
-// The mcfuns that a project mcfun can call, directly or through others. Event callbacks count as calls from `load`.
+/// The mcfuns that a project mcfun can call, directly or through others. Event callbacks count as calls from `load`.
 pub fn reachableFromProject(compiler: *Compiler) Compiler.CompileError!std.StringHashMapUnmanaged(void) {
     var reached: std.StringHashMapUnmanaged(void) = .empty;
     var pending: std.ArrayList([]const u8) = .empty;
@@ -61,8 +62,8 @@ pub fn reachableFromProject(compiler: *Compiler) Compiler.CompileError!std.Strin
     return reached;
 }
 
-// For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
-// `poplar/tick` runs it for every player with a count, then the user's `tick`.
+/// For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
+/// `poplar/tick` runs it for every player with a count, then the user's `tick`.
 pub fn appendEventFunctions(compiler: *Compiler, functions: *std.ArrayList(ir.McFunction), ticks: []const []const u8) Compiler.CompileError!void {
     if (compiler.events.items.len == 0) return;
 
@@ -105,7 +106,7 @@ fn eventObjective(compiler: *Compiler, event: Compiler.Event, index: usize) Comp
     return event.trigger orelse std.fmt.allocPrint(compiler.arena, "{s}.event_{d}", .{ event.namespace orelse compiler.pack_namespace, index });
 }
 
-// The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
+/// The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
 pub fn removeUnusedConstants(compiler: *Compiler, functions: []const ir.McFunction) Compiler.CompileError!void {
     var index = compiler.constants.count();
     while (index > 0) {
@@ -124,8 +125,8 @@ fn isScoreRead(functions: []const ir.McFunction, score: ir.Score) bool {
     return false;
 }
 
-// A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text part such as
-// `text(#mana)` names `#global` in the command text, so that counts as a use too.
+/// A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text part such as
+/// `text(#mana)` names `#global` in the command text, so that counts as a use too.
 fn isGlobalValueUsed(compiler: *Compiler, functions: []const ir.McFunction, global: Compiler.GlobalScore) Compiler.CompileError!bool {
     const score = scores.globalScore(global);
     const objective = try std.fmt.allocPrint(compiler.arena, "\"{s}.{s}\"", .{ global.output_namespace orelse compiler.pack_namespace, global.name });
@@ -150,7 +151,7 @@ fn mentionsGlobalHolder(command: ir.Command, objective: []const u8) bool {
     return std.mem.indexOf(u8, text, Compiler.global_holder) != null and std.mem.indexOf(u8, text, objective) != null;
 }
 
-// Runs after all mcfuns, so that every constant they use is known.
+/// Runs after all mcfuns, so that every constant they use is known.
 pub fn buildLoadFunction(compiler: *Compiler, functions: []const ir.McFunction) Compiler.CompileError!ir.McFunction {
     var commands: std.ArrayList(ir.Command) = .empty;
 
@@ -205,7 +206,7 @@ pub fn buildLoadFunction(compiler: *Compiler, functions: []const ir.McFunction) 
     return .{ .name = "poplar/load", .commands = try commands.toOwnedSlice(compiler.arena) };
 }
 
-// The event builtins, and the kind of event each one registers.
+/// The event builtins, and the kind of event each one registers.
 pub const event_builtins = std.StaticStringMap(Compiler.Event.Kind).initComptime(.{
     .{ "onEvent", .criteria },
     .{ "onTrigger", .trigger },
@@ -215,8 +216,8 @@ pub const event_builtins = std.StaticStringMap(Compiler.Event.Kind).initComptime
     .{ "onRespawn", .respawn },
 });
 
-// `onEvent(criteria, callback)` and the other event builtins in `load`. It registers the event at compile time and writes
-// no command.
+/// `onEvent(criteria, callback)` and the other event builtins in `load`. It registers the event at compile time and writes
+/// no command.
 pub fn compileEvent(compiler: *Compiler, call: ast.Call, builtin: []const u8, env: *Environment) Compiler.CompileError!void {
     const kind = event_builtins.get(builtin).?;
     const is_trigger = kind == .trigger;
@@ -252,7 +253,7 @@ pub fn compileEvent(compiler: *Compiler, call: ast.Call, builtin: []const u8, en
     try compiler.events.append(compiler.arena, .{ .kind = kind, .criteria = criteria, .callback = callback, .namespace = compiler.scope.output_namespace, .trigger = trigger });
 }
 
-// The IR name of an event's callback: an mcfun that uses no macro arguments. Null after an error.
+/// The IR name of an event's callback: an mcfun that uses no macro arguments. Null after an error.
 fn callbackOf(compiler: *Compiler, callback: *const ast.Expression, builtin: []const u8) Compiler.CompileError!?[]const u8 {
     const outer_position = compiler.enterExpression(callback);
     defer compiler.restorePosition(outer_position);
@@ -271,7 +272,7 @@ fn callbackOf(compiler: *Compiler, callback: *const ast.Expression, builtin: []c
     return found.declaration.ir_name;
 }
 
-// Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name clashes with.
+/// Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name clashes with.
 fn poplarObjectiveClash(compiler: *Compiler, name: []const u8) Compiler.CompileError!?[]const u8 {
     if (std.mem.startsWith(u8, name, "poplar.")) return "poplar.";
     const namespaces = try std.mem.concat(compiler.arena, []const u8, &.{ &.{compiler.pack_namespace}, try declarations.outputNamespaces(compiler) });

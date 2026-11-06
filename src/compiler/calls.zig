@@ -1,4 +1,5 @@
-// mcfun calls: arguments, the call graph, and saving values around a recursive call.
+//! mcfun calls: arguments, the call graph, and saving values around a recursive call.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -14,7 +15,7 @@ const minecraft_text = @import("minecraft_text.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
-// Returns the command that calls an mcfun. CommandTree that write a runtime `with` compound go into `commands` first.
+/// Returns the command that calls an mcfun. CommandTree that write a runtime `with` compound go into `commands` first.
 pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compiler.McfunDeclaration, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.Command {
     const mcfun = declaration.mcfun;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
@@ -118,8 +119,8 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
     return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .args_storage } };
 }
 
-// The initial value of a whole `$` global that is not a compound and that no code changes. A global that code sets
-// can hold a compound by the time of the call, so it is not reported. Null otherwise.
+/// The initial value of a whole `$` global that is not a compound and that no code changes. A global that code sets
+/// can hold a compound by the time of the call, so it is not reported. Null otherwise.
 fn nonCompoundGlobal(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?[]const u8 {
     if (identifier.kind != .data or !std.mem.eql(u8, Compiler.pathRoot(identifier.name), identifier.name)) return null;
     if (identifier.namespace == null and Compiler.localOf(env, '$', identifier.name) != null) return null;
@@ -132,7 +133,7 @@ fn nonCompoundGlobal(compiler: *Compiler, identifier: ast.Identifier, env: *cons
     return global.initial_snbt;
 }
 
-// True if a statement assigns `$name`, or a raw command names it. A raw command is not read, so any mention counts.
+/// True if a statement assigns `$name`, or a raw command names it. A raw command is not read, so any mention counts.
 fn setsData(body: []const ast.Statement, name: []const u8) bool {
     for (body) |statement| switch (statement.kind) {
         .assign => |assign| if (assign.target.kind == .data and std.mem.eql(u8, Compiler.pathRoot(assign.target.name), name)) return true,
@@ -149,7 +150,7 @@ fn setsData(body: []const ast.Statement, name: []const u8) bool {
     return false;
 }
 
-// `{a: ..., b: ...}` for the keys an mcfun uses, for error messages.
+/// `{a: ..., b: ...}` for the keys an mcfun uses, for error messages.
 fn exampleCompound(compiler: *Compiler, keys: []const []const u8) Compiler.CompileError![]const u8 {
     if (keys.len == 0) return "{name: ...}";
     var text: std.ArrayList(u8) = .empty;
@@ -159,7 +160,7 @@ fn exampleCompound(compiler: *Compiler, keys: []const []const u8) Compiler.Compi
     return text.toOwnedSlice(compiler.arena);
 }
 
-// A compile-time value as SNBT. A macro key is `"$(name)"`, so the line becomes a macro line.
+/// A compile-time value as SNBT. A macro key is `"$(name)"`, so the line becomes a macro line.
 fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environment) Compiler.CompileError!?[]const u8 {
     const outer_position = compiler.enterExpression(arg);
     defer compiler.restorePosition(outer_position);
@@ -173,14 +174,14 @@ fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environme
     return try values.valueToSnbt(compiler, value);
 }
 
-// Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use them.
+/// Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use them.
 pub fn generatedCall(compiler: *Compiler, name: []const u8) ir.Command {
     const forwarded = compiler.forwarded_args orelse return .{ .function = name };
     return .{ .function_with = .{ .name = name, .arguments = .{ .compound = forwarded } } };
 }
 
-// A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
-// locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
+/// A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
+/// locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
 pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.Score, live_temp_count: usize, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     var saved_scores: std.ArrayList(ir.Score) = .empty;
     var saved_data: std.ArrayList([]const u8) = .empty;
@@ -207,8 +208,8 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
     try commands.append(compiler.arena, .frame_pop);
 }
 
-// The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, `s_i_countdown` for the local `#i_countdown`,
-// and `d_names_countdown` for the data local `names_countdown`.
+/// The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, `s_i_countdown` for the local `#i_countdown`,
+/// and `d_names_countdown` for the data local `names_countdown`.
 fn frameSlot(compiler: *Compiler, name: []const u8) Compiler.CompileError!ir.DataPath {
     if (std.mem.startsWith(u8, name, "#poplar.")) return .inStorage(.frame, name[std.mem.lastIndexOfScalar(u8, name, '.').? + 1 ..]);
     if (name[0] == '#') return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "s_{s}", .{name[1..]}));
@@ -224,14 +225,14 @@ pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {
     }
 }
 
-// The key of a called name, without errors: the compile step reports a missing import or name.
+/// The key of a called name, without errors: the compile step reports a missing import or name.
 pub fn calledKey(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!?[]const u8 {
     const namespace = identifier.namespace orelse compiler.scope.namespace;
     const mcfun_key = try declarations.qualifiedKey(compiler, namespace, identifier.name);
     return if (compiler.mcfuns.contains(mcfun_key)) mcfun_key else null;
 }
 
-// Finds the mcfun calls in a body. This can find calls that a compile-time branch removes later. That only adds saves.
+/// Finds the mcfun calls in a body. This can find calls that a compile-time branch removes later. That only adds saves.
 fn collectCalls(
     compiler: *Compiler,
     body: []const ast.Statement,
@@ -261,7 +262,7 @@ fn collectCalls(
     };
 }
 
-// `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
+/// `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
 fn collectInsertCalls(
     compiler: *Compiler,
     parts: []const ast.CommandPart,
@@ -273,7 +274,7 @@ fn collectInsertCalls(
     };
 }
 
-// A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
+/// A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
 fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) Compiler.CompileError!void {
     const prefix = Compiler.std_namespace ++ ":";
     var index: usize = 0;
@@ -318,7 +319,7 @@ fn collectExpressionCalls(
     }
 }
 
-// True if `from` can call `to`, directly or through other mcfuns.
+/// True if `from` can call `to`, directly or through other mcfuns.
 pub fn canReach(compiler: *Compiler, from: []const u8, to: []const u8) Compiler.CompileError!bool {
     var pending: std.ArrayList([]const u8) = .empty;
     var visited: std.StringHashMapUnmanaged(void) = .empty;

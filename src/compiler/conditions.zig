@@ -1,4 +1,5 @@
-// `if` and `while` conditions: comparisons, data tests and Minecraft checks, in OR-of-ANDs form.
+//! `if` and `while` conditions: comparisons, data tests and Minecraft checks, in OR-of-ANDs form.
+
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
@@ -54,7 +55,7 @@ pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expression, en
     return null;
 }
 
-// `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of `execute (...)`.
+/// `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of `execute (...)`.
 fn minecraftCheck(compiler: *Compiler, parts: []const ast.CommandPart, column: usize, env: *Environment, negated: bool) Compiler.CompileError!?Compiler.Condition {
     const check = try minecraft_text.buildCommandText(compiler, parts, env) orelse return null;
     if (check.is_macro) {
@@ -66,7 +67,7 @@ fn minecraftCheck(compiler: *Compiler, parts: []const ast.CommandPart, column: u
     return try singleCheck(compiler, .{ .negated = negated, .condition = .{ .raw = text } });
 }
 
-// `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
+/// `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
 fn dataCondition(compiler: *Compiler, identifier: ast.Identifier, value: Compiler.Value, negated: bool, env: *const Environment) Compiler.CompileError!?Compiler.Condition {
     const path = try data.dataPathOf(compiler, identifier, env) orelse return null;
     if (std.mem.indexOfAny(u8, path.path, "[\"") != null) {
@@ -111,8 +112,8 @@ fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment, neg
     };
 }
 
-// `==` between data and a compile-time string, bool, list, compound or typed number is an NBT filter.
-// A number comparison still goes through a score, which also works for other number types.
+/// `==` between data and a compile-time string, bool, list, compound or typed number is an NBT filter.
+/// A number comparison still goes through a score, which also works for other number types.
 fn dataComparison(compiler: *Compiler, data_side: *const ast.Expression, other: *const ast.Expression, env: *Environment, negated: bool) Compiler.CompileError!?Compiler.Condition {
     const outer_position = compiler.enterExpression(other);
     defer compiler.restorePosition(outer_position);
@@ -124,7 +125,7 @@ fn dataComparison(compiler: *Compiler, data_side: *const ast.Expression, other: 
     return dataCondition(compiler, data_side.kind.identifier, value, negated, env);
 }
 
-// True when one side is data and the other is a compile-time value that is not a plain int.
+/// True when one side is data and the other is a compile-time value that is not a plain int.
 fn isNbtFilterComparison(compiler: *Compiler, left: *const ast.Expression, right: *const ast.Expression, env: *Environment) bool {
     if (!data.isDataIdentifier(left) and !data.isDataIdentifier(right)) return false;
     for ([_]*const ast.Expression{ left, right }) |side| {

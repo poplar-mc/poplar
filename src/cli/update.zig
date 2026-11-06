@@ -74,8 +74,8 @@ fn latestRelease(arena: std.mem.Allocator, io: std.Io) !Release {
     return std.json.parseFromSliceLeaky(Release, arena, body.written(), .{ .ignore_unknown_fields = true });
 }
 
-// The same command as the README. `POPLAR_PREFIX` is the folder above this binary's `bin/`, so the script replaces
-// the copy that is running instead of installing a second one.
+/// The same command as the README. `POPLAR_PREFIX` is the folder above this binary's `bin/`, so the script replaces
+/// the copy that is running instead of installing a second one.
 fn runInstallScript(ctx: zli.CommandContext, arena: std.mem.Allocator) !void {
     const exe_dir = try std.process.executableDirPathAlloc(ctx.io, arena);
     var environment = try root.environment(ctx).clone(arena);
