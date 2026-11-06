@@ -1,7 +1,7 @@
 const std = @import("std");
 const Token = @import("Token.zig");
 
-const Self = @This();
+const Lexer = @This();
 
 input: []const u8,
 pos: usize = 0,
@@ -18,8 +18,8 @@ condition_paren_depth: usize = 0,
 // Added to the column of each token on the first line: the column where a `{{...}}` insert starts in its file.
 first_line_column: usize = 0,
 
-pub fn init(input: []const u8) Self {
-    var l = Self{
+pub fn init(input: []const u8) Lexer {
+    var l = Lexer{
         .input = input,
     };
 
@@ -28,7 +28,7 @@ pub fn init(input: []const u8) Self {
     return l;
 }
 
-fn readChar(self: *Self) void {
+fn readChar(self: *Lexer) void {
     if (self.readPos >= self.input.len) {
         self.ch = '\x00';
     } else {
@@ -39,13 +39,13 @@ fn readChar(self: *Self) void {
     self.readPos += 1;
 }
 
-pub fn nextToken(self: *Self) Token {
+pub fn nextToken(self: *Lexer) Token {
     const tok = self.readToken();
     self.previous_type = tok.type;
     return tok;
 }
 
-fn readToken(self: *Self) Token {
+fn readToken(self: *Lexer) Token {
     var tok: Token = undefined;
 
     self.skipWhitespaceAndComments();
@@ -181,19 +181,19 @@ fn readToken(self: *Self) Token {
     return tok;
 }
 
-fn newToken(self: *Self, t: Token.TokenType, literal: []const u8) Token {
+fn newToken(self: *Lexer, t: Token.TokenType, literal: []const u8) Token {
     const offset = if (self.line_start == 0) self.first_line_column else 0;
     return Token.init(t, literal, self.line, self.token_start - self.line_start + 1 + offset);
 }
 
 // Division cannot follow these tokens, so a `/` here starts a command.
-fn startsStatement(self: *Self) bool {
+fn startsStatement(self: *Lexer) bool {
     const previous = self.previous_type orelse return true;
     return previous == .semicolon or previous == .left_brace or previous == .right_brace;
 }
 
 // Reads to the `;` that ends the command. A `;` inside quotes or brackets (NBT, JSON) is part of the text.
-fn readCommand(self: *Self) ?[]const u8 {
+fn readCommand(self: *Lexer) ?[]const u8 {
     self.readChar();
     const text = self.readBalanced(';') orelse return null;
     return std.mem.trimEnd(u8, text, " \t\r");
@@ -201,7 +201,7 @@ fn readCommand(self: *Self) ?[]const u8 {
 
 // Reads `as @a at @s` from `execute (as @a at @s)`, to the matching `)`.
 // The token starts at the text, so its column is the column of the first subcommand.
-fn readExecuteSubcommands(self: *Self) Token {
+fn readExecuteSubcommands(self: *Lexer) Token {
     self.readChar();
     while (self.ch == ' ' or self.ch == '\t') self.readChar();
     self.token_start = self.pos;
@@ -219,7 +219,7 @@ fn readExecuteSubcommands(self: *Self) Token {
 }
 
 // Reads `$(name)`. The literal is the name.
-fn readMacroKey(self: *Self) Token {
+fn readMacroKey(self: *Lexer) Token {
     self.readChar();
     self.readChar();
     const name = self.readIdentifier();
@@ -229,7 +229,7 @@ fn readMacroKey(self: *Self) Token {
 }
 
 // `entity` or `block` right after `with`.
-fn startsWithSource(self: *Self) bool {
+fn startsWithSource(self: *Lexer) bool {
     if (self.previous_type != .with) return false;
     var end = self.pos;
     while (end < self.input.len and isLetter(self.input[end])) end += 1;
@@ -238,7 +238,7 @@ fn startsWithSource(self: *Self) bool {
 }
 
 // Reads `@s` or `@a[tag=x,limit=1]`.
-fn readSelector(self: *Self) Token {
+fn readSelector(self: *Lexer) Token {
     const is_selector = std.mem.indexOfScalar(u8, "aeprsn", self.peekChar()) != null and !isLetter(self.peekCharAt(2));
     if (!is_selector) {
         const tok = self.newToken(.illegal, "@");
@@ -259,7 +259,7 @@ fn readSelector(self: *Self) Token {
 }
 
 // Reads `.$Inventory[0].count` after a selector. The literal is the NBT path without `.$`.
-fn readEntityDataPath(self: *Self) Token {
+fn readEntityDataPath(self: *Lexer) Token {
     self.readChar();
     self.readChar();
     return self.readDataPath(.entity_data);
@@ -267,16 +267,16 @@ fn readEntityDataPath(self: *Self) Token {
 
 // Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not followed
 // by a key ends the path, so `$a..` is still a range.
-fn readDataPath(self: *Self, token_type: Token.TokenType) Token {
+fn readDataPath(self: *Lexer, token_type: Token.TokenType) Token {
     return self.readDataPathAt(token_type, self.pos);
 }
 
-fn readDataPathFrom(self: *Self, start: usize) Token {
+fn readDataPathFrom(self: *Lexer, start: usize) Token {
     return self.readDataPathAt(.data_identifier, start);
 }
 
 // `start` is where the token text starts, which can be before the current character (a `ns:` prefix).
-fn readDataPathAt(self: *Self, token_type: Token.TokenType, start: usize) Token {
+fn readDataPathAt(self: *Lexer, token_type: Token.TokenType, start: usize) Token {
     var depth: usize = 0;
     var quote: ?u8 = null;
 
@@ -316,7 +316,7 @@ const condition_words = std.StaticStringMap(void).initComptime(.{
 
 // A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a space and
 // something that is not an operator. So `block == 1` and `(block)` still read `block` as a name.
-fn startsConditionCheck(self: *Self) bool {
+fn startsConditionCheck(self: *Lexer) bool {
     if (self.condition_paren_depth == 0) return false;
     const previous = self.previous_type orelse return false;
     if (previous != .left_paren and previous != .@"and" and previous != .@"or" and previous != .bang) return false;
@@ -331,7 +331,7 @@ fn startsConditionCheck(self: *Self) bool {
 }
 
 // Reads to the `)` that closes the condition part, or to an `and` or `or` word, outside brackets and quotes.
-fn readConditionText(self: *Self) []const u8 {
+fn readConditionText(self: *Lexer) []const u8 {
     const start = self.pos;
     var depth: usize = 0;
     var quote: ?u8 = null;
@@ -358,7 +358,7 @@ fn readConditionText(self: *Self) []const u8 {
     return std.mem.trimEnd(u8, self.input[start..self.pos], " ");
 }
 
-fn isWordAhead(self: *Self, word: []const u8) bool {
+fn isWordAhead(self: *Lexer, word: []const u8) bool {
     const start = self.pos + 1;
     const end = start + word.len;
     if (end > self.input.len or !std.mem.eql(u8, self.input[start..end], word)) return false;
@@ -366,7 +366,7 @@ fn isWordAhead(self: *Self, word: []const u8) bool {
 }
 
 // Reads `{ ... }` or `[ ... ]` over many lines, to the bracket that closes the first one. Braces in JSON strings do not count.
-fn readJsonBody(self: *Self) Token {
+fn readJsonBody(self: *Lexer) Token {
     const start = self.pos;
     const start_line = self.line;
     const start_column = self.token_start - self.line_start + 1;
@@ -404,7 +404,7 @@ fn readJsonBody(self: *Self) Token {
 
 // Reads up to `end` outside quotes and brackets, or up to the end of the line.
 // Returns null if a quote is still open.
-fn readBalanced(self: *Self, end: u8) ?[]const u8 {
+fn readBalanced(self: *Lexer, end: u8) ?[]const u8 {
     const start = self.pos;
     var depth: usize = 0;
     var quote: ?u8 = null;
@@ -436,7 +436,7 @@ fn isLetter(ch: u8) bool {
     return std.ascii.isAlphabetic(ch) or ch == '_';
 }
 
-fn readIdentifier(self: *Self) []const u8 {
+fn readIdentifier(self: *Lexer) []const u8 {
     const start = self.pos;
 
     while (isLetter(self.ch) or (self.ch >= '0' and self.ch <= '9')) {
@@ -446,7 +446,7 @@ fn readIdentifier(self: *Self) []const u8 {
     return self.input[start..self.pos];
 }
 
-fn readString(self: *Self) ?[]const u8 {
+fn readString(self: *Lexer) ?[]const u8 {
     const start = self.pos;
 
     self.readChar();
@@ -462,7 +462,7 @@ fn readString(self: *Self) ?[]const u8 {
 }
 
 // Reads an SNBT number: `5`, `0.05`, `0.05f` or `1b`. A `.` needs a digit after it, so `1..5` is still a range.
-fn readNumber(self: *Self) []const u8 {
+fn readNumber(self: *Lexer) []const u8 {
     const start = self.pos;
 
     while (std.ascii.isDigit(self.ch)) self.readChar();
@@ -478,7 +478,7 @@ fn readNumber(self: *Self) []const u8 {
     return self.input[start..self.pos];
 }
 
-fn skipWhitespaceAndComments(self: *Self) void {
+fn skipWhitespaceAndComments(self: *Lexer) void {
     while (true) {
         switch (self.ch) {
             ' ', '\t', '\r' => self.readChar(),
@@ -496,11 +496,11 @@ fn skipWhitespaceAndComments(self: *Self) void {
     }
 }
 
-fn peekChar(self: *Self) u8 {
+fn peekChar(self: *Lexer) u8 {
     return self.peekCharAt(1);
 }
 
-fn peekCharAt(self: *Self, distance: usize) u8 {
+fn peekCharAt(self: *Lexer, distance: usize) u8 {
     const index = self.pos + distance;
     if (index >= self.input.len) return '\x00';
 
@@ -508,7 +508,7 @@ fn peekCharAt(self: *Self, distance: usize) u8 {
 }
 
 test "reads a Minecraft check in a condition up to 'and'" {
-    var l = Self.init("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)");
+    var l = Lexer.init("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)");
     try std.testing.expectEqual(.@"if", l.nextToken().type);
     try std.testing.expectEqual(.left_paren, l.nextToken().type);
     const check = l.nextToken();
@@ -520,7 +520,7 @@ test "reads a Minecraft check in a condition up to 'and'" {
 }
 
 test "reads a data file body over many lines" {
-    var l = Self.init("predicate p {\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}\nmcfun");
+    var l = Lexer.init("predicate p {\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}\nmcfun");
     try std.testing.expectEqual(.identifier, l.nextToken().type);
     try std.testing.expectEqual(.identifier, l.nextToken().type);
     const body = l.nextToken();
@@ -530,14 +530,14 @@ test "reads a data file body over many lines" {
     try std.testing.expectEqual(.mcfun, after.type);
     try std.testing.expectEqual(5, after.line);
 
-    var unclosed = Self.init("recipe r { \"a\": 1");
+    var unclosed = Lexer.init("recipe r { \"a\": 1");
     _ = unclosed.nextToken();
     _ = unclosed.nextToken();
     try std.testing.expectEqual(.unclosed, unclosed.nextToken().type);
 }
 
 test "skips comments" {
-    var l = Self.init("// first\nvar // second\n");
+    var l = Lexer.init("// first\nvar // second\n");
 
     const tok = l.nextToken();
     try std.testing.expectEqual(.@"var", tok.type);
@@ -545,7 +545,7 @@ test "skips comments" {
 }
 
 test "reads commands and keeps division" {
-    var l = Self.init("x = a / b; /give @s stone{a:[I;1]} 1;");
+    var l = Lexer.init("x = a / b; /give @s stone{a:[I;1]} 1;");
 
     for (0..3) |_| _ = l.nextToken();
     try std.testing.expectEqual(.slash, l.nextToken().type);
@@ -559,7 +559,7 @@ test "reads commands and keeps division" {
 }
 
 test "reads illegal characters as tokens" {
-    var l = Self.init("a \\ \"open");
+    var l = Lexer.init("a \\ \"open");
 
     _ = l.nextToken();
     try std.testing.expectEqualStrings("\\", l.nextToken().literal);
@@ -568,7 +568,7 @@ test "reads illegal characters as tokens" {
 }
 
 test "a string ends at the end of its line" {
-    var l = Self.init("\"a\nb");
+    var l = Lexer.init("\"a\nb");
 
     try std.testing.expectEqual(.unclosed, l.nextToken().type);
     const next = l.nextToken();
@@ -577,7 +577,7 @@ test "a string ends at the end of its line" {
 }
 
 test "reads entity data paths after a selector" {
-    var l = Self.init("@s.$Inventory[{Slot:0b}].count * 2; @p.$\"a.b\"");
+    var l = Lexer.init("@s.$Inventory[{Slot:0b}].count * 2; @p.$\"a.b\"");
 
     try std.testing.expectEqual(.selector, l.nextToken().type);
     const path = l.nextToken();
@@ -589,7 +589,7 @@ test "reads entity data paths after a selector" {
     _ = l.nextToken();
     try std.testing.expectEqualStrings("\"a.b\"", l.nextToken().literal);
 
-    var data = Self.init("$stats.inventory[0].count + $a..");
+    var data = Lexer.init("$stats.inventory[0].count + $a..");
     try std.testing.expectEqualStrings("stats.inventory[0].count", data.nextToken().literal);
     _ = data.nextToken();
     try std.testing.expectEqualStrings("a", data.nextToken().literal);

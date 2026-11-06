@@ -1,6 +1,6 @@
 const std = @import("std");
 const cli = @import("cli/root.zig");
-const Project = @import("Project.zig");
+const project = @import("project.zig");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
     });
     // `zig build run` and the e2e harness run a cached copy of the binary, so they point to `std/` with `POPLAR_STD`.
     var shared: cli.Shared = .{
-        .std_path = init.environ_map.get("POPLAR_STD") orelse try Project.installedStdPath(init.arena.allocator(), io),
+        .std_path = init.environ_map.get("POPLAR_STD") orelse try project.installedStdPath(init.arena.allocator(), io),
         .color = init.environ_map.get("NO_COLOR") == null and (std.Io.File.stdout().isTty(io) catch false),
         .environ_map = init.environ_map,
     };
@@ -29,14 +29,14 @@ pub fn main(init: std.process.Init) !void {
 }
 
 test {
-    _ = @import("Commands.zig");
+    _ = @import("CommandTree.zig");
     _ = @import("Compiler.zig");
     _ = @import("Config.zig");
-    _ = @import("DotEnv.zig");
+    _ = @import("dot_env.zig");
     _ = @import("Lexer.zig");
     _ = @import("Lsp.zig");
-    _ = @import("Optimizer.zig");
+    _ = @import("optimizer.zig");
     _ = @import("Parser.zig");
-    _ = @import("Project.zig");
-    _ = @import("Writer.zig");
+    _ = @import("project.zig");
+    _ = @import("datapack_writer.zig");
 }

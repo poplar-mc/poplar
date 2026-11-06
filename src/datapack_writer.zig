@@ -1,13 +1,13 @@
 const std = @import("std");
 const Config = @import("Config.zig");
-const Ir = @import("Ir.zig");
+const ir = @import("ir.zig");
 
 pub fn writeDatapack(
     io: std.Io,
     gpa: std.mem.Allocator,
     out_dir: std.Io.Dir,
     config: Config,
-    program: Ir.Program,
+    program: ir.Program,
 ) !void {
     const min = config.min_format;
     const max = config.max_format;
@@ -155,7 +155,7 @@ fn writeFunction(
     gpa: std.mem.Allocator,
     out_dir: std.Io.Dir,
     namespace: []const u8,
-    function: Ir.McFunction,
+    function: ir.McFunction,
 ) !void {
     const function_namespace, const function_path = splitFunctionName(namespace, function.name);
     const path = try std.fmt.allocPrint(gpa, "data/{s}/function/{f}.mcfunction", .{ function_namespace, functionPath(function_path) });
@@ -165,7 +165,7 @@ fn writeFunction(
     try out_dir.writeFile(io, .{ .sub_path = path, .data = text });
 }
 
-pub fn renderFunction(gpa: std.mem.Allocator, namespace: []const u8, function: Ir.McFunction) ![]const u8 {
+pub fn renderFunction(gpa: std.mem.Allocator, namespace: []const u8, function: ir.McFunction) ![]const u8 {
     var text: std.ArrayList(u8) = .empty;
 
     for (function.commands) |command| {
@@ -181,7 +181,7 @@ pub fn renderFunction(gpa: std.mem.Allocator, namespace: []const u8, function: I
     return text.toOwnedSlice(gpa);
 }
 
-pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, command: Ir.Command) !void {
+pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, command: ir.Command) !void {
     switch (command) {
         .raw => |command_text| try text.appendSlice(gpa, command_text),
         .function => |name| try text.print(gpa, "function {f}", .{functionId(namespace, name)}),
@@ -280,7 +280,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace
 }
 
 // `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become one.
-fn renderRun(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, run: Ir.Command) std.mem.Allocator.Error!void {
+fn renderRun(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, run: ir.Command) std.mem.Allocator.Error!void {
     const start = text.items.len;
     try text.appendSlice(gpa, " run ");
     try renderCommand(text, gpa, namespace, run);
@@ -289,7 +289,7 @@ fn renderRun(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []cons
     if (std.mem.startsWith(u8, text.items[start..], nested)) try text.replaceRange(gpa, start, nested.len, " ");
 }
 
-fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, check: Ir.Check) !void {
+fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, check: ir.Check) !void {
     try text.appendSlice(gpa, if (check.negated) " unless " else " if ");
     switch (check.score_test) {
         .data_test => |path| return text.print(gpa, "data {f}", .{dataPathText(namespace, path)}),
@@ -356,14 +356,14 @@ fn functionId(pack_namespace: []const u8, name: []const u8) FunctionId {
 }
 
 fn splitFunctionName(pack_namespace: []const u8, name: []const u8) struct { []const u8, []const u8 } {
-    const namespace, const path = Ir.splitName(name);
+    const namespace, const path = ir.splitName(name);
     return .{ namespace orelse pack_namespace, path };
 }
 
 // `storage ns:data hp` or `entity @s Health`, the target of `data` and `execute store`.
 const DataPathText = struct {
     namespace: []const u8,
-    data_path: Ir.DataPath,
+    data_path: ir.DataPath,
 
     pub fn format(self: DataPathText, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const path = self.data_path.path;
@@ -384,7 +384,7 @@ const DataPathText = struct {
     }
 };
 
-fn dataPathText(namespace: []const u8, data_path: Ir.DataPath) DataPathText {
+fn dataPathText(namespace: []const u8, data_path: ir.DataPath) DataPathText {
     return .{ .namespace = namespace, .data_path = data_path };
 }
 
@@ -405,18 +405,18 @@ fn objectiveText(namespace: []const u8, objective: ?[]const u8) ObjectiveText {
 
 const ScoreText = struct {
     namespace: []const u8,
-    score: Ir.Score,
+    score: ir.Score,
 
     pub fn format(self: ScoreText, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("{s} {f}", .{ self.score.holder, objectiveText(self.score.namespace orelse self.namespace, self.score.objective) });
     }
 };
 
-fn scoreText(namespace: []const u8, score: Ir.Score) ScoreText {
+fn scoreText(namespace: []const u8, score: ir.Score) ScoreText {
     return .{ .namespace = namespace, .score = score };
 }
 
-fn compareText(op: Ir.CompareOp) []const u8 {
+fn compareText(op: ir.CompareOp) []const u8 {
     return switch (op) {
         .lt => "<",
         .le => "<=",
@@ -426,7 +426,7 @@ fn compareText(op: Ir.CompareOp) []const u8 {
     };
 }
 
-fn operatorText(op: Ir.Operator) []const u8 {
+fn operatorText(op: ir.Operator) []const u8 {
     return switch (op) {
         .assign => "=",
         .add => "+=",
@@ -445,7 +445,7 @@ test "writes functions and tags" {
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
-    const program: Ir.Program = .{
+    const program: ir.Program = .{
         .functions = &.{
             .{ .name = "main", .commands = &.{ .{ .raw = "say hi" }, .{ .function = "other" } } },
         },

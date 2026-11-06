@@ -1,7 +1,7 @@
 const std = @import("std");
 const zli = @import("zli");
 const Config = @import("../Config.zig");
-const Project = @import("../Project.zig");
+const project = @import("../project.zig");
 const root = @import("root.zig");
 
 pub fn register(init_options: zli.InitOptions) !*zli.Command {
@@ -25,7 +25,7 @@ fn run(ctx: zli.CommandContext) !void {
     }
 
     const folder = try cwd.realPathFileAlloc(ctx.io, ".", arena.allocator());
-    Project.writeNewProject(arena.allocator(), ctx.io, cwd, std.fs.path.basename(folder)) catch |err| switch (err) {
+    project.writeNewProject(arena.allocator(), ctx.io, cwd, std.fs.path.basename(folder)) catch |err| switch (err) {
         error.PathAlreadyExists => {
             out.failure("A project file already exists here", .{});
             root.fail(ctx);

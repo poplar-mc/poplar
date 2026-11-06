@@ -1,6 +1,6 @@
 const std = @import("std");
 const zli = @import("zli");
-const Project = @import("../Project.zig");
+const project = @import("../project.zig");
 const root = @import("root.zig");
 
 pub fn register(init_options: zli.InitOptions) !*zli.Command {
@@ -17,7 +17,7 @@ fn run(ctx: zli.CommandContext) !void {
     defer arena.deinit();
 
     const out = root.output(ctx);
-    const result = try Project.compile(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .output = .check });
+    const result = try project.compile(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .output = .check });
     out.diagnostics(result.diagnostics);
     const summary = result.summary orelse {
         out.errorCount(result.diagnostics.len, "");

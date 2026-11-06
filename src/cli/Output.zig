@@ -1,55 +1,55 @@
 // Lines for people: a green ✓ or a red ✗ at the start, and dim details. There are colors only in a terminal,
 // and not when NO_COLOR is set (https://no-color.org).
 const std = @import("std");
-const Project = @import("../Project.zig");
+const project = @import("../project.zig");
 
-const Self = @This();
+const Output = @This();
 
 writer: *std.Io.Writer,
 color: bool,
 
-pub fn bold(self: Self) []const u8 {
+pub fn bold(self: Output) []const u8 {
     return if (self.color) "\x1b[1m" else "";
 }
 
-pub fn dim(self: Self) []const u8 {
+pub fn dim(self: Output) []const u8 {
     return if (self.color) "\x1b[2m" else "";
 }
 
-pub fn reset(self: Self) []const u8 {
+pub fn reset(self: Output) []const u8 {
     return if (self.color) "\x1b[0m" else "";
 }
 
-fn green(self: Self) []const u8 {
+fn green(self: Output) []const u8 {
     return if (self.color) "\x1b[32m" else "";
 }
 
-fn red(self: Self) []const u8 {
+fn red(self: Output) []const u8 {
     return if (self.color) "\x1b[31m" else "";
 }
 
-fn yellow(self: Self) []const u8 {
+fn yellow(self: Output) []const u8 {
     return if (self.color) "\x1b[33m" else "";
 }
 
-pub fn success(self: Self, comptime format: []const u8, args: anytype) std.Io.Writer.Error!void {
+pub fn success(self: Output, comptime format: []const u8, args: anytype) std.Io.Writer.Error!void {
     try self.writer.print("{s}✓{s} " ++ format ++ "\n", .{ self.green(), self.reset() } ++ args);
 }
 
 // Failures go to stderr, so they still show when the normal output is piped somewhere.
-pub fn failure(self: Self, comptime format: []const u8, args: anytype) void {
+pub fn failure(self: Output, comptime format: []const u8, args: anytype) void {
     self.writer.flush() catch {};
     std.debug.print("{s}✗{s} " ++ format ++ "\n", .{ self.red(), self.reset() } ++ args);
 }
 
 // Something that works, but likely not as the user wants. It goes to stderr, like a failure.
-pub fn warning(self: Self, comptime format: []const u8, args: anytype) void {
+pub fn warning(self: Output, comptime format: []const u8, args: anytype) void {
     self.writer.flush() catch {};
     std.debug.print("{s}!{s} " ++ format ++ "\n", .{ self.yellow(), self.reset() } ++ args);
 }
 
 // `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position.
-pub fn diagnostics(self: Self, list: []const Project.Diagnostic) void {
+pub fn diagnostics(self: Output, list: []const project.Diagnostic) void {
     for (list) |diagnostic| {
         const message: Capitalized = .{ .text = diagnostic.message };
         if (diagnostic.line == 0) {
@@ -79,6 +79,6 @@ const Capitalized = struct {
 };
 
 // `✗ 2 errors, nothing was written`
-pub fn errorCount(self: Self, count: usize, rest: []const u8) void {
+pub fn errorCount(self: Output, count: usize, rest: []const u8) void {
     self.failure("{d} error{s}{s}", .{ count, if (count == 1) "" else "s", rest });
 }

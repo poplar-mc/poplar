@@ -1,6 +1,6 @@
 const std = @import("std");
 const zli = @import("zli");
-const Project = @import("../Project.zig");
+const project = @import("../project.zig");
 const root = @import("root.zig");
 
 pub fn register(init_options: zli.InitOptions) !*zli.Command {
@@ -33,7 +33,7 @@ fn run(ctx: zli.CommandContext) !void {
 
     var arena: std.heap.ArenaAllocator = .init(ctx.allocator);
     defer arena.deinit();
-    try Project.writeNewProject(arena.allocator(), ctx.io, dir, std.fs.path.basename(path));
+    try project.writeNewProject(arena.allocator(), ctx.io, dir, std.fs.path.basename(path));
     const out = root.output(ctx);
     try out.success("Made {s}{s}{s}", .{ out.bold(), path, out.reset() });
     try ctx.writer.print("  {s}Next: cd \"{s}\" && poplar build{s}\n", .{ out.dim(), path, out.reset() });

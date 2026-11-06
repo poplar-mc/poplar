@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Self = @This();
+const CommandTree = @This();
 
 const commands_json = @embedFile("commands.json");
 const registries_json = @embedFile("registries.json");
@@ -34,7 +34,7 @@ pub const Failure = struct {
 root: Node,
 registries: Registries,
 
-pub fn load(arena: std.mem.Allocator) !Self {
+pub fn load(arena: std.mem.Allocator) !CommandTree {
     const root = try std.json.parseFromSliceLeaky(Node, arena, commands_json, .{ .ignore_unknown_fields = true });
     const registries = try std.json.parseFromSliceLeaky(Registries, arena, registries_json, .{});
     return .{ .root = root, .registries = registries };
@@ -58,7 +58,7 @@ pub const Id = struct {
 };
 
 // `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
-pub fn checkText(self: *const Self, gpa: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
+pub fn checkText(self: *const CommandTree, gpa: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
     var walk: Walk = .{ .gpa = gpa, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
     const matched = walk.matchChildren(&self.root, 0);
     if (walk.out_of_memory) return error.OutOfMemory;
@@ -396,7 +396,7 @@ fn isCoordinate(word: []const u8) bool {
 // The options of a selector, as the game knows them.
 const selector_options = [_][]const u8{ "advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit", "name", "nbt", "predicate", "scores", "sort", "tag", "team", "type", "x", "x_rotation", "y", "y_rotation", "z" };
 
-pub fn checkSelector(self: *const Self, gpa: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
+pub fn checkSelector(self: *const CommandTree, gpa: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
     return selectorFailure(gpa, &self.registries, selector);
 }
 
@@ -540,7 +540,7 @@ fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-fn checkForTest(tree: *const Self, arena: std.mem.Allocator, text: []const u8) !?Failure {
+fn checkForTest(tree: *const CommandTree, arena: std.mem.Allocator, text: []const u8) !?Failure {
     return (try tree.checkText(arena, text, &.{})).failure;
 }
 

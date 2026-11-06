@@ -1,11 +1,11 @@
 const std = @import("std");
-const Ir = @import("Ir.zig");
-const Writer = @import("Writer.zig");
+const ir = @import("ir.zig");
+const datapack_writer = @import("datapack_writer.zig");
 
 const Allocator = std.mem.Allocator;
 
 // The passes run in this order on each function. Each pass is a small rewrite, as in bolt-expressions.
-pub fn optimizeFunction(gpa: Allocator, function_name: []const u8, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
+pub fn optimizeFunction(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
     const without_identities = try removeIdentities(gpa, commands);
     const with_known_values = try propagateKnownValues(gpa, without_identities);
     const without_dead_writes = try removeDeadWrites(gpa, function_name, with_known_values);
@@ -16,8 +16,8 @@ pub fn optimizeFunction(gpa: Allocator, function_name: []const u8, commands: []c
 
 // `execute store result storage X float 1 run scoreboard players set T 20` → `data modify storage X set value 20f`,
 // when nothing reads the temp after it. A store into a score becomes `scoreboard players set`.
-fn storeConstants(gpa: Allocator, function_name: []const u8, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
-    var result: std.ArrayList(Ir.Command) = .empty;
+fn storeConstants(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+    var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands, 0..) |command, index| {
         if (command == .store_result and command.store_result.run.* == .score_set) {
@@ -36,8 +36,8 @@ fn storeConstants(gpa: Allocator, function_name: []const u8, commands: []const I
 }
 
 // `add 0`, `remove 0`, `*= 1` and `/= 1` do nothing.
-fn removeIdentities(gpa: Allocator, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
-    var result: std.ArrayList(Ir.Command) = .empty;
+fn removeIdentities(gpa: Allocator, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+    var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands) |command| {
         const does_nothing = switch (command) {
@@ -65,11 +65,11 @@ const KnownValue = union(enum) {
 
 // The scores with a known value at one point in a function.
 const KnownScores = struct {
-    const Entry = struct { score: Ir.Score, value: KnownValue };
+    const Entry = struct { score: ir.Score, value: KnownValue };
 
     entries: std.ArrayList(Entry) = .empty,
 
-    fn get(known: KnownScores, score: Ir.Score) ?KnownValue {
+    fn get(known: KnownScores, score: ir.Score) ?KnownValue {
         if (constantValue(score)) |number| return .{ .number = number };
         for (known.entries.items) |entry| {
             if (entry.score.eql(score)) return entry.value;
@@ -77,19 +77,19 @@ const KnownScores = struct {
         return null;
     }
 
-    fn scoreWithValue(known: KnownScores, value: KnownValue) ?Ir.Score {
+    fn scoreWithValue(known: KnownScores, value: KnownValue) ?ir.Score {
         for (known.entries.items) |entry| {
             if (entry.value.eql(value)) return entry.score;
         }
         return null;
     }
 
-    fn remember(known: *KnownScores, gpa: Allocator, score: Ir.Score, value: KnownValue) Allocator.Error!void {
+    fn remember(known: *KnownScores, gpa: Allocator, score: ir.Score, value: KnownValue) Allocator.Error!void {
         known.forget(score);
         if (isTracked(score)) try known.entries.append(gpa, .{ .score = score, .value = value });
     }
 
-    fn forget(known: *KnownScores, score: Ir.Score) void {
+    fn forget(known: *KnownScores, score: ir.Score) void {
         for (known.entries.items, 0..) |entry, index| {
             if (entry.score.eql(score)) {
                 _ = known.entries.swapRemove(index);
@@ -99,7 +99,7 @@ const KnownScores = struct {
     }
 
     // A call can run this mcfun again (recursion), and a user command can change any score.
-    fn forgetWrites(known: *KnownScores, command: Ir.Command) void {
+    fn forgetWrites(known: *KnownScores, command: ir.Command) void {
         if (runsOtherCode(command)) return known.entries.clearRetainingCapacity();
         switch (command) {
             .score_set, .score_add, .score_remove, .score_set_if_unset => |set| known.forget(set.score),
@@ -116,8 +116,8 @@ const KnownScores = struct {
         }
     }
 
-    fn learn(known: *KnownScores, gpa: Allocator, command: Ir.Command) Allocator.Error!void {
-        const learned: ?struct { Ir.Score, KnownValue } = switch (command) {
+    fn learn(known: *KnownScores, gpa: Allocator, command: ir.Command) Allocator.Error!void {
+        const learned: ?struct { ir.Score, KnownValue } = switch (command) {
             .score_set => |set| .{ set.score, .{ .number = set.value } },
             .score_set_param => |set| .{ set.score, .{ .param = set.param } },
             .score_operation => |operation| if (operation.op == .assign)
@@ -133,13 +133,13 @@ const KnownScores = struct {
 
 // Removes a set when the score already has the value, copies a macro argument from a score that holds it
 // (a macro line is parsed again for new arguments), and computes math on known numbers.
-fn propagateKnownValues(gpa: Allocator, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
-    var result: std.ArrayList(Ir.Command) = .empty;
+fn propagateKnownValues(gpa: Allocator, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+    var result: std.ArrayList(ir.Command) = .empty;
     var known: KnownScores = .{};
     defer known.entries.deinit(gpa);
 
     for (commands) |command| {
-        const optimized: ?Ir.Command = switch (command) {
+        const optimized: ?ir.Command = switch (command) {
             .score_set => |set| if (isKnown(known, set.score, .{ .number = set.value })) null else command,
             .score_set_param => |set| blk: {
                 const value: KnownValue = .{ .param = set.param };
@@ -158,14 +158,14 @@ fn propagateKnownValues(gpa: Allocator, commands: []const Ir.Command) Allocator.
     return result.toOwnedSlice(gpa);
 }
 
-fn isKnown(known: KnownScores, score: Ir.Score, value: KnownValue) bool {
+fn isKnown(known: KnownScores, score: ir.Score, value: KnownValue) bool {
     const current = known.get(score) orelse return false;
     return current.eql(value);
 }
 
 // The same math as Minecraft: ints wrap, and `/=` and `%=` round down. Division by 0 is not computed.
-fn foldMath(known: KnownScores, command: Ir.Command) ?Ir.ScoreValue {
-    const target, const op: Ir.Operator, const source: KnownValue = switch (command) {
+fn foldMath(known: KnownScores, command: ir.Command) ?ir.ScoreValue {
+    const target, const op: ir.Operator, const source: KnownValue = switch (command) {
         .score_add => |change| .{ change.score, .add, .{ .number = change.value } },
         .score_remove => |change| .{ change.score, .sub, .{ .number = change.value } },
         .score_operation => |operation| .{ operation.target, operation.op, known.get(operation.source) orelse return null },
@@ -192,8 +192,8 @@ fn foldMath(known: KnownScores, command: Ir.Command) ?Ir.ScoreValue {
 
 // A write to a temp or a local is removed when nothing reads it before it is set again or the function ends.
 // A write to a global is removed only when it is set again before anything else can read it.
-fn removeDeadWrites(gpa: Allocator, function_name: []const u8, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
-    var result: std.ArrayList(Ir.Command) = .empty;
+fn removeDeadWrites(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+    var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands, 0..) |command, index| {
         const written = switch (command) {
@@ -214,8 +214,8 @@ fn removeDeadWrites(gpa: Allocator, function_name: []const u8, commands: []const
 }
 
 // `data get X` followed by `*= N` becomes `data get X N`. Only `*=`: a scale such as 0.01 can round wrongly.
-fn scaleDataGets(gpa: Allocator, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
-    var result: std.ArrayList(Ir.Command) = .empty;
+fn scaleDataGets(gpa: Allocator, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+    var result: std.ArrayList(ir.Command) = .empty;
 
     var index: usize = 0;
     while (index < commands.len) : (index += 1) {
@@ -240,8 +240,8 @@ fn scaleDataGets(gpa: Allocator, commands: []const Ir.Command) Allocator.Error![
 // A command that computes a temp, followed by a copy of that temp, becomes one command:
 // `scoreboard players remove T 1` + `execute store result storage X int 1 run scoreboard players get T`
 // → `execute store result storage X int 1 run scoreboard players remove T 1`.
-fn inlineStores(gpa: Allocator, function_name: []const u8, commands: []const Ir.Command) Allocator.Error![]const Ir.Command {
-    var result: std.ArrayList(Ir.Command) = .empty;
+fn inlineStores(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+    var result: std.ArrayList(ir.Command) = .empty;
 
     var index: usize = 0;
     while (index < commands.len) : (index += 1) {
@@ -264,7 +264,7 @@ fn inlineStores(gpa: Allocator, function_name: []const u8, commands: []const Ir.
 
 // The temp that a command writes, when the command's result is the temp's new value.
 // `/=` and `%=` fail when the source is 0, and then the result is 0, so they need a constant source.
-fn definedTemp(command: Ir.Command, function_name: []const u8) ?Ir.Score {
+fn definedTemp(command: ir.Command, function_name: []const u8) ?ir.Score {
     const score = switch (command) {
         .score_set, .score_add, .score_remove => |set| set.score,
         .score_set_param => |set| set.score,
@@ -278,11 +278,11 @@ fn definedTemp(command: Ir.Command, function_name: []const u8) ?Ir.Score {
     return if (isScopedHere(score, function_name)) score else null;
 }
 
-fn mergeCopy(gpa: Allocator, definition: Ir.Command, copy: Ir.Command, temp: Ir.Score) Allocator.Error!?Ir.Command {
+fn mergeCopy(gpa: Allocator, definition: ir.Command, copy: ir.Command, temp: ir.Score) Allocator.Error!?ir.Command {
     switch (copy) {
         .score_to_data => |store| {
             if (!store.score.eql(temp)) return null;
-            const target: Ir.StoreResult.Target = .{ .data = store.target };
+            const target: ir.StoreResult.Target = .{ .data = store.target };
             return .{ .store_result = .{ .target = target, .run = try create(gpa, definition) } };
         },
         .return_run => |run| {
@@ -298,7 +298,7 @@ fn mergeCopy(gpa: Allocator, definition: Ir.Command, copy: Ir.Command, temp: Ir.
 }
 
 // True if a command reads the temp before a command sets it again.
-fn isReadLater(commands: []const Ir.Command, temp: Ir.Score) bool {
+fn isReadLater(commands: []const ir.Command, temp: ir.Score) bool {
     for (commands) |command| {
         if (readsScore(command, temp) or callsTempReader(command, temp)) return true;
         // Command text can name a local's fake player: a user command, or a `text(#x)` part in a call's arguments.
@@ -308,7 +308,7 @@ fn isReadLater(commands: []const Ir.Command, temp: Ir.Score) bool {
     return false;
 }
 
-fn mentionsInText(command: Ir.Command, name: []const u8) bool {
+fn mentionsInText(command: ir.Command, name: []const u8) bool {
     return switch (command) {
         .raw, .macro => |text| std.mem.indexOf(u8, text, name) != null,
         .function_with => |call| call.arguments == .compound and std.mem.indexOf(u8, call.arguments.compound, name) != null,
@@ -322,7 +322,7 @@ fn mentionsInText(command: Ir.Command, name: []const u8) bool {
     };
 }
 
-pub fn readsScore(command: Ir.Command, score: Ir.Score) bool {
+pub fn readsScore(command: ir.Command, score: ir.Score) bool {
     return switch (command) {
         .score_add, .score_remove => |change| change.score.eql(score),
         .score_operation => |operation| operation.source.eql(score) or (operation.op != .assign and operation.target.eql(score)),
@@ -339,7 +339,7 @@ pub fn readsScore(command: Ir.Command, score: Ir.Score) bool {
 }
 
 // Only a command that always runs counts. A write inside `execute if` may not happen.
-fn setsScore(command: Ir.Command, score: Ir.Score) bool {
+fn setsScore(command: ir.Command, score: ir.Score) bool {
     return switch (command) {
         .score_set => |set| set.score.eql(score),
         .score_set_param => |set| set.score.eql(score),
@@ -351,7 +351,7 @@ fn setsScore(command: Ir.Command, score: Ir.Score) bool {
 }
 
 // Other functions and user commands can read any global score, and so can the caller after a return.
-fn isSetBeforeUse(commands: []const Ir.Command, score: Ir.Score) bool {
+fn isSetBeforeUse(commands: []const ir.Command, score: ir.Score) bool {
     for (commands) |command| {
         if (readsScore(command, score) or runsOtherCode(command) or canReturn(command)) return false;
         if (setsScore(command, score)) return true;
@@ -359,7 +359,7 @@ fn isSetBeforeUse(commands: []const Ir.Command, score: Ir.Score) bool {
     return false;
 }
 
-fn runsOtherCode(command: Ir.Command) bool {
+fn runsOtherCode(command: ir.Command) bool {
     return switch (command) {
         .function, .function_with, .macro, .raw, .execute_raw => true,
         .execute => |execute| checkedFunction(execute) != null or runsCheckedCode(execute) or runsOtherCode(execute.run.*),
@@ -369,7 +369,7 @@ fn runsOtherCode(command: Ir.Command) bool {
     };
 }
 
-fn canReturn(command: Ir.Command) bool {
+fn canReturn(command: ir.Command) bool {
     return switch (command) {
         .return_run, .return_value, .return_param => true,
         .execute => |execute| canReturn(execute.run.*),
@@ -380,17 +380,17 @@ fn canReturn(command: Ir.Command) bool {
 
 // Fake players, and `@s`, which is the same entity for the whole function.
 // Other selectors can match other entities in each command.
-fn isTracked(score: Ir.Score) bool {
+fn isTracked(score: ir.Score) bool {
     return std.mem.startsWith(u8, score.holder, "#") or std.mem.eql(u8, score.holder, "@s");
 }
 
 // A generated function with one command is put where it is called, and the function is removed.
 // A command that can return is not moved, because the `return` would then leave the caller.
-pub fn inlineSmallFunctions(gpa: Allocator, functions: []const Ir.McFunction) Allocator.Error![]const Ir.McFunction {
+pub fn inlineSmallFunctions(gpa: Allocator, functions: []const ir.McFunction) Allocator.Error![]const ir.McFunction {
     // One pass with the original bodies, so that functions that call each other cannot grow forever.
-    const result = try gpa.dupe(Ir.McFunction, functions);
+    const result = try gpa.dupe(ir.McFunction, functions);
     for (result) |*function| {
-        var commands: std.ArrayList(Ir.Command) = .empty;
+        var commands: std.ArrayList(ir.Command) = .empty;
         for (function.commands) |command| {
             try commands.append(gpa, try inlineCall(gpa, functions, function.name, command) orelse command);
         }
@@ -398,7 +398,7 @@ pub fn inlineSmallFunctions(gpa: Allocator, functions: []const Ir.McFunction) Al
     }
     try inlineTailCalls(gpa, result);
 
-    var used: std.ArrayList(Ir.McFunction) = .empty;
+    var used: std.ArrayList(ir.McFunction) = .empty;
     for (result) |function| {
         if (!isGenerated(function.name) or isCalled(result, function.name)) try used.append(gpa, function);
     }
@@ -406,7 +406,7 @@ pub fn inlineSmallFunctions(gpa: Allocator, functions: []const Ir.McFunction) Al
     return used.toOwnedSlice(gpa);
 }
 
-fn inlineCall(gpa: Allocator, functions: []const Ir.McFunction, caller: []const u8, command: Ir.Command) Allocator.Error!?Ir.Command {
+fn inlineCall(gpa: Allocator, functions: []const ir.McFunction, caller: []const u8, command: ir.Command) Allocator.Error!?ir.Command {
     switch (command) {
         .function => |name| return smallBody(functions, caller, name),
         // A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the caller.
@@ -414,7 +414,7 @@ fn inlineCall(gpa: Allocator, functions: []const Ir.McFunction, caller: []const 
         .execute => |execute| {
             const run = try inlineCall(gpa, functions, caller, execute.run.*) orelse return null;
             if (run == .execute) {
-                const checks = try std.mem.concat(gpa, Ir.Check, &.{ execute.checks, run.execute.checks });
+                const checks = try std.mem.concat(gpa, ir.Check, &.{ execute.checks, run.execute.checks });
                 return .{ .execute = .{ .checks = checks, .run = run.execute.run } };
             }
             return .{ .execute = .{ .checks = execute.checks, .run = try create(gpa, run) } };
@@ -427,7 +427,7 @@ fn inlineCall(gpa: Allocator, functions: []const Ir.McFunction, caller: []const 
     }
 }
 
-fn smallBody(functions: []const Ir.McFunction, caller: []const u8, name: []const u8) ?Ir.Command {
+fn smallBody(functions: []const ir.McFunction, caller: []const u8, name: []const u8) ?ir.Command {
     if (!isGenerated(name) or std.mem.eql(u8, caller, name)) return null;
     for (functions) |function| {
         if (!std.mem.eql(u8, function.name, name)) continue;
@@ -439,7 +439,7 @@ fn smallBody(functions: []const Ir.McFunction, caller: []const u8, name: []const
 
 // A generated function that is called once, as the last command of its caller, is put in its place, even when
 // it can return: leaving the caller there is what happens anyway. Not when something reads the caller's return value.
-fn inlineTailCalls(gpa: Allocator, functions: []Ir.McFunction) Allocator.Error!void {
+fn inlineTailCalls(gpa: Allocator, functions: []ir.McFunction) Allocator.Error!void {
     for (functions) |*function| {
         const commands = function.commands;
         if (commands.len == 0) continue;
@@ -454,11 +454,11 @@ fn inlineTailCalls(gpa: Allocator, functions: []Ir.McFunction) Allocator.Error!v
         const callee = for (functions) |candidate| {
             if (std.mem.eql(u8, candidate.name, callee_name)) break candidate;
         } else continue;
-        function.commands = try std.mem.concat(gpa, Ir.Command, &.{ commands[0 .. commands.len - 1], callee.commands });
+        function.commands = try std.mem.concat(gpa, ir.Command, &.{ commands[0 .. commands.len - 1], callee.commands });
     }
 }
 
-fn callCount(functions: []const Ir.McFunction, name: []const u8) usize {
+fn callCount(functions: []const ir.McFunction, name: []const u8) usize {
     var count: usize = 0;
     for (functions) |function| {
         for (function.commands) |command| {
@@ -469,7 +469,7 @@ fn callCount(functions: []const Ir.McFunction, name: []const u8) usize {
 }
 
 // True when a command uses the return value of `name`: `store result ... run function`, `if function`, or `return run function`.
-fn isReturnValueRead(functions: []const Ir.McFunction, name: []const u8) bool {
+fn isReturnValueRead(functions: []const ir.McFunction, name: []const u8) bool {
     for (functions) |function| {
         for (function.commands) |command| {
             if (readsReturnValue(command, name)) return true;
@@ -478,7 +478,7 @@ fn isReturnValueRead(functions: []const Ir.McFunction, name: []const u8) bool {
     return false;
 }
 
-fn readsReturnValue(command: Ir.Command, name: []const u8) bool {
+fn readsReturnValue(command: ir.Command, name: []const u8) bool {
     return switch (command) {
         .store_result => |store| callsFunction(store.run.*, name),
         .return_run => |run| callsFunction(run.*, name),
@@ -492,13 +492,13 @@ fn readsReturnValue(command: Ir.Command, name: []const u8) bool {
 }
 
 fn isGenerated(name: []const u8) bool {
-    _, const path = Ir.splitName(name);
+    _, const path = ir.splitName(name);
     return std.mem.startsWith(u8, path, "poplar/");
 }
 
 // A generated body gets the macro arguments of its mcfun (`{amount:"$(amount)"}`) only if it, or a body that it calls, has a
 // macro line. The others are called without them, so a value with a `"` in it cannot break the call.
-pub fn dropUnusedArguments(gpa: Allocator, functions: []Ir.McFunction) Allocator.Error!void {
+pub fn dropUnusedArguments(gpa: Allocator, functions: []ir.McFunction) Allocator.Error!void {
     var needs: std.StringHashMapUnmanaged(void) = .empty;
     var is_changed = true;
     while (is_changed) {
@@ -514,13 +514,13 @@ pub fn dropUnusedArguments(gpa: Allocator, functions: []Ir.McFunction) Allocator
         }
     }
     for (functions) |*function| {
-        const commands = try gpa.alloc(Ir.Command, function.commands.len);
+        const commands = try gpa.alloc(ir.Command, function.commands.len);
         for (function.commands, commands) |command, *result| result.* = try withoutArguments(gpa, command, &needs);
         function.commands = commands;
     }
 }
 
-fn usesArguments(gpa: Allocator, command: Ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!bool {
+fn usesArguments(gpa: Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!bool {
     switch (command) {
         .function_with => |call| if (call.arguments == .compound and isGenerated(call.name)) return needs.contains(call.name),
         // The wrapper and its run are checked apart, so a call inside counts only as itself.
@@ -533,15 +533,15 @@ fn usesArguments(gpa: Allocator, command: Ir.Command, needs: *const std.StringHa
     return hasMacroText(gpa, command);
 }
 
-fn hasMacroText(gpa: Allocator, command: Ir.Command) Allocator.Error!bool {
+fn hasMacroText(gpa: Allocator, command: ir.Command) Allocator.Error!bool {
     var text: std.ArrayList(u8) = .empty;
-    Writer.renderCommand(&text, gpa, "", command) catch |err| switch (err) {
+    datapack_writer.renderCommand(&text, gpa, "", command) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
     };
     return std.mem.indexOf(u8, text.items, "$(") != null;
 }
 
-fn withoutArguments(gpa: Allocator, command: Ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!Ir.Command {
+fn withoutArguments(gpa: Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!ir.Command {
     switch (command) {
         .function_with => |call| if (call.arguments == .compound and isGenerated(call.name) and !needs.contains(call.name)) return .{ .function = call.name },
         .execute, .execute_raw, .store_result, .return_run => return withRun(gpa, command, try withoutArguments(gpa, runOf(command).?.*, needs)),
@@ -550,7 +550,7 @@ fn withoutArguments(gpa: Allocator, command: Ir.Command, needs: *const std.Strin
     return command;
 }
 
-fn runOf(command: Ir.Command) ?*const Ir.Command {
+fn runOf(command: ir.Command) ?*const ir.Command {
     return switch (command) {
         .execute => |execute| execute.run,
         .execute_raw => |execute| execute.run,
@@ -560,8 +560,8 @@ fn runOf(command: Ir.Command) ?*const Ir.Command {
     };
 }
 
-fn withRun(gpa: Allocator, command: Ir.Command, run: Ir.Command) Allocator.Error!Ir.Command {
-    const new_run = try gpa.create(Ir.Command);
+fn withRun(gpa: Allocator, command: ir.Command, run: ir.Command) Allocator.Error!ir.Command {
+    const new_run = try gpa.create(ir.Command);
     new_run.* = run;
     return switch (command) {
         .execute => |execute| .{ .execute = .{ .checks = execute.checks, .run = new_run } },
@@ -572,7 +572,7 @@ fn withRun(gpa: Allocator, command: Ir.Command, run: Ir.Command) Allocator.Error
     };
 }
 
-fn isCalled(functions: []const Ir.McFunction, name: []const u8) bool {
+fn isCalled(functions: []const ir.McFunction, name: []const u8) bool {
     for (functions) |function| {
         for (function.commands) |command| {
             if (callsFunction(command, name)) return true;
@@ -581,7 +581,7 @@ fn isCalled(functions: []const Ir.McFunction, name: []const u8) bool {
     return false;
 }
 
-fn callsFunction(command: Ir.Command, name: []const u8) bool {
+fn callsFunction(command: ir.Command, name: []const u8) bool {
     return switch (command) {
         .function => |called| std.mem.eql(u8, called, name),
         .function_with => |call| std.mem.eql(u8, call.name, name),
@@ -595,7 +595,7 @@ fn callsFunction(command: Ir.Command, name: []const u8) bool {
 
 // Only the mcfun and its generated functions (`poplar/<mcfun>/...`) read the temps of the mcfun.
 // The mcfun itself sets each temp before it reads it, so a recursive call does not read them.
-fn callsTempReader(command: Ir.Command, temp: Ir.Score) bool {
+fn callsTempReader(command: ir.Command, temp: ir.Score) bool {
     const name = switch (command) {
         .function => |name| name,
         .function_with => |call| call.name,
@@ -612,7 +612,7 @@ fn callsTempReader(command: Ir.Command, temp: Ir.Score) bool {
 }
 
 // `if function ...` written by the user runs code as part of the check.
-fn runsCheckedCode(execute: Ir.Execute) bool {
+fn runsCheckedCode(execute: ir.Execute) bool {
     for (execute.checks) |check| {
         if (check.score_test == .raw and std.mem.startsWith(u8, check.score_test.raw, "function ")) return true;
     }
@@ -620,29 +620,29 @@ fn runsCheckedCode(execute: Ir.Execute) bool {
 }
 
 // The function of an `execute if function ...` check.
-fn checkedFunction(execute: Ir.Execute) ?[]const u8 {
+fn checkedFunction(execute: ir.Execute) ?[]const u8 {
     for (execute.checks) |check| {
         if (check.score_test == .function_returns) return check.score_test.function_returns;
     }
     return null;
 }
 
-fn readsTempsOf(name: []const u8, temp: Ir.Score) bool {
+fn readsTempsOf(name: []const u8, temp: ir.Score) bool {
     // A `macro_<n>` helper holds one user command, so it never reads a temp.
     if (std.mem.startsWith(u8, std.fs.path.basenamePosix(name), "macro_")) return false;
 
-    const function_namespace, const path = Ir.splitName(name);
+    const function_namespace, const path = ir.splitName(name);
     // A local knows its mcfun (`combat:heal`). A temp names it in its holder (`#poplar.heal.t0`), in its namespace.
-    const owner_namespace, const owner = if (temp.owner) |owner| Ir.splitName(owner) else .{ temp.namespace, temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?] };
-    if (!Ir.optionalEql(function_namespace, owner_namespace)) return false;
+    const owner_namespace, const owner = if (temp.owner) |owner| ir.splitName(owner) else .{ temp.namespace, temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?] };
+    if (!ir.optionalEql(function_namespace, owner_namespace)) return false;
 
     const generated_prefix = "poplar/";
     if (!std.mem.startsWith(u8, path, generated_prefix)) return false;
     const folder_end = std.mem.indexOfScalarPos(u8, path, generated_prefix.len, '/') orelse return false;
-    return Ir.isGeneratedFolder(path[generated_prefix.len..folder_end], owner);
+    return ir.isGeneratedFolder(path[generated_prefix.len..folder_end], owner);
 }
 
-fn checkReads(check: Ir.Check, score: Ir.Score) bool {
+fn checkReads(check: ir.Check, score: ir.Score) bool {
     return switch (check.score_test) {
         .data_test, .function_returns => false,
         // `score @s ...` in a check written by the user can name any score.
@@ -654,35 +654,35 @@ fn checkReads(check: Ir.Check, score: Ir.Score) bool {
 
 // A temp, or a local of this mcfun, is only read by this function and its generated functions. A local can be
 // written in a generated body and read by its mcfun after the body returns, so it only counts in the mcfun itself.
-fn isScopedHere(score: Ir.Score, function_name: []const u8) bool {
+fn isScopedHere(score: ir.Score, function_name: []const u8) bool {
     if (score.owner) |owner| return std.mem.eql(u8, owner, function_name);
     return isTemp(score);
 }
 
 // Temps are `#poplar.<mcfun>.t<N>`. They are only read in the function that writes them.
-fn isTemp(score: Ir.Score) bool {
+fn isTemp(score: ir.Score) bool {
     if (score.objective != null or !std.mem.startsWith(u8, score.holder, "#poplar.") or isConstant(score)) return false;
     const name = score.holder[std.mem.lastIndexOfScalar(u8, score.holder, '.').? + 1 ..];
     return name.len > 1 and name[0] == 't' and std.ascii.isDigit(name[1]);
 }
 
 // Constants are `#poplar.c<N>`.
-fn constantValue(score: Ir.Score) ?i32 {
+fn constantValue(score: ir.Score) ?i32 {
     const prefix = "#poplar.c";
     if (score.objective != null or !std.mem.startsWith(u8, score.holder, prefix)) return null;
     return std.fmt.parseInt(i32, score.holder[prefix.len..], 10) catch null;
 }
 
-fn isConstant(score: Ir.Score) bool {
+fn isConstant(score: ir.Score) bool {
     return constantValue(score) != null;
 }
 
-fn isConstantOne(score: Ir.Score) bool {
+fn isConstantOne(score: ir.Score) bool {
     return constantValue(score) == 1;
 }
 
-fn create(gpa: Allocator, command: Ir.Command) Allocator.Error!*const Ir.Command {
-    const pointer = try gpa.create(Ir.Command);
+fn create(gpa: Allocator, command: ir.Command) Allocator.Error!*const ir.Command {
+    const pointer = try gpa.create(ir.Command);
     pointer.* = command;
     return pointer;
 }
@@ -692,12 +692,12 @@ test "removes identities and inlines copies of temps" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const temp: Ir.Score = .{ .holder = "#poplar.f.t0" };
-    const other_temp: Ir.Score = .{ .holder = "#poplar.f.t1" };
-    const division_temp: Ir.Score = .{ .holder = "#poplar.f.t2" };
-    const entity: Ir.Score = .{ .holder = "@p", .objective = "x" };
+    const temp: ir.Score = .{ .holder = "#poplar.f.t0" };
+    const other_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
+    const division_temp: ir.Score = .{ .holder = "#poplar.f.t2" };
+    const entity: ir.Score = .{ .holder = "@p", .objective = "x" };
 
-    const commands = [_]Ir.Command{
+    const commands = [_]ir.Command{
         .{ .score_add = .{ .score = temp, .value = 0 } },
         .{ .score_operation = .{ .target = temp, .op = .mul, .source = .{ .holder = "#poplar.c1" } } },
         .{ .score_remove = .{ .score = temp, .value = 1 } },
@@ -725,15 +725,15 @@ test "uses known values, removes dead writes and scales data gets" {
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const temp: Ir.Score = .{ .holder = "#poplar.f.t0" };
-    const copy_temp: Ir.Score = .{ .holder = "#poplar.f.t1" };
-    const after_call_temp: Ir.Score = .{ .holder = "#poplar.f.t2" };
-    const global: Ir.Score = .{ .holder = "#global", .objective = "x" };
-    const at_most_one: Ir.Check = .{ .negated = false, .score_test = .{ .matches = .{ .score = temp, .min = null, .max = 1 } } };
+    const temp: ir.Score = .{ .holder = "#poplar.f.t0" };
+    const copy_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
+    const after_call_temp: ir.Score = .{ .holder = "#poplar.f.t2" };
+    const global: ir.Score = .{ .holder = "#global", .objective = "x" };
+    const at_most_one: ir.Check = .{ .negated = false, .score_test = .{ .matches = .{ .score = temp, .min = null, .max = 1 } } };
 
-    const commands = [_]Ir.Command{
+    const commands = [_]ir.Command{
         .{ .score_set_param = .{ .score = temp, .param = "n" } },
-        .{ .execute = .{ .checks = &.{at_most_one}, .run = &Ir.Command{ .return_value = 1 } } },
+        .{ .execute = .{ .checks = &.{at_most_one}, .run = &ir.Command{ .return_value = 1 } } },
         // Removed: the temp already holds `n`.
         .{ .score_set_param = .{ .score = temp, .param = "n" } },
         // Becomes a copy of the temp.

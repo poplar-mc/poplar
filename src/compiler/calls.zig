@@ -1,30 +1,30 @@
 // mcfun calls: arguments, the call graph, and saving values around a recursive call.
 const std = @import("std");
 const Compiler = @import("../Compiler.zig");
-const Ast = @import("../Ast.zig");
-const Commands = @import("../Commands.zig");
+const ast = @import("../ast.zig");
+const CommandTree = @import("../CommandTree.zig");
 const Environment = @import("../Environment.zig");
-const Ir = @import("../Ir.zig");
+const ir = @import("../ir.zig");
 const Lexer = @import("../Lexer.zig");
 const Parser = @import("../Parser.zig");
-const Data = @import("Data.zig");
-const Declarations = @import("Declarations.zig");
-const Load = @import("Load.zig");
-const MinecraftText = @import("MinecraftText.zig");
-const Scores = @import("Scores.zig");
-const Values = @import("Values.zig");
+const data = @import("data.zig");
+const declarations = @import("declarations.zig");
+const load = @import("load.zig");
+const minecraft_text = @import("minecraft_text.zig");
+const scores = @import("scores.zig");
+const values = @import("values.zig");
 
-// Returns the command that calls an mcfun. Commands that write a runtime `with` compound go into `commands` first.
-pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Located, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!?Ir.Command {
+// Returns the command that calls an mcfun. CommandTree that write a runtime `with` compound go into `commands` first.
+pub fn compileMcfnCall(compiler: *Compiler, call: ast.Call, located: Compiler.Located, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.Command {
     const function = located.function;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-    try Compiler.collectMacroKeys(self.gpa, function.body, &keys);
+    try Compiler.collectMacroKeys(compiler.gpa, function.body, &keys);
     if (call.args.len > 0) {
-        try self.addError("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ function.name, function.name, try exampleCompound(self, keys.keys()) });
+        try compiler.addError("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ function.name, function.name, try exampleCompound(compiler, keys.keys()) });
         return null;
     }
     const with = call.with orelse {
-        if (keys.count() > 0) try self.addError("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ function.name, keys.keys()[0], function.name, try exampleCompound(self, keys.keys()) });
+        if (keys.count() > 0) try compiler.addError("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ function.name, keys.keys()[0], function.name, try exampleCompound(compiler, keys.keys()) });
         return .{ .function = located.ir_name };
     };
     const value = switch (with) {
@@ -32,12 +32,12 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
         .value => |value| value,
     };
 
-    if (Data.isDataIdentifier(value)) {
-        const path = try Data.dataPathOf(self, value.kind.identifier, env) orelse return null;
-        if (try nonCompoundGlobal(self, value.kind.identifier, env)) |initial| {
-            const outer_position = self.enterExpression(value);
-            defer self.restorePosition(outer_position);
-            try self.addError("'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ value.kind.identifier.name, initial, value.kind.identifier.name, initial });
+    if (data.isDataIdentifier(value)) {
+        const path = try data.dataPathOf(compiler, value.kind.identifier, env) orelse return null;
+        if (try nonCompoundGlobal(compiler, value.kind.identifier, env)) |initial| {
+            const outer_position = compiler.enterExpression(value);
+            defer compiler.restorePosition(outer_position);
+            try compiler.addError("'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ value.kind.identifier.name, initial, value.kind.identifier.name, initial });
             return null;
         }
         return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .data_path = path } } };
@@ -45,9 +45,9 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
     const entries = switch (value.kind) {
         .compound => |entries| entries,
         else => {
-            const outer_position = self.enterExpression(value);
-            defer self.restorePosition(outer_position);
-            try self.addError("'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
+            const outer_position = compiler.enterExpression(value);
+            defer compiler.restorePosition(outer_position);
+            try compiler.addError("'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
             return null;
         },
     };
@@ -56,63 +56,63 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
         for (entries) |entry| {
             if (std.mem.eql(u8, entry.key, key)) break;
         } else {
-            const outer_position = self.enterExpression(value);
-            defer self.restorePosition(outer_position);
-            try self.addError("mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ function.name, key, key });
+            const outer_position = compiler.enterExpression(value);
+            defer compiler.restorePosition(outer_position);
+            try compiler.addError("mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ function.name, key, key });
             return null;
         }
     }
 
     var is_inline = true;
     for (entries) |entry| {
-        if (Values.containsRuntimeValue(self, entry.value, env) and entry.value.kind != .macro_key) is_inline = false;
+        if (values.containsRuntimeValue(compiler, entry.value, env) and entry.value.kind != .macro_key) is_inline = false;
     }
     if (is_inline) {
         var compound: std.ArrayList(u8) = .empty;
-        try compound.append(self.gpa, '{');
+        try compound.append(compiler.gpa, '{');
         for (entries, 0..) |entry, index| {
-            if (index > 0) try compound.append(self.gpa, ',');
-            try compound.print(self.gpa, "{s}:{s}", .{ try Values.snbtKey(self, entry.key), try argumentSnbt(self, entry.value, env) orelse return null });
+            if (index > 0) try compound.append(compiler.gpa, ',');
+            try compound.print(compiler.gpa, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) orelse return null });
         }
-        try compound.append(self.gpa, '}');
-        return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(self.gpa) } } };
+        try compound.append(compiler.gpa, '}');
+        return .{ .function_with = .{ .name = located.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(compiler.gpa) } } };
     }
 
     // Math is computed before any key is written, so a call inside a value cannot overwrite them.
-    const scores = try self.gpa.alloc(?Ir.Score, entries.len);
-    for (entries, scores) |entry, *score| {
+    const entry_scores = try compiler.gpa.alloc(?ir.Score, entries.len);
+    for (entries, entry_scores) |entry, *score| {
         score.* = null;
         const entry_value = entry.value;
-        if (!Values.containsRuntimeValue(self, entry_value, env) or entry_value.kind == .macro_key) continue;
-        if (entry_value.kind == .call and Data.isStringCall(entry_value.kind.call)) continue;
+        if (!values.containsRuntimeValue(compiler, entry_value, env) or entry_value.kind == .macro_key) continue;
+        if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call)) continue;
         if (entry_value.kind == .list or entry_value.kind == .compound) continue;
 
         if (entry_value.kind == .identifier) {
-            if (entry_value.kind.identifier.storage == .score) score.* = try Scores.scoreSource(self, entry_value.kind.identifier, env) orelse return null;
+            if (entry_value.kind.identifier.storage == .score) score.* = try scores.scoreSource(compiler, entry_value.kind.identifier, env) orelse return null;
             continue;
         }
 
-        score.* = try Scores.newTemp(self);
-        try Scores.compileInto(self, score.*.?, entry_value, env, commands);
+        score.* = try scores.newTemp(compiler);
+        try scores.compileInto(compiler, score.*.?, entry_value, env, commands);
     }
 
-    for (entries, scores) |entry, entry_score| {
-        const outer_position = self.enterExpression(entry.value);
-        defer self.restorePosition(outer_position);
-        const target: Ir.DataPath = .inStorage(.args, try Values.snbtKey(self, entry.key));
+    for (entries, entry_scores) |entry, entry_score| {
+        const outer_position = compiler.enterExpression(entry.value);
+        defer compiler.restorePosition(outer_position);
+        const target: ir.DataPath = .inStorage(.args, try values.snbtKey(compiler, entry.key));
         const entry_value = entry.value;
         if (entry_score) |score| {
-            try commands.append(self.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
-        } else if (entry_value.kind == .call and Data.isStringCall(entry_value.kind.call) and Values.containsRuntimeValue(self, entry_value, env)) {
-            try Data.compileStringInto(self, target, entry_value.kind.call, env, commands);
-        } else if (Data.isDataIdentifier(entry_value)) {
-            const source = try Data.dataPathOf(self, entry_value.kind.identifier, env) orelse return null;
-            try commands.append(self.gpa, .{ .data_copy = .{ .target = target, .source = source } });
-        } else if ((entry_value.kind == .list or entry_value.kind == .compound) and Values.containsRuntimeValue(self, entry_value, env)) {
-            try Data.compileLiteralAssign(self, target, entry_value, env, commands);
+            try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
+        } else if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call) and values.containsRuntimeValue(compiler, entry_value, env)) {
+            try data.compileStringInto(compiler, target, entry_value.kind.call, env, commands);
+        } else if (data.isDataIdentifier(entry_value)) {
+            const source = try data.dataPathOf(compiler, entry_value.kind.identifier, env) orelse return null;
+            try commands.append(compiler.gpa, .{ .data_copy = .{ .target = target, .source = source } });
+        } else if ((entry_value.kind == .list or entry_value.kind == .compound) and values.containsRuntimeValue(compiler, entry_value, env)) {
+            try data.compileLiteralAssign(compiler, target, entry_value, env, commands);
         } else {
-            const snbt = try argumentSnbt(self, entry.value, env) orelse return null;
-            try commands.append(self.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
+            const snbt = try argumentSnbt(compiler, entry.value, env) orelse return null;
+            try commands.append(compiler.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
         }
     }
     return .{ .function_with = .{ .name = located.ir_name, .arguments = .args_storage } };
@@ -120,20 +120,20 @@ pub fn compileMcfnCall(self: *Compiler, call: Ast.Call, located: Compiler.Locate
 
 // The initial value of a whole `$` global that is not a compound and that no code changes. A global that code sets
 // can hold a compound by the time of the call, so it is not reported. Null otherwise.
-fn nonCompoundGlobal(self: *Compiler, identifier: Ast.Identifier, env: *const Environment) Compiler.CompileError!?[]const u8 {
+fn nonCompoundGlobal(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?[]const u8 {
     if (identifier.storage != .data or !std.mem.eql(u8, Compiler.pathRoot(identifier.name), identifier.name)) return null;
     if (identifier.namespace == null and Compiler.localOf(env, '$', identifier.name) != null) return null;
-    const namespace = try Declarations.resolveNamespace(self, identifier.namespace) orelse return null;
-    const global = self.data_globals.get(try Declarations.qualifiedKey(self, namespace, identifier.name)) orelse return null;
+    const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
+    const global = compiler.data_globals.get(try declarations.qualifiedKey(compiler, namespace, identifier.name)) orelse return null;
     if (global.initial_snbt[0] == '{') return null;
-    for (self.functions.values()) |located| {
+    for (compiler.functions.values()) |located| {
         if (setsData(located.function.body, identifier.name)) return null;
     }
     return global.initial_snbt;
 }
 
 // True if a statement assigns `$name`, or a raw command names it. A raw command is not read, so any mention counts.
-fn setsData(body: []const Ast.Stmt, name: []const u8) bool {
+fn setsData(body: []const ast.Stmt, name: []const u8) bool {
     for (body) |statement| switch (statement.kind) {
         .assign => |assign| if (assign.target.storage == .data and std.mem.eql(u8, Compiler.pathRoot(assign.target.name), name)) return true,
         .@"if" => |if_statement| {
@@ -150,44 +150,44 @@ fn setsData(body: []const Ast.Stmt, name: []const u8) bool {
 }
 
 // `{a: ..., b: ...}` for the keys an mcfun uses, for error messages.
-fn exampleCompound(self: *Compiler, keys: []const []const u8) Compiler.CompileError![]const u8 {
+fn exampleCompound(compiler: *Compiler, keys: []const []const u8) Compiler.CompileError![]const u8 {
     if (keys.len == 0) return "{name: ...}";
     var text: std.ArrayList(u8) = .empty;
-    try text.append(self.gpa, '{');
-    for (keys, 0..) |key, index| try text.print(self.gpa, "{s}{s}: ...", .{ if (index == 0) "" else ", ", key });
-    try text.append(self.gpa, '}');
-    return text.toOwnedSlice(self.gpa);
+    try text.append(compiler.gpa, '{');
+    for (keys, 0..) |key, index| try text.print(compiler.gpa, "{s}{s}: ...", .{ if (index == 0) "" else ", ", key });
+    try text.append(compiler.gpa, '}');
+    return text.toOwnedSlice(compiler.gpa);
 }
 
 // A compile-time value as SNBT. A macro key is `"$(name)"`, so the line becomes a macro line.
-pub fn argumentSnbt(self: *Compiler, arg: *const Ast.Expr, env: *Environment) Compiler.CompileError!?[]const u8 {
-    const outer_position = self.enterExpression(arg);
-    defer self.restorePosition(outer_position);
-    if (arg.kind == .macro_key) return try std.fmt.allocPrint(self.gpa, "\"$({s})\"", .{arg.kind.macro_key});
+pub fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expr, env: *Environment) Compiler.CompileError!?[]const u8 {
+    const outer_position = compiler.enterExpression(arg);
+    defer compiler.restorePosition(outer_position);
+    if (arg.kind == .macro_key) return try std.fmt.allocPrint(compiler.gpa, "\"$({s})\"", .{arg.kind.macro_key});
 
-    const value = try Values.evaluate(self, arg, env) orelse return null;
+    const value = try values.evaluate(compiler, arg, env) orelse return null;
     if (value == .null) {
-        try self.addError("null cannot be passed to an mcfun", .{});
+        try compiler.addError("null cannot be passed to an mcfun", .{});
         return null;
     }
-    return try Values.valueToSnbt(self, value);
+    return try values.valueToSnbt(compiler, value);
 }
 
 // Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use them.
-pub fn generatedCall(self: *Compiler, name: []const u8) Ir.Command {
-    const forwarded = self.forwarded_args orelse return .{ .function = name };
+pub fn generatedCall(compiler: *Compiler, name: []const u8) ir.Command {
+    const forwarded = compiler.forwarded_args orelse return .{ .function = name };
     return .{ .function_with = .{ .name = name, .arguments = .{ .compound = forwarded } } };
 }
 
 // A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
 // locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
-pub fn appendWithSavedValues(self: *Compiler, call: Ir.Command, target: ?Ir.Score, live_temp_count: usize, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!void {
-    var saved_scores: std.ArrayList(Ir.Score) = .empty;
+pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.Score, live_temp_count: usize, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+    var saved_scores: std.ArrayList(ir.Score) = .empty;
     var saved_data: std.ArrayList([]const u8) = .empty;
-    for (0..live_temp_count) |index| try saved_scores.append(self.gpa, try Scores.tempScore(self, index));
-    for (self.live_locals.items) |local| switch (local.kind) {
-        .score => try saved_scores.append(self.gpa, .{ .holder = local.generated_name, .owner = local.owner, .namespace = self.scope.output_namespace }),
-        .data => try saved_data.append(self.gpa, local.generated_name),
+    for (0..live_temp_count) |index| try saved_scores.append(compiler.gpa, try scores.tempScore(compiler, index));
+    for (compiler.live_locals.items) |local| switch (local.kind) {
+        .score => try saved_scores.append(compiler.gpa, .{ .holder = local.generated_name, .owner = local.owner, .namespace = compiler.scope.output_namespace }),
+        .data => try saved_data.append(compiler.gpa, local.generated_name),
     };
     if (target) |result| for (saved_scores.items, 0..) |score, index| {
         if (score.eql(result)) {
@@ -195,158 +195,158 @@ pub fn appendWithSavedValues(self: *Compiler, call: Ir.Command, target: ?Ir.Scor
             break;
         }
     };
-    if (saved_scores.items.len + saved_data.items.len == 0) return commands.append(self.gpa, call);
+    if (saved_scores.items.len + saved_data.items.len == 0) return commands.append(compiler.gpa, call);
 
-    self.uses_stack = true;
-    try commands.append(self.gpa, .frame_push);
-    for (saved_scores.items) |score| try commands.append(self.gpa, .{ .score_to_data = .{ .target = try frameSlot(self, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(self.gpa, .{ .data_copy = .{ .target = try frameSlot(self, key), .source = Data.dataLocal(self, key) } });
-    try commands.append(self.gpa, call);
-    for (saved_scores.items) |score| try commands.append(self.gpa, .{ .data_to_score = .{ .source = try frameSlot(self, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(self.gpa, .{ .data_copy = .{ .target = Data.dataLocal(self, key), .source = try frameSlot(self, key) } });
-    try commands.append(self.gpa, .frame_pop);
+    compiler.uses_stack = true;
+    try commands.append(compiler.gpa, .frame_push);
+    for (saved_scores.items) |score| try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = try frameSlot(compiler, score.holder), .score = score } });
+    for (saved_data.items) |key| try commands.append(compiler.gpa, .{ .data_copy = .{ .target = try frameSlot(compiler, key), .source = data.dataLocal(compiler, key) } });
+    try commands.append(compiler.gpa, call);
+    for (saved_scores.items) |score| try commands.append(compiler.gpa, .{ .data_to_score = .{ .source = try frameSlot(compiler, score.holder), .score = score } });
+    for (saved_data.items) |key| try commands.append(compiler.gpa, .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try frameSlot(compiler, key) } });
+    try commands.append(compiler.gpa, .frame_pop);
 }
 
 // The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, `s_i_countdown` for the local `#i_countdown`,
 // and `d_names_countdown` for the data local `names_countdown`.
-pub fn frameSlot(self: *Compiler, name: []const u8) Compiler.CompileError!Ir.DataPath {
+pub fn frameSlot(compiler: *Compiler, name: []const u8) Compiler.CompileError!ir.DataPath {
     if (std.mem.startsWith(u8, name, "#poplar.")) return .inStorage(.frame, name[std.mem.lastIndexOfScalar(u8, name, '.').? + 1 ..]);
-    if (name[0] == '#') return .inStorage(.frame, try std.fmt.allocPrint(self.gpa, "s_{s}", .{name[1..]}));
-    return .inStorage(.frame, try std.fmt.allocPrint(self.gpa, "d_{s}", .{name}));
+    if (name[0] == '#') return .inStorage(.frame, try std.fmt.allocPrint(compiler.gpa, "s_{s}", .{name[1..]}));
+    return .inStorage(.frame, try std.fmt.allocPrint(compiler.gpa, "d_{s}", .{name}));
 }
 
-pub fn buildCallGraph(self: *Compiler) Compiler.CompileError!void {
-    for (self.functions.keys(), self.functions.values()) |function_key, located| {
-        self.scope = self.scopeOf(located.namespace, located.imports);
+pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {
+    for (compiler.functions.keys(), compiler.functions.values()) |function_key, located| {
+        compiler.scope = compiler.scopeOf(located.namespace, located.imports);
         var calls: std.StringArrayHashMapUnmanaged(void) = .empty;
-        try collectCalls(self, located.function.body, &calls);
-        try self.mcfun_calls.put(self.gpa, function_key, calls);
+        try collectCalls(compiler, located.function.body, &calls);
+        try compiler.mcfun_calls.put(compiler.gpa, function_key, calls);
     }
 }
 
 // The key of a called name, without errors: the compile step reports a missing import or name.
-pub fn calledKey(self: *Compiler, identifier: Ast.Identifier) Compiler.CompileError!?[]const u8 {
-    const namespace = identifier.namespace orelse self.scope.namespace;
-    const function_key = try Declarations.qualifiedKey(self, namespace, identifier.name);
-    return if (self.functions.contains(function_key)) function_key else null;
+pub fn calledKey(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!?[]const u8 {
+    const namespace = identifier.namespace orelse compiler.scope.namespace;
+    const function_key = try declarations.qualifiedKey(compiler, namespace, identifier.name);
+    return if (compiler.functions.contains(function_key)) function_key else null;
 }
 
 // Finds the mcfun calls in a body. This can find calls that a compile-time branch removes later. That only adds saves.
 pub fn collectCalls(
-    self: *Compiler,
-    body: []const Ast.Stmt,
+    compiler: *Compiler,
+    body: []const ast.Stmt,
     calls: *std.StringArrayHashMapUnmanaged(void),
 ) Compiler.CompileError!void {
     for (body) |statement| switch (statement.kind) {
-        .var_decl => |var_decl| try collectExpressionCalls(self, var_decl.value, calls),
-        .assign => |assign| try collectExpressionCalls(self, assign.value, calls),
-        .@"return" => |value| if (value) |expression| try collectExpressionCalls(self, expression, calls),
+        .var_decl => |var_decl| try collectExpressionCalls(compiler, var_decl.value, calls),
+        .assign => |assign| try collectExpressionCalls(compiler, assign.value, calls),
+        .@"return" => |value| if (value) |expression| try collectExpressionCalls(compiler, expression, calls),
         .@"break", .@"continue" => {},
         .@"if" => |if_statement| {
-            try collectExpressionCalls(self, if_statement.condition, calls);
-            try collectCalls(self, if_statement.then_body, calls);
-            if (if_statement.else_body) |else_body| try collectCalls(self, else_body, calls);
+            try collectExpressionCalls(compiler, if_statement.condition, calls);
+            try collectCalls(compiler, if_statement.then_body, calls);
+            if (if_statement.else_body) |else_body| try collectCalls(compiler, else_body, calls);
         },
-        .@"for" => |loop| try collectCalls(self, loop.body, calls),
+        .@"for" => |loop| try collectCalls(compiler, loop.body, calls),
         .@"while" => |loop| {
-            try collectExpressionCalls(self, loop.condition, calls);
-            try collectCalls(self, loop.body, calls);
+            try collectExpressionCalls(compiler, loop.condition, calls);
+            try collectCalls(compiler, loop.body, calls);
         },
         .execute => |execute| {
-            try collectInsertCalls(self, execute.subcommands, calls);
-            try collectCalls(self, execute.body, calls);
+            try collectInsertCalls(compiler, execute.subcommands, calls);
+            try collectCalls(compiler, execute.body, calls);
         },
-        .expression => |expression| try collectExpressionCalls(self, expression, calls),
-        .command => |command| try collectInsertCalls(self, command.parts, calls),
+        .expression => |expression| try collectExpressionCalls(compiler, expression, calls),
+        .command => |command| try collectInsertCalls(compiler, command.parts, calls),
     };
 }
 
 // `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
 pub fn collectInsertCalls(
-    self: *Compiler,
-    parts: []const Ast.CommandPart,
+    compiler: *Compiler,
+    parts: []const ast.CommandPart,
     calls: *std.StringArrayHashMapUnmanaged(void),
 ) Compiler.CompileError!void {
     for (parts) |part| switch (part.content) {
-        .text => |text| try collectStdIds(self, text, calls),
-        .insert => |expression| try collectExpressionCalls(self, expression, calls),
+        .text => |text| try collectStdIds(compiler, text, calls),
+        .insert => |expression| try collectExpressionCalls(compiler, expression, calls),
     };
 }
 
 // A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
-pub fn collectStdIds(self: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) Compiler.CompileError!void {
+pub fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) Compiler.CompileError!void {
     const prefix = Compiler.std_namespace ++ ":";
     var index: usize = 0;
     while (std.mem.indexOfPos(u8, text, index, prefix)) |start| {
         index = start + prefix.len;
-        if (start > 0 and MinecraftText.isNamespaceChar(text[start - 1])) continue;
+        if (start > 0 and minecraft_text.isNamespaceChar(text[start - 1])) continue;
         var end = index;
         while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
-        const function_key = try Declarations.qualifiedKey(self, Compiler.std_namespace, text[index..end]);
-        if (self.functions.contains(function_key)) try calls.put(self.gpa, function_key, {});
+        const function_key = try declarations.qualifiedKey(compiler, Compiler.std_namespace, text[index..end]);
+        if (compiler.functions.contains(function_key)) try calls.put(compiler.gpa, function_key, {});
     }
 }
 
 pub fn collectExpressionCalls(
-    self: *Compiler,
-    expression: *const Ast.Expr,
+    compiler: *Compiler,
+    expression: *const ast.Expr,
     calls: *std.StringArrayHashMapUnmanaged(void),
 ) Compiler.CompileError!void {
     switch (expression.kind) {
-        .prefix => |prefix| try collectExpressionCalls(self, prefix.operand, calls),
+        .prefix => |prefix| try collectExpressionCalls(compiler, prefix.operand, calls),
         .infix => |infix| {
-            try collectExpressionCalls(self, infix.left, calls);
-            try collectExpressionCalls(self, infix.right, calls);
+            try collectExpressionCalls(compiler, infix.left, calls);
+            try collectExpressionCalls(compiler, infix.right, calls);
         },
-        .minecraft_check => |parts| try collectInsertCalls(self, parts, calls),
-        .list => |elements| for (elements) |element| try collectExpressionCalls(self, element, calls),
-        .compound => |entries| for (entries) |entry| try collectExpressionCalls(self, entry.value, calls),
+        .minecraft_check => |parts| try collectInsertCalls(compiler, parts, calls),
+        .list => |elements| for (elements) |element| try collectExpressionCalls(compiler, element, calls),
+        .compound => |entries| for (entries) |entry| try collectExpressionCalls(compiler, entry.value, calls),
         .call => |call| {
-            for (call.args) |arg| try collectExpressionCalls(self, arg, calls);
-            if (call.with) |with| if (with == .value) try collectExpressionCalls(self, with.value, calls);
+            for (call.args) |arg| try collectExpressionCalls(compiler, arg, calls);
+            if (call.with) |with| if (with == .value) try collectExpressionCalls(compiler, with.value, calls);
             if (call.callee.kind != .identifier) return;
 
             // An event callback is called from `load`, as far as the call graph is concerned.
-            const is_event = call.callee.kind.identifier.namespace == null and Load.event_builtins.has(call.callee.kind.identifier.name);
+            const is_event = call.callee.kind.identifier.namespace == null and load.event_builtins.has(call.callee.kind.identifier.name);
             if (is_event and call.args.len > 0 and call.args[call.args.len - 1].kind == .identifier) {
-                if (try calledKey(self, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(self.gpa, callback, {});
+                if (try calledKey(compiler, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(compiler.gpa, callback, {});
             }
-            const called = try calledKey(self, call.callee.kind.identifier) orelse return;
-            try calls.put(self.gpa, called, {});
+            const called = try calledKey(compiler, call.callee.kind.identifier) orelse return;
+            try calls.put(compiler.gpa, called, {});
         },
         else => {},
     }
 }
 
 // True if `from` can call `to`, directly or through other mcfuns.
-pub fn canReach(self: *Compiler, from: []const u8, to: []const u8) Compiler.CompileError!bool {
+pub fn canReach(compiler: *Compiler, from: []const u8, to: []const u8) Compiler.CompileError!bool {
     var pending: std.ArrayList([]const u8) = .empty;
     var visited: std.StringHashMapUnmanaged(void) = .empty;
-    try pending.append(self.gpa, from);
+    try pending.append(compiler.gpa, from);
 
     while (pending.pop()) |name| {
         if (std.mem.eql(u8, name, to)) return true;
-        if ((try visited.getOrPut(self.gpa, name)).found_existing) continue;
+        if ((try visited.getOrPut(compiler.gpa, name)).found_existing) continue;
 
-        const calls = self.mcfun_calls.get(name) orelse continue;
-        try pending.appendSlice(self.gpa, calls.keys());
+        const calls = compiler.mcfun_calls.get(name) orelse continue;
+        try pending.appendSlice(compiler.gpa, calls.keys());
     }
     return false;
 }
 
-pub fn compileCall(self: *Compiler, call: Ast.Call, env: *Environment, commands: *std.ArrayList(Ir.Command)) Compiler.CompileError!void {
-    if (call.callee.kind != .identifier) return self.addError("only named functions can be called", .{});
+pub fn compileCall(compiler: *Compiler, call: ast.Call, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+    if (call.callee.kind != .identifier) return compiler.addError("only named functions can be called", .{});
     const name = call.callee.kind.identifier.name;
 
-    if (call.callee.kind.identifier.namespace == null and Load.event_builtins.has(name)) return Load.compileEvent(self, call, name, env);
-    if (Data.isStringCall(call) or Data.isStringTest(call)) return self.addError("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
-    if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return Data.compileListBuiltin(self, name, call, env, commands);
-    const callee = try Declarations.findFunction(self, call.callee.kind.identifier) orelse return;
+    if (call.callee.kind.identifier.namespace == null and load.event_builtins.has(name)) return load.compileEvent(compiler, call, name, env);
+    if (data.isStringCall(call) or data.isStringTest(call)) return compiler.addError("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
+    if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return data.compileListBuiltin(compiler, name, call, env, commands);
+    const callee = try declarations.findFunction(compiler, call.callee.kind.identifier) orelse return;
 
-    self.temp_count = 0;
-    const command = try compileMcfnCall(self, call, callee.located, env, commands) orelse return;
-    if (self.live_locals.items.len > 0 and try canReach(self, callee.key, self.mcfun.key)) return appendWithSavedValues(self, command, null, 0, commands);
-    try commands.append(self.gpa, command);
+    compiler.temp_count = 0;
+    const command = try compileMcfnCall(compiler, call, callee.located, env, commands) orelse return;
+    if (compiler.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(compiler, command, null, 0, commands);
+    try commands.append(compiler.gpa, command);
 }
 
 pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "onDeath", "onFirstJoin", "onJoin", "onRespawn", "slice", "str", "startsWith", "endsWith" };
@@ -358,7 +358,7 @@ pub fn isBuiltin(name: []const u8) bool {
     return false;
 }
 
-pub fn isBuiltinCall(call: Ast.Call, name: []const u8) bool {
+pub fn isBuiltinCall(call: ast.Call, name: []const u8) bool {
     if (call.callee.kind != .identifier or call.callee.kind.identifier.namespace != null) return false;
     return std.mem.eql(u8, call.callee.kind.identifier.name, name);
 }
@@ -366,7 +366,7 @@ pub fn isBuiltinCall(call: Ast.Call, name: []const u8) bool {
 test "a recursive call saves the locals of an mcfun in another namespace where they are" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const command_tree = try arena.allocator().create(Commands);
+    const command_tree = try arena.allocator().create(CommandTree);
     command_tree.* = try .load(arena.allocator());
     var compiler = Compiler.init(arena.allocator(), command_tree);
 
@@ -580,5 +580,5 @@ test "recursive calls save live temps in a frame" {
         \\scoreboard players operation #global ns.x *= #poplar.main.t0 poplar.ns
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
-    try std.testing.expectEqual(Ir.Command.stack_clear, program.load.?.commands[0]);
+    try std.testing.expectEqual(ir.Command.stack_clear, program.load.?.commands[0]);
 }

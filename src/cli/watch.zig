@@ -1,8 +1,8 @@
 const std = @import("std");
 const zli = @import("zli");
 const Config = @import("../Config.zig");
-const Project = @import("../Project.zig");
-const DotEnv = @import("../DotEnv.zig");
+const project = @import("../project.zig");
+const dot_env = @import("../dot_env.zig");
 const root = @import("root.zig");
 const build = @import("build.zig");
 
@@ -105,12 +105,12 @@ fn chooseWorld(ctx: zli.CommandContext, arena: std.mem.Allocator, project_path: 
     if (root.environment(ctx).get("POPLAR_WORLD")) |path| {
         return .{ .path = try expandHome(ctx, arena, path), .source = " (POPLAR_WORLD from the environment)" };
     }
-    switch (try DotEnv.read(arena, ctx.io, project_path, "POPLAR_WORLD")) {
+    switch (try dot_env.read(arena, ctx.io, project_path, "POPLAR_WORLD")) {
         .value => |path| return .{ .path = try expandHome(ctx, arena, path), .source = " (POPLAR_WORLD from .env)" },
         .missing => return null,
         .invalid_line => |line| {
             const out = root.output(ctx);
-            out.failure("{s}{s}:{d}{s}  Expected KEY=VALUE", .{ out.bold(), DotEnv.file_name, line, out.reset() });
+            out.failure("{s}{s}:{d}{s}  Expected KEY=VALUE", .{ out.bold(), dot_env.file_name, line, out.reset() });
             root.fail(ctx);
         },
     }
@@ -176,7 +176,7 @@ fn rebuild(ctx: zli.CommandContext, project_path: []const u8, world_copy: ?*Worl
 
     const out = root.output(ctx);
     const started = std.Io.Timestamp.now(ctx.io, .awake);
-    const result = try Project.compile(arena.allocator(), ctx.io, project_path, .{ .std_path = root.stdPath(ctx), .output = .write });
+    const result = try project.compile(arena.allocator(), ctx.io, project_path, .{ .std_path = root.stdPath(ctx), .output = .write });
     out.diagnostics(result.diagnostics);
 
     // The time of day (UTC, because Zig has no time zones), so that each build is easy to tell apart.

@@ -2,22 +2,22 @@ const std = @import("std");
 const builtin = @import("builtin");
 const lsp = @import("lsp");
 const build_options = @import("build_options");
-const Ast = @import("Ast.zig");
-const Commands = @import("Commands.zig");
+const ast = @import("ast.zig");
+const CommandTree = @import("CommandTree.zig");
 const Compiler = @import("Compiler.zig");
 const Config = @import("Config.zig");
-const DataFile = @import("DataFile.zig");
+const data_folders = @import("data_folders.zig");
 const Environment = @import("Environment.zig");
-const Project = @import("Project.zig");
+const project = @import("project.zig");
 const Token = @import("Token.zig");
 
-const Self = @This();
+const Lsp = @This();
 
 // The last compile of one project. Hover, definition and completion read it.
 const Analysis = struct {
     arena: std.heap.ArenaAllocator,
     project_root: []const u8,
-    result: Project.Result,
+    result: project.Result,
 
     fn contains(analysis: *const Analysis, path: []const u8) bool {
         for (analysis.result.files.values()) |file_path| {
@@ -78,10 +78,10 @@ documents: std.StringHashMapUnmanaged([]u8) = .empty,
 // URI → the project root, for each file that has diagnostics in the editor now.
 published: std.StringHashMapUnmanaged([]const u8) = .empty,
 command_tree_arena: std.heap.ArenaAllocator,
-command_tree: ?Commands = null,
+command_tree: ?CommandTree = null,
 analysis: ?*Analysis = null,
 
-pub fn init(gpa: std.mem.Allocator, io: std.Io, transport: *lsp.Transport, std_path: []const u8) Self {
+pub fn init(gpa: std.mem.Allocator, io: std.Io, transport: *lsp.Transport, std_path: []const u8) Lsp {
     return .{
         .gpa = gpa,
         .io = io,
@@ -91,7 +91,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, transport: *lsp.Transport, std_p
     };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Lsp) void {
     var documents = self.documents.iterator();
     while (documents.next()) |entry| {
         self.gpa.free(entry.key_ptr.*);
@@ -108,14 +108,14 @@ pub fn deinit(self: *Self) void {
     self.command_tree_arena.deinit();
 }
 
-fn freeAnalysis(self: *Self) void {
+fn freeAnalysis(self: *Lsp) void {
     const analysis = self.analysis orelse return;
     analysis.arena.deinit();
     self.gpa.destroy(analysis);
     self.analysis = null;
 }
 
-pub fn initialize(self: *Self, _: std.mem.Allocator, params: lsp.types.InitializeParams) lsp.types.InitializeResult {
+pub fn initialize(self: *Lsp, _: std.mem.Allocator, params: lsp.types.InitializeParams) lsp.types.InitializeResult {
     if (params.capabilities.general) |general| {
         for (general.positionEncodings orelse &.{}) |encoding| {
             self.offset_encoding = switch (encoding) {
@@ -139,7 +139,7 @@ pub fn initialize(self: *Self, _: std.mem.Allocator, params: lsp.types.Initializ
         .definitionProvider = .{ .bool = true },
         .completionProvider = .{ .triggerCharacters = &.{ "#", "$" } },
     };
-    if (builtin.mode == .debug) lsp.basic_server.validateServerCapabilities(Self, capabilities);
+    if (builtin.mode == .debug) lsp.basic_server.validateServerCapabilities(Lsp, capabilities);
 
     return .{
         .serverInfo = .{ .name = "poplar", .version = build_options.version },
@@ -147,14 +147,14 @@ pub fn initialize(self: *Self, _: std.mem.Allocator, params: lsp.types.Initializ
     };
 }
 
-pub fn shutdown(_: *Self, _: std.mem.Allocator, _: void) ?void {
+pub fn shutdown(_: *Lsp, _: std.mem.Allocator, _: void) ?void {
     return null;
 }
 
 // `lsp.basic_server.run` returns after this message, but only if the Handler has this function.
-pub fn exit(_: *Self, _: std.mem.Allocator, _: void) void {}
+pub fn exit(_: *Lsp, _: std.mem.Allocator, _: void) void {}
 
-pub fn @"textDocument/didOpen"(self: *Self, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidOpenParams) !void {
+pub fn @"textDocument/didOpen"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidOpenParams) !void {
     const text = try self.gpa.dupe(u8, params.textDocument.text);
     errdefer self.gpa.free(text);
     const entry = try self.documents.getOrPut(self.gpa, params.textDocument.uri);
@@ -167,7 +167,7 @@ pub fn @"textDocument/didOpen"(self: *Self, arena: std.mem.Allocator, params: ls
     try self.check(arena, params.textDocument.uri);
 }
 
-pub fn @"textDocument/didChange"(self: *Self, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidChangeParams) !void {
+pub fn @"textDocument/didChange"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidChangeParams) !void {
     const current_text = self.documents.getPtr(params.textDocument.uri) orelse return;
     var buffer: std.ArrayList(u8) = .fromOwnedSlice(current_text.*);
     errdefer current_text.* = buffer.items;
@@ -187,7 +187,7 @@ pub fn @"textDocument/didChange"(self: *Self, arena: std.mem.Allocator, params: 
     try self.check(arena, params.textDocument.uri);
 }
 
-pub fn @"textDocument/didClose"(self: *Self, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidCloseParams) !void {
+pub fn @"textDocument/didClose"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.TextDocument.DidCloseParams) !void {
     const entry = self.documents.fetchRemove(params.textDocument.uri) orelse return;
     self.gpa.free(entry.key);
     self.gpa.free(entry.value);
@@ -195,7 +195,7 @@ pub fn @"textDocument/didClose"(self: *Self, arena: std.mem.Allocator, params: l
     try self.check(arena, params.textDocument.uri);
 }
 
-pub fn @"textDocument/hover"(self: *Self, arena: std.mem.Allocator, params: lsp.types.Hover.Params) !?lsp.types.Hover {
+pub fn @"textDocument/hover"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.Hover.Params) !?lsp.types.Hover {
     const analysis = try self.analysisFor(arena, params.textDocument.uri) orelse return null;
     const text = self.documents.get(params.textDocument.uri) orelse return null;
     const word = wordAt(text, lsp.offsets.positionToIndex(text, params.position, self.offset_encoding)) orelse return null;
@@ -204,7 +204,7 @@ pub fn @"textDocument/hover"(self: *Self, arena: std.mem.Allocator, params: lsp.
     return .{ .contents = .{ .markup_content = .{ .kind = .markdown, .value = markdown } } };
 }
 
-pub fn @"textDocument/definition"(self: *Self, arena: std.mem.Allocator, params: lsp.types.Definition.Params) !lsp.ResultType("textDocument/definition") {
+pub fn @"textDocument/definition"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.Definition.Params) !lsp.ResultType("textDocument/definition") {
     const analysis = try self.analysisFor(arena, params.textDocument.uri) orelse return null;
     const text = self.documents.get(params.textDocument.uri) orelse return null;
     const word = wordAt(text, lsp.offsets.positionToIndex(text, params.position, self.offset_encoding)) orelse return null;
@@ -237,7 +237,7 @@ pub fn @"textDocument/definition"(self: *Self, arena: std.mem.Allocator, params:
     } } };
 }
 
-pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params: lsp.types.completion.Params) !lsp.ResultType("textDocument/completion") {
+pub fn @"textDocument/completion"(self: *Lsp, arena: std.mem.Allocator, params: lsp.types.completion.Params) !lsp.ResultType("textDocument/completion") {
     const text = self.documents.get(params.textDocument.uri) orelse return null;
     var start = lsp.offsets.positionToIndex(text, params.position, self.offset_encoding);
     while (start > 0 and isNameChar(text[start - 1])) start -= 1;
@@ -269,7 +269,7 @@ pub fn @"textDocument/completion"(self: *Self, arena: std.mem.Allocator, params:
         else => {
             // A word at the start of a line, with no indent, is likely at the top level.
             if (start == 0 or text[start - 1] == '\n') {
-                for (DataFile.folders.keys()) |word| try items.append(arena, .{ .label = word, .kind = .Keyword, .detail = "data file" });
+                for (data_folders.folders.keys()) |word| try items.append(arena, .{ .label = word, .kind = .Keyword, .detail = "data file" });
             }
             for (Token.Keywords.keys()) |keyword| try items.append(arena, .{ .label = keyword, .kind = .Keyword });
             for (builtins) |each| try items.append(arena, .{ .label = each.name, .kind = .Function, .detail = each.signature });
@@ -294,12 +294,12 @@ fn completionLabel(key: []const u8, own_prefix: []const u8) []const u8 {
 }
 
 // The server sends no requests, so no response is expected.
-pub fn onResponse(_: *Self, _: std.mem.Allocator, response: lsp.JsonRPCMessage.Response) void {
+pub fn onResponse(_: *Lsp, _: std.mem.Allocator, response: lsp.JsonRPCMessage.Response) void {
     std.log.warn("unexpected response from the editor: {?}", .{response.id});
 }
 
 // Compiles the project of `uri` with the open documents and shows its errors in the editor.
-fn check(self: *Self, arena: std.mem.Allocator, uri: []const u8) !void {
+fn check(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !void {
     const analysis = try self.analyze(arena, uri) orelse return;
 
     var by_uri: std.StringArrayHashMapUnmanaged(std.ArrayList(lsp.types.Diagnostic)) = .empty;
@@ -345,7 +345,7 @@ fn check(self: *Self, arena: std.mem.Allocator, uri: []const u8) !void {
     }
 }
 
-fn publish(self: *Self, arena: std.mem.Allocator, uri: []const u8, diagnostics: []const lsp.types.Diagnostic) !void {
+fn publish(self: *Lsp, arena: std.mem.Allocator, uri: []const u8, diagnostics: []const lsp.types.Diagnostic) !void {
     try self.transport.writeNotification(
         self.io,
         arena,
@@ -357,7 +357,7 @@ fn publish(self: *Self, arena: std.mem.Allocator, uri: []const u8, diagnostics: 
 }
 
 // The last analysis if it has the file of `uri`, else a new one.
-fn analysisFor(self: *Self, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
+fn analysisFor(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     const path = try uriToPath(arena, uri) orelse return null;
     if (self.analysis) |analysis| {
         if (analysis.contains(path)) return analysis;
@@ -366,7 +366,7 @@ fn analysisFor(self: *Self, arena: std.mem.Allocator, uri: []const u8) !?*Analys
 }
 
 // Compiles the project that has the file of `uri`. Null if the file is in no project.
-fn analyze(self: *Self, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
+fn analyze(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     const path = try uriToPath(arena, uri) orelse return null;
     const project_root = if (self.analysis != null and self.analysis.?.contains(path))
         self.analysis.?.project_root
@@ -388,8 +388,8 @@ fn analyze(self: *Self, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
         try overlay.put(analysis_arena, document_path, try analysis_arena.dupe(u8, entry.value_ptr.*));
     }
 
-    if (self.command_tree == null) self.command_tree = try Commands.load(self.command_tree_arena.allocator());
-    analysis.result = try Project.compile(analysis_arena, self.io, analysis.project_root, .{
+    if (self.command_tree == null) self.command_tree = try CommandTree.load(self.command_tree_arena.allocator());
+    analysis.result = try project.compile(analysis_arena, self.io, analysis.project_root, .{
         .std_path = self.std_path,
         .output = .check,
         .overlay = &overlay,
@@ -402,7 +402,7 @@ fn analyze(self: *Self, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
 }
 
 // The nearest folder with `poplar.json`, or else the folder that holds the `src/` that the file is in.
-fn findProjectRoot(self: *Self, arena: std.mem.Allocator, file_path: []const u8) !?[]const u8 {
+fn findProjectRoot(self: *Lsp, arena: std.mem.Allocator, file_path: []const u8) !?[]const u8 {
     var above_src: ?[]const u8 = null;
     var directory = std.fs.path.dirname(file_path);
     while (directory) |current| : (directory = std.fs.path.dirname(current)) {
@@ -414,7 +414,7 @@ fn findProjectRoot(self: *Self, arena: std.mem.Allocator, file_path: []const u8)
 }
 
 // The text of a file: from the editor when it is open, else from the disk.
-fn textOf(self: *Self, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
+fn textOf(self: *Lsp, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (self.documents.get(try pathToUri(arena, path))) |text| return text;
     return std.Io.Dir.cwd().readFileAlloc(self.io, path, arena, .unlimited) catch "";
 }
@@ -483,7 +483,7 @@ fn placeOf(arena: std.mem.Allocator, analysis: *const Analysis, uri: []const u8,
 
 // The function that contains `place`: the last one that starts above it in the same file.
 fn enclosingFunction(compiler: *const Compiler, place: Place) ?[]const u8 {
-    var best: ?*const Ast.Function = null;
+    var best: ?*const ast.Function = null;
     for (compiler.functions.values()) |located| {
         if (!std.mem.eql(u8, located.path, place.path) or located.function.line > place.line) continue;
         if (best == null or located.function.line > best.?.line) best = located.function;
@@ -514,7 +514,7 @@ fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Pla
 }
 
 // The hover text for a word, in Markdown.
-fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, word: Word, place: Place) !?[]const u8 {
+fn describe(self: *Lsp, arena: std.mem.Allocator, analysis: *Analysis, word: Word, place: Place) !?[]const u8 {
     if (word.kind == .entity_data) {
         return try std.fmt.allocPrint(arena, "Entity NBT `{s}`. The compiler does not check the path.", .{word.text});
     }
@@ -555,7 +555,7 @@ fn describe(self: *Self, arena: std.mem.Allocator, analysis: *Analysis, word: Wo
 }
 
 // `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
-fn signature(arena: std.mem.Allocator, function: *const Ast.Function) ![]const u8 {
+fn signature(arena: std.mem.Allocator, function: *const ast.Function) ![]const u8 {
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
     try Compiler.collectMacroKeys(arena, function.body, &keys);
     if (keys.count() == 0) return std.fmt.allocPrint(arena, "mcfun {s}()", .{function.name});
@@ -717,7 +717,7 @@ test "an open document with an error gets a diagnostic, and loses it when it is 
 
     var transport: TestTransport = .{ .written = .init(std.testing.allocator) };
     defer transport.written.deinit();
-    var server: Self = .init(std.testing.allocator, io, &transport.transport, "no-std");
+    var server: Lsp = .init(std.testing.allocator, io, &transport.transport, "no-std");
     defer server.deinit();
 
     try server.@"textDocument/didOpen"(arena.allocator(), .{ .textDocument = .{ .uri = uri, .languageId = .{ .custom_value = "poplar" }, .version = 1, .text = "namespace test;\nmcfun f() {\n  #nope = 1;\n}\n" } });

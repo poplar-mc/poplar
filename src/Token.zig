@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Self = @This();
+const Token = @This();
 
 pub const TokenType = enum {
     left_paren,
@@ -98,7 +98,7 @@ literal: []const u8,
 line: usize,
 column: usize,
 
-pub fn init(@"type": TokenType, literal: []const u8, line: usize, column: usize) Self {
+pub fn init(@"type": TokenType, literal: []const u8, line: usize, column: usize) Token {
     return .{
         .type = @"type",
         .literal = literal,

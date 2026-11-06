@@ -1,11 +1,11 @@
 const std = @import("std");
-const Ast = @import("Ast.zig");
-const Commands = @import("Commands.zig");
+const ast = @import("ast.zig");
+const CommandTree = @import("CommandTree.zig");
 const Compiler = @import("Compiler.zig");
 const Config = @import("Config.zig");
 const Lexer = @import("Lexer.zig");
 const Parser = @import("Parser.zig");
-const Writer = @import("Writer.zig");
+const datapack_writer = @import("datapack_writer.zig");
 
 const schema_json = @embedFile("poplar.schema.json");
 
@@ -62,7 +62,7 @@ pub const Options = struct {
     // Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
     overlay: ?*const std.StringHashMapUnmanaged([]const u8) = null,
     // The language server loads the command tree one time and passes it in.
-    command_tree: ?*const Commands = null,
+    command_tree: ?*const CommandTree = null,
 };
 
 pub const Result = struct {
@@ -101,8 +101,8 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
     defer src_dir.close(io);
 
     const command_tree = options.command_tree orelse blk: {
-        const tree = try arena.create(Commands);
-        tree.* = try Commands.load(arena);
+        const tree = try arena.create(CommandTree);
+        tree.* = try CommandTree.load(arena);
         break :blk tree;
     };
     const compiler = try arena.create(Compiler);
@@ -144,11 +144,11 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
         var pack_dir = try out_dir.createDirPathOpen(io, config.zip_name, .{ .open_options = .{ .iterate = true } });
         defer pack_dir.close(io);
 
-        try Writer.writeDatapack(io, arena, pack_dir, config, ir_program);
+        try datapack_writer.writeDatapack(io, arena, pack_dir, config, ir_program);
         summary.pack_path = try std.fs.path.join(arena, &.{ out_dir_name, config.zip_name });
 
         const zip_file_name = try std.fmt.allocPrint(arena, "{s}.zip", .{config.zip_name});
-        try Writer.writeZip(io, arena, pack_dir, out_dir, zip_file_name);
+        try datapack_writer.writeZip(io, arena, pack_dir, out_dir, zip_file_name);
         summary.zip_path = try std.fs.path.join(arena, &.{ out_dir_name, zip_file_name });
     }
     result.summary = summary;
@@ -238,7 +238,7 @@ const Loader = struct {
     const LoadedProgram = struct {
         root: Root,
         display_path: []const u8,
-        program: Ast.Program,
+        program: ast.Program,
     };
 
     // Parses one file. Null if it has no `namespace` line. After another parse error the rest still loads,
@@ -385,7 +385,7 @@ test "builds every file in src/, and std when a file imports it" {
     defer src_dir.close(io);
     const std_path = try tmp.dir.realPathFileAlloc(io, "std", arena.allocator());
 
-    const command_tree = try Commands.load(arena.allocator());
+    const command_tree = try CommandTree.load(arena.allocator());
     var compiler = Compiler.init(arena.allocator(), &command_tree);
     try std.testing.expect(try loadForTest(arena.allocator(), io, src_dir, std_path, &compiler));
     try std.testing.expectEqual(3, compiler.functions.count());
@@ -421,7 +421,7 @@ test "only the std mcfuns that the project calls are written, under std/" {
     defer src_dir.close(io);
     const std_path = try tmp.dir.realPathFileAlloc(io, "std", arena.allocator());
 
-    const command_tree = try Commands.load(arena.allocator());
+    const command_tree = try CommandTree.load(arena.allocator());
     var compiler = Compiler.init(arena.allocator(), &command_tree);
     try std.testing.expect(try loadForTest(arena.allocator(), io, src_dir, std_path, &compiler));
     const program = try compiler.compile();

@@ -1,12 +1,12 @@
 const std = @import("std");
-const Ast = @import("Ast.zig");
+const ast = @import("ast.zig");
 
-const Self = @This();
+const Environment = @This();
 
 pub const Value = union(enum) {
     string: []const u8,
     number: i64,
-    typed_number: Ast.TypedNumber,
+    typed_number: ast.TypedNumber,
     boolean: bool,
     null,
     list: []const Value,
@@ -33,25 +33,25 @@ pub const Local = struct {
 pub const AssignResult = enum { assigned, not_found, crosses_runtime_branch };
 
 store: std.StringHashMapUnmanaged(Value) = .empty,
-outer: ?*Self = null,
+outer: ?*Environment = null,
 // True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
 runtime_branch: bool = false,
 
-pub fn get(self: *const Self, name: []const u8) ?Value {
+pub fn get(self: *const Environment, name: []const u8) ?Value {
     if (self.store.get(name)) |value| return value;
     if (self.outer) |outer| return outer.get(name);
     return null;
 }
 
 // Returns false if the name is already visible, so names cannot be shadowed.
-pub fn declare(self: *Self, gpa: std.mem.Allocator, name: []const u8, value: Value) std.mem.Allocator.Error!bool {
+pub fn declare(self: *Environment, gpa: std.mem.Allocator, name: []const u8, value: Value) std.mem.Allocator.Error!bool {
     if (self.get(name) != null) return false;
 
     try self.store.put(gpa, name, value);
     return true;
 }
 
-pub fn assign(self: *Self, name: []const u8, value: Value) AssignResult {
+pub fn assign(self: *Environment, name: []const u8, value: Value) AssignResult {
     if (self.store.getPtr(name)) |slot| {
         slot.* = value;
         return .assigned;

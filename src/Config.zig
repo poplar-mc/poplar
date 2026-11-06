@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Self = @This();
+const Config = @This();
 
 const mcmeta_version_json = @embedFile("mcmeta_version.json");
 
@@ -52,7 +52,7 @@ pub fn minecraftVersion(arena: std.mem.Allocator) ![]const u8 {
 }
 
 // Reads `poplar.json` from the project folder. A missing file gives the defaults.
-pub fn load(arena: std.mem.Allocator, io: std.Io, project_dir: std.Io.Dir, folder_name: []const u8, problem: *Problem) !Self {
+pub fn load(arena: std.mem.Allocator, io: std.Io, project_dir: std.Io.Dir, folder_name: []const u8, problem: *Problem) !Config {
     const json = project_dir.readFileAlloc(io, file_name, arena, .unlimited) catch |err| switch (err) {
         error.FileNotFound => "{}",
         else => return err,
@@ -60,7 +60,7 @@ pub fn load(arena: std.mem.Allocator, io: std.Io, project_dir: std.Io.Dir, folde
     return parse(arena, json, folder_name, try latestFormat(arena), problem);
 }
 
-pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8, latest: PackFormat, problem: *Problem) ParseError!Self {
+pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8, latest: PackFormat, problem: *Problem) ParseError!Config {
     var reader: FieldReader = .{ .arena = arena, .scanner = .initCompleteInput(arena, json), .problem = problem };
     reader.scanner.enableDiagnostics(&reader.diagnostics);
 
@@ -95,7 +95,7 @@ pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8
         }
     }
 
-    const config: Self = .{
+    const config: Config = .{
         .zip_name = zip_name orelse folder_name,
         .namespace = namespace orelse folder_name,
         .description = description orelse try std.json.Stringify.valueAlloc(arena, zip_name orelse folder_name, .{}),
@@ -105,7 +105,7 @@ pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8
     return config.validate(arena, namespace != null, problem);
 }
 
-fn validate(config: Self, arena: std.mem.Allocator, has_namespace: bool, problem: *Problem) ParseError!Self {
+fn validate(config: Config, arena: std.mem.Allocator, has_namespace: bool, problem: *Problem) ParseError!Config {
     if (config.zip_name.len == 0 or std.mem.indexOfAny(u8, config.zip_name, "/\\") != null) {
         return failWithoutPosition(arena, problem, "\"zipName\" '{s}' must not be empty or contain '/' or '\\'", .{config.zip_name});
     }
