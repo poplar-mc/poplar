@@ -33,23 +33,21 @@ pub fn containsRuntimeValue(compiler: *const Compiler, expression: *const ast.Ex
 }
 
 /// `text(x)` and `len(x)` on a compile-time value are known when the pack is built.
-fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler.CompileError!?Compiler.Value {
+fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler.Error!Compiler.Value {
     if (call.callee.kind != .identifier) {
-        try compiler.addError("only named functions can be called", .{});
-        return null;
+        return compiler.fail("only named functions can be called", .{});
     }
     const identifier = call.callee.kind.identifier;
     const name = identifier.name;
     if (calls.isBuiltinCall(call, "text")) {
         if (call.args.len != 1) {
-            try compiler.addError("'text' expects 1 argument, found {d}", .{call.args.len});
-            return null;
+            return compiler.fail("'text' expects 1 argument, found {d}", .{call.args.len});
         }
         return data.textComponent(compiler, call.args[0], env);
     }
     if (data.isStringCall(call) or data.isStringTest(call)) return data.evaluateStringCall(compiler, call, env);
     if (calls.isBuiltinCall(call, "len") and call.args.len == 1) {
-        const value = try evaluate(compiler, call.args[0], env) orelse return null;
+        const value = try evaluate(compiler, call.args[0], env);
         switch (value) {
             .list => |elements| return .{ .number = @intCast(elements.len) },
             .compound => |entries| return .{ .number = @intCast(entries.len) },
@@ -59,26 +57,23 @@ fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler
         }
     }
     if (try calls.calledKey(compiler, identifier) != null) {
-        try compiler.addError("mcfun '{s}' runs in the game, so its result is not known when the pack is built", .{name});
-    } else if (identifier.namespace == null and calls.isBuiltin(name)) {
-        try compiler.addError("'{s}' changes data in the game, so it has no build-time value", .{name});
-    } else {
-        try compiler.addError("unknown function '{s}'", .{name});
+        return compiler.fail("mcfun '{s}' runs in the game, so its result is not known when the pack is built", .{name});
     }
-    return null;
+    if (identifier.namespace == null and calls.isBuiltin(name)) {
+        return compiler.fail("'{s}' changes data in the game, so it has no build-time value", .{name});
+    }
+    return compiler.fail("unknown function '{s}'", .{name});
 }
 
-pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.CompileError!?Compiler.Value {
+pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.Error!Compiler.Value {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     return switch (expression.kind) {
         .minecraft_check => {
-            try compiler.addError("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition", .{});
-            return null;
+            return compiler.fail("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition", .{});
         },
         .macro_key => |name| {
-            try compiler.addError("'$({s})' is a macro argument, known only when the call starts, so it cannot be used at compile time", .{name});
-            return null;
+            return compiler.fail("'$({s})' is a macro argument, known only when the call starts, so it cannot be used at compile time", .{name});
         },
         .string => |text| .{ .string = text },
         .number => |number| .{ .number = number },
@@ -89,22 +84,18 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *En
             switch (identifier.kind) {
                 .compile_time => {},
                 .score => {
-                    try compiler.addError("score '#{s}' cannot be used here", .{identifier.name});
-                    return null;
+                    return compiler.fail("score '#{s}' cannot be used here", .{identifier.name});
                 },
                 .data => {
-                    try compiler.addError("data '${s}' cannot be used here", .{identifier.name});
-                    return null;
+                    return compiler.fail("data '${s}' cannot be used here", .{identifier.name});
                 },
                 .entity_data => {
-                    try compiler.addError("entity data '{s}.${s}' cannot be used here", .{ identifier.selector.?, identifier.name });
-                    return null;
+                    return compiler.fail("entity data '{s}.${s}' cannot be used here", .{ identifier.selector.?, identifier.name });
                 },
             }
 
             const value = env.get(identifier.name) orelse {
-                try compiler.addError("unknown name '{s}'", .{identifier.name});
-                return null;
+                return compiler.fail("unknown name '{s}'", .{identifier.name});
             };
             return value;
         },
@@ -113,14 +104,13 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *En
         .call => |call| evaluateCall(compiler, call, env),
         .selector => |text| {
             if (try compiler.command_tree.checkSelector(compiler.arena, text)) |failure| {
-                try compiler.addError("{s}", .{failure.message});
-                return null;
+                return compiler.fail("{s}", .{failure.message});
             }
             return .{ .string = text };
         },
         .list => |elements| {
             const values = try compiler.arena.alloc(Compiler.Value, elements.len);
-            for (elements, values) |element, *value| value.* = try evaluate(compiler, element, env) orelse return null;
+            for (elements, values) |element, *value| value.* = try evaluate(compiler, element, env);
             return .{ .list = values };
         },
         .compound => |entries| {
@@ -128,19 +118,18 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *En
             for (entries, values, 0..) |entry, *value, index| {
                 for (entries[0..index]) |earlier| {
                     if (std.mem.eql(u8, earlier.key, entry.key)) {
-                        try compiler.addError("key '{s}' is used more than once", .{entry.key});
-                        return null;
+                        return compiler.fail("key '{s}' is used more than once", .{entry.key});
                     }
                 }
-                value.* = .{ .key = entry.key, .value = try evaluate(compiler, entry.value, env) orelse return null };
+                value.* = .{ .key = entry.key, .value = try evaluate(compiler, entry.value, env) };
             }
             return .{ .compound = values };
         },
     };
 }
 
-fn evaluatePrefix(compiler: *Compiler, prefix: ast.Prefix, env: *Environment) Compiler.CompileError!?Compiler.Value {
-    const operand = try evaluate(compiler, prefix.operand, env) orelse return null;
+fn evaluatePrefix(compiler: *Compiler, prefix: ast.Prefix, env: *Environment) Compiler.Error!Compiler.Value {
+    const operand = try evaluate(compiler, prefix.operand, env);
 
     if (prefix.op == .negate and operand == .number) return checkedNumber(compiler, std.math.sub(i64, 0, operand.number));
     if (prefix.op == .negate and operand == .typed_number) {
@@ -150,13 +139,12 @@ fn evaluatePrefix(compiler: *Compiler, prefix: ast.Prefix, env: *Environment) Co
     }
     if (prefix.op == .not and operand == .boolean) return .{ .boolean = !operand.boolean };
 
-    try compiler.addError("operator '{s}' cannot be used with {s}", .{ prefixOperatorText(prefix.op), @tagName(operand) });
-    return null;
+    return compiler.fail("operator '{s}' cannot be used with {s}", .{ prefixOperatorText(prefix.op), @tagName(operand) });
 }
 
-fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compiler.CompileError!?Compiler.Value {
-    const left = try evaluate(compiler, infix.left, env) orelse return null;
-    const right = try evaluate(compiler, infix.right, env) orelse return null;
+fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compiler.Error!Compiler.Value {
+    const left = try evaluate(compiler, infix.left, env);
+    const right = try evaluate(compiler, infix.right, env);
 
     if (infix.op == .add and (left == .string or right == .string)) {
         const text = try std.fmt.allocPrint(compiler.arena, "{s}{s}", .{ try valueToText(compiler, left), try valueToText(compiler, right) });
@@ -195,26 +183,22 @@ fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compi
     }
 
     if (left == .typed_number or right == .typed_number) {
-        try compiler.addError("build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here", .{infixOperatorText(infix.op)});
-        return null;
+        return compiler.fail("build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here", .{infixOperatorText(infix.op)});
     }
-    try compiler.addError("operator '{s}' cannot be used with {s} and {s}", .{
+    return compiler.fail("operator '{s}' cannot be used with {s} and {s}", .{
         infixOperatorText(infix.op),
         @tagName(left),
         @tagName(right),
     });
-    return null;
 }
 
-fn checkedNumber(compiler: *Compiler, result: error{ Overflow, DivisionByZero }!i64) Compiler.CompileError!?Compiler.Value {
+fn checkedNumber(compiler: *Compiler, result: error{ Overflow, DivisionByZero }!i64) Compiler.Error!Compiler.Value {
     const number = result catch |err| switch (err) {
         error.Overflow => {
-            try compiler.addError("integer overflow", .{});
-            return null;
+            return compiler.fail("integer overflow", .{});
         },
         error.DivisionByZero => {
-            try compiler.addError("division by zero", .{});
-            return null;
+            return compiler.fail("division by zero", .{});
         },
     };
     return .{ .number = number };
@@ -270,7 +254,7 @@ pub fn infixOperatorText(op: ast.Infix.Operator) []const u8 {
     };
 }
 
-pub fn valueToText(compiler: *Compiler, value: Compiler.Value) Compiler.CompileError![]const u8 {
+pub fn valueToText(compiler: *Compiler, value: Compiler.Value) std.mem.Allocator.Error![]const u8 {
     return switch (value) {
         .string => |text| text,
         .number => |number| try std.fmt.allocPrint(compiler.arena, "{d}", .{number}),
@@ -282,20 +266,20 @@ pub fn valueToText(compiler: *Compiler, value: Compiler.Value) Compiler.CompileE
 }
 
 /// `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is a double.
-fn typedNumberSnbt(compiler: *Compiler, number: ast.TypedNumber) Compiler.CompileError![]const u8 {
+fn typedNumberSnbt(compiler: *Compiler, number: ast.TypedNumber) std.mem.Allocator.Error![]const u8 {
     const suffix = if (number.type) |number_type| number_type.suffix() else "";
     return std.mem.concat(compiler.arena, u8, &.{ number.text, suffix });
 }
 
 /// A key is written as it is when it is a plain name, else in quotes.
-pub fn snbtKey(compiler: *Compiler, key: []const u8) Compiler.CompileError![]const u8 {
+pub fn snbtKey(compiler: *Compiler, key: []const u8) std.mem.Allocator.Error![]const u8 {
     for (key) |ch| {
         if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-' and ch != '.' and ch != '+') return valueToSnbt(compiler, .{ .string = key });
     }
     return if (key.len == 0) "\"\"" else key;
 }
 
-pub fn valueToSnbt(compiler: *Compiler, value: Compiler.Value) Compiler.CompileError![]const u8 {
+pub fn valueToSnbt(compiler: *Compiler, value: Compiler.Value) std.mem.Allocator.Error![]const u8 {
     switch (value) {
         .list => |elements| {
             var snbt: std.ArrayList(u8) = .empty;

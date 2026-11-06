@@ -15,3 +15,11 @@ path: []const u8,
 /// Null when the error is not about one place in a file, such as a missing folder.
 position: ?Position,
 message: []const u8,
+
+/// Ends the stop that `error.Reported` asked for, so that the next statement or declaration is checked.
+pub fn recover(result: Error!void) std.mem.Allocator.Error!void {
+    result catch |err| switch (err) {
+        error.Reported => {},
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+}

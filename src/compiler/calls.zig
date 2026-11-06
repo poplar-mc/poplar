@@ -16,16 +16,15 @@ const scores = @import("scores.zig");
 const values = @import("values.zig");
 
 /// Returns the command that calls an mcfun. CommandTree that write a runtime `with` compound go into `commands` first.
-pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compiler.McfunDeclaration, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.Command {
+pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compiler.McfunDeclaration, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!ir.Command {
     const mcfun = declaration.mcfun;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
     try Compiler.collectMacroKeys(compiler.arena, mcfun.body, &keys);
     if (call.args.len > 0) {
-        try compiler.addError("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ mcfun.name, mcfun.name, try exampleCompound(compiler, keys.keys()) });
-        return null;
+        return compiler.fail("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ mcfun.name, mcfun.name, try exampleCompound(compiler, keys.keys()) });
     }
     const with = call.with orelse {
-        if (keys.count() > 0) try compiler.addError("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ mcfun.name, keys.keys()[0], mcfun.name, try exampleCompound(compiler, keys.keys()) });
+        if (keys.count() > 0) return compiler.fail("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ mcfun.name, keys.keys()[0], mcfun.name, try exampleCompound(compiler, keys.keys()) });
         return .{ .function = declaration.ir_name };
     };
     const value = switch (with) {
@@ -34,12 +33,11 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
     };
 
     if (data.isDataIdentifier(value)) {
-        const path = try data.dataPathOf(compiler, value.kind.identifier, env) orelse return null;
+        const path = try data.dataPathOf(compiler, value.kind.identifier, env);
         if (try nonCompoundGlobal(compiler, value.kind.identifier, env)) |initial| {
             const outer_position = compiler.enterExpression(value);
             defer compiler.restorePosition(outer_position);
-            try compiler.addError("'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ value.kind.identifier.name, initial, value.kind.identifier.name, initial });
-            return null;
+            return compiler.fail("'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ value.kind.identifier.name, initial, value.kind.identifier.name, initial });
         }
         return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .data_path = path } } };
     }
@@ -48,8 +46,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         else => {
             const outer_position = compiler.enterExpression(value);
             defer compiler.restorePosition(outer_position);
-            try compiler.addError("'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
-            return null;
+            return compiler.fail("'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
         },
     };
 
@@ -59,8 +56,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         } else {
             const outer_position = compiler.enterExpression(value);
             defer compiler.restorePosition(outer_position);
-            try compiler.addError("mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ mcfun.name, key, key });
-            return null;
+            return compiler.fail("mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ mcfun.name, key, key });
         }
     }
 
@@ -73,7 +69,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         try compound.append(compiler.arena, '{');
         for (entries, 0..) |entry, index| {
             if (index > 0) try compound.append(compiler.arena, ',');
-            try compound.print(compiler.arena, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) orelse return null });
+            try compound.print(compiler.arena, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) });
         }
         try compound.append(compiler.arena, '}');
         return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(compiler.arena) } } };
@@ -89,7 +85,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         if (entry_value.kind == .list or entry_value.kind == .compound) continue;
 
         if (entry_value.kind == .identifier) {
-            if (entry_value.kind.identifier.kind == .score) score.* = try scores.scoreSource(compiler, entry_value.kind.identifier, env) orelse return null;
+            if (entry_value.kind.identifier.kind == .score) score.* = try scores.scoreSource(compiler, entry_value.kind.identifier, env);
             continue;
         }
 
@@ -107,12 +103,12 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         } else if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call) and values.containsRuntimeValue(compiler, entry_value, env)) {
             try data.compileStringInto(compiler, target, entry_value.kind.call, env, commands);
         } else if (data.isDataIdentifier(entry_value)) {
-            const source = try data.dataPathOf(compiler, entry_value.kind.identifier, env) orelse return null;
+            const source = try data.dataPathOf(compiler, entry_value.kind.identifier, env);
             try commands.append(compiler.arena, .{ .data_copy = .{ .target = target, .source = source } });
         } else if ((entry_value.kind == .list or entry_value.kind == .compound) and values.containsRuntimeValue(compiler, entry_value, env)) {
             try data.compileLiteralAssign(compiler, target, entry_value, env, commands);
         } else {
-            const snbt = try argumentSnbt(compiler, entry.value, env) orelse return null;
+            const snbt = try argumentSnbt(compiler, entry.value, env);
             try commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = snbt } });
         }
     }
@@ -121,10 +117,10 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
 
 /// The initial value of a whole `$` global that is not a compound and that no code changes. A global that code sets
 /// can hold a compound by the time of the call, so it is not reported. Null otherwise.
-fn nonCompoundGlobal(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?[]const u8 {
+fn nonCompoundGlobal(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.Error!?[]const u8 {
     if (identifier.kind != .data or !std.mem.eql(u8, Compiler.pathRoot(identifier.name), identifier.name)) return null;
     if (identifier.namespace == null and env.getLocal(.data, identifier.name) != null) return null;
-    const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
+    const namespace = try declarations.resolveNamespace(compiler, identifier.namespace);
     const global = compiler.data_globals.get(try declarations.qualifiedKey(compiler, namespace, identifier.name)) orelse return null;
     if (global.initial_snbt[0] == '{') return null;
     for (compiler.mcfuns.values()) |declaration| {
@@ -151,7 +147,7 @@ fn setsData(body: []const ast.Statement, name: []const u8) bool {
 }
 
 /// `{a: ..., b: ...}` for the keys an mcfun uses, for error messages.
-fn exampleCompound(compiler: *Compiler, keys: []const []const u8) Compiler.CompileError![]const u8 {
+fn exampleCompound(compiler: *Compiler, keys: []const []const u8) std.mem.Allocator.Error![]const u8 {
     if (keys.len == 0) return "{name: ...}";
     var text: std.ArrayList(u8) = .empty;
     try text.append(compiler.arena, '{');
@@ -161,15 +157,14 @@ fn exampleCompound(compiler: *Compiler, keys: []const []const u8) Compiler.Compi
 }
 
 /// A compile-time value as SNBT. A macro key is `"$(name)"`, so the line becomes a macro line.
-fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environment) Compiler.CompileError!?[]const u8 {
+fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environment) Compiler.Error![]const u8 {
     const outer_position = compiler.enterExpression(arg);
     defer compiler.restorePosition(outer_position);
     if (arg.kind == .macro_key) return try std.fmt.allocPrint(compiler.arena, "\"$({s})\"", .{arg.kind.macro_key});
 
-    const value = try values.evaluate(compiler, arg, env) orelse return null;
+    const value = try values.evaluate(compiler, arg, env);
     if (value == .null) {
-        try compiler.addError("null cannot be passed to an mcfun", .{});
-        return null;
+        return compiler.fail("null cannot be passed to an mcfun", .{});
     }
     return try values.valueToSnbt(compiler, value);
 }
@@ -182,7 +177,7 @@ pub fn generatedCall(compiler: *Compiler, name: []const u8) ir.Command {
 
 /// A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
 /// locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
-pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.Score, live_temp_count: usize, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.Score, live_temp_count: usize, commands: *std.ArrayList(ir.Command)) std.mem.Allocator.Error!void {
     var saved_scores: std.ArrayList(ir.Score) = .empty;
     var saved_data: std.ArrayList([]const u8) = .empty;
     for (0..live_temp_count) |index| try saved_scores.append(compiler.arena, try scores.tempScore(compiler, index));
@@ -209,7 +204,7 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
 }
 
 /// The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, and `s_i_countdown` for the local `#i_countdown`.
-fn scoreFrameSlot(compiler: *Compiler, score: ir.Score) Compiler.CompileError!ir.DataPath {
+fn scoreFrameSlot(compiler: *Compiler, score: ir.Score) std.mem.Allocator.Error!ir.DataPath {
     const key = switch (score.kind) {
         .temp => |temp| try std.fmt.allocPrint(compiler.arena, "t{d}", .{temp.index}),
         .local => try std.fmt.allocPrint(compiler.arena, "s_{s}", .{score.holder[1..]}),
@@ -219,11 +214,11 @@ fn scoreFrameSlot(compiler: *Compiler, score: ir.Score) Compiler.CompileError!ir
 }
 
 /// The key in the frame of the data local `names_countdown`: `d_names_countdown`.
-fn dataFrameSlot(compiler: *Compiler, key: []const u8) Compiler.CompileError!ir.DataPath {
+fn dataFrameSlot(compiler: *Compiler, key: []const u8) std.mem.Allocator.Error!ir.DataPath {
     return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "d_{s}", .{key}));
 }
 
-pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {
+pub fn buildCallGraph(compiler: *Compiler) std.mem.Allocator.Error!void {
     for (compiler.mcfuns.keys(), compiler.mcfuns.values()) |mcfun_key, declaration| {
         compiler.scope = compiler.scopeOf(declaration.namespace, declaration.imports);
         var calls: std.StringArrayHashMapUnmanaged(void) = .empty;
@@ -233,7 +228,7 @@ pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {
 }
 
 /// The key of a called name, without errors: the compile step reports a missing import or name.
-pub fn calledKey(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!?[]const u8 {
+pub fn calledKey(compiler: *Compiler, identifier: ast.Identifier) std.mem.Allocator.Error!?[]const u8 {
     const namespace = identifier.namespace orelse compiler.scope.namespace;
     const mcfun_key = try declarations.qualifiedKey(compiler, namespace, identifier.name);
     return if (compiler.mcfuns.contains(mcfun_key)) mcfun_key else null;
@@ -244,7 +239,7 @@ fn collectCalls(
     compiler: *Compiler,
     body: []const ast.Statement,
     calls: *std.StringArrayHashMapUnmanaged(void),
-) Compiler.CompileError!void {
+) std.mem.Allocator.Error!void {
     for (body) |statement| switch (statement.kind) {
         .var_decl => |var_decl| try collectExpressionCalls(compiler, var_decl.value, calls),
         .assign => |assign| try collectExpressionCalls(compiler, assign.value, calls),
@@ -274,7 +269,7 @@ fn collectInsertCalls(
     compiler: *Compiler,
     parts: []const ast.CommandPart,
     calls: *std.StringArrayHashMapUnmanaged(void),
-) Compiler.CompileError!void {
+) std.mem.Allocator.Error!void {
     for (parts) |part| switch (part.content) {
         .text => |text| try collectStdIds(compiler, text, calls),
         .insert => |expression| try collectExpressionCalls(compiler, expression, calls),
@@ -282,7 +277,7 @@ fn collectInsertCalls(
 }
 
 /// A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
-fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) Compiler.CompileError!void {
+fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) std.mem.Allocator.Error!void {
     const prefix = Compiler.std_namespace ++ ":";
     var index: usize = 0;
     while (std.mem.indexOfPos(u8, text, index, prefix)) |start| {
@@ -299,7 +294,7 @@ fn collectExpressionCalls(
     compiler: *Compiler,
     expression: *const ast.Expression,
     calls: *std.StringArrayHashMapUnmanaged(void),
-) Compiler.CompileError!void {
+) std.mem.Allocator.Error!void {
     switch (expression.kind) {
         .prefix => |prefix| try collectExpressionCalls(compiler, prefix.operand, calls),
         .infix => |infix| {
@@ -327,7 +322,7 @@ fn collectExpressionCalls(
 }
 
 /// True if `from` can call `to`, directly or through other mcfuns.
-pub fn canReach(compiler: *Compiler, from: []const u8, to: []const u8) Compiler.CompileError!bool {
+pub fn canReach(compiler: *Compiler, from: []const u8, to: []const u8) std.mem.Allocator.Error!bool {
     var pending: std.ArrayList([]const u8) = .empty;
     var visited: std.StringHashMapUnmanaged(void) = .empty;
     try pending.append(compiler.arena, from);
@@ -342,17 +337,17 @@ pub fn canReach(compiler: *Compiler, from: []const u8, to: []const u8) Compiler.
     return false;
 }
 
-pub fn compileCall(compiler: *Compiler, call: ast.Call, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
-    if (call.callee.kind != .identifier) return compiler.addError("only named functions can be called", .{});
+pub fn compileCall(compiler: *Compiler, call: ast.Call, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+    if (call.callee.kind != .identifier) return compiler.fail("only named functions can be called", .{});
     const name = call.callee.kind.identifier.name;
 
     if (call.callee.kind.identifier.namespace == null and load.event_builtins.has(name)) return load.compileEvent(compiler, call, name, env);
-    if (data.isStringCall(call) or data.isStringTest(call)) return compiler.addError("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
+    if (data.isStringCall(call) or data.isStringTest(call)) return compiler.fail("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
     if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return data.compileListBuiltin(compiler, name, call, env, commands);
-    const callee = try declarations.findMcfun(compiler, call.callee.kind.identifier) orelse return;
+    const callee = try declarations.findMcfun(compiler, call.callee.kind.identifier);
 
     compiler.mcfun.temp_count = 0;
-    const command = try compileMcfunCall(compiler, call, callee.declaration, env, commands) orelse return;
+    const command = try compileMcfunCall(compiler, call, callee.declaration, env, commands);
     if (compiler.mcfun.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(compiler, command, null, 0, commands);
     try commands.append(compiler.arena, command);
 }

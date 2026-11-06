@@ -11,8 +11,8 @@ const data = @import("data.zig");
 const declarations = @import("declarations.zig");
 const values = @import("values.zig");
 
-pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
-    const target = try resolveScore(compiler, identifier, env) orelse return;
+pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+    const target = try resolveScore(compiler, identifier, env);
     compiler.mcfun.temp_count = 0;
 
     if (isSafeInPlace(expression, identifier)) return compileInto(compiler, target, expression, env, commands);
@@ -24,7 +24,7 @@ pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expre
 }
 
 /// `#n = 3 + #n` is the same as `#n = #n + 3`, which is computed in `#n` with no temp.
-fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) Compiler.CompileError!?*const ast.Expression {
+fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) std.mem.Allocator.Error!?*const ast.Expression {
     if (expression.kind != .infix) return null;
     const infix = expression.kind.infix;
     if (infix.op != .add and infix.op != .multiply) return null;
@@ -32,12 +32,12 @@ fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target
     return try compiler.createExpression(.{ .position = expression.position, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
 }
 
-pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, expression, env)) {
-        const value = try values.evaluate(compiler, expression, env) orelse return;
-        const number = try toScoreValue(compiler, value) orelse return;
+        const value = try values.evaluate(compiler, expression, env);
+        const number = try toScoreValue(compiler, value);
         return commands.append(compiler.arena, .{ .score_set = .{ .score = target, .value = number } });
     }
 
@@ -45,54 +45,54 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
         .macro_key => |name| return commands.append(compiler.arena, .{ .score_set_macro_argument = .{ .score = target, .macro_argument = name } }),
         .identifier => |identifier| {
             if (identifier.kind == .data or identifier.kind == .entity_data) {
-                const source = try data.dataPathOf(compiler, identifier, env) orelse return;
+                const source = try data.dataPathOf(compiler, identifier, env);
                 return commands.append(compiler.arena, .{ .data_to_score = .{ .source = source, .score = target } });
             }
 
-            const source = try resolveScore(compiler, identifier, env) orelse return;
+            const source = try resolveScore(compiler, identifier, env);
             if (source.eql(target)) return;
-            if (!try checkSingleEntity(compiler, identifier)) return;
+            try checkSingleEntity(compiler, identifier);
             try appendOperation(compiler, commands, target, .assign, source);
         },
         .prefix => |prefix| {
             if (prefix.op != .negate) {
-                return compiler.addError("operator '{s}' cannot be used with scores", .{values.prefixOperatorText(prefix.op)});
+                return compiler.fail("operator '{s}' cannot be used with scores", .{values.prefixOperatorText(prefix.op)});
             }
             try compileInto(compiler, target, prefix.operand, env, commands);
             try appendOperation(compiler, commands, target, .mul, try constantScore(compiler, -1));
         },
         .infix => |infix| {
             const op = scoreOperator(infix.op) orelse {
-                return compiler.addError("operator '{s}' on scores needs 'if' (not supported yet)", .{values.infixOperatorText(infix.op)});
+                return compiler.fail("operator '{s}' on scores needs 'if' (not supported yet)", .{values.infixOperatorText(infix.op)});
             };
             try compileInto(compiler, target, infix.left, env, commands);
             try applyOperand(compiler, target, op, infix.right, env, commands);
         },
         .call => |call| {
             if (calls.isBuiltinCall(call, "len")) return data.compileLength(compiler, target, call, env, commands);
-            if (data.isStringCall(call)) return compiler.addError("'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'", .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name });
-            if (data.isStringTest(call)) return compiler.addError("'{s}' is a condition. Use it in 'if' or 'while'", .{call.callee.kind.identifier.name});
-            if (call.callee.kind != .identifier) return compiler.addError("only an mcfun call can be used as a runtime value", .{});
-            const found = try declarations.findMcfun(compiler, call.callee.kind.identifier) orelse return;
+            if (data.isStringCall(call)) return compiler.fail("'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'", .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name });
+            if (data.isStringTest(call)) return compiler.fail("'{s}' is a condition. Use it in 'if' or 'while'", .{call.callee.kind.identifier.name});
+            if (call.callee.kind != .identifier) return compiler.fail("only an mcfun call can be used as a runtime value", .{});
+            const found = try declarations.findMcfun(compiler, call.callee.kind.identifier);
             // Temps made after this point hold arguments. They are not needed after the call.
             const live_count = compiler.mcfun.temp_count;
-            const run = try calls.compileMcfunCall(compiler, call, found.declaration, env, commands) orelse return;
+            const run = try calls.compileMcfunCall(compiler, call, found.declaration, env, commands);
             compiler.mcfun.temp_count = live_count;
             const store: ir.Command = .{ .store_result = .{ .target = .{ .score = target }, .run = try compiler.createCommand(run) } };
 
             if (!try calls.canReach(compiler, found.key, compiler.mcfun.key)) return commands.append(compiler.arena, store);
             try calls.appendWithSavedValues(compiler, store, target, live_count, commands);
         },
-        else => try compiler.addError("this expression cannot be used with scores", .{}),
+        else => return compiler.fail("this expression cannot be used with scores", .{}),
     }
 }
 
-fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
     const outer_position = compiler.enterExpression(operand);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, operand, env)) {
-        const value = try values.evaluate(compiler, operand, env) orelse return;
-        const number = try toScoreValue(compiler, value) orelse return;
+        const value = try values.evaluate(compiler, operand, env);
+        const number = try toScoreValue(compiler, value);
 
         if ((op == .add or op == .sub) and number != std.math.minInt(i32)) {
             const score_value: ir.ScoreValue = .{ .score = target, .value = if (number < 0) -number else number };
@@ -100,13 +100,13 @@ fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand:
             return commands.append(compiler.arena, if (is_add) .{ .score_add = score_value } else .{ .score_remove = score_value });
         }
 
-        if ((op == .div or op == .mod) and number == 0) return compiler.addError("division by zero", .{});
+        if ((op == .div or op == .mod) and number == 0) return compiler.fail("division by zero", .{});
 
         return appendOperation(compiler, commands, target, op, try constantScore(compiler, number));
     }
 
     if (operand.kind == .identifier and operand.kind.identifier.kind == .score) {
-        const source = try scoreSource(compiler, operand.kind.identifier, env) orelse return;
+        const source = try scoreSource(compiler, operand.kind.identifier, env);
         return appendOperation(compiler, commands, target, op, source);
     }
 
@@ -115,46 +115,40 @@ fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand:
     try appendOperation(compiler, commands, target, op, temp);
 }
 
-fn appendOperation(compiler: *Compiler, commands: *std.ArrayList(ir.Command), target: ir.Score, op: ir.Operator, source: ir.Score) Compiler.CompileError!void {
+fn appendOperation(compiler: *Compiler, commands: *std.ArrayList(ir.Command), target: ir.Score, op: ir.Operator, source: ir.Score) std.mem.Allocator.Error!void {
     try commands.append(compiler.arena, .{ .score_operation = .{ .target = target, .op = op, .source = source } });
 }
 
 /// Resolves a score that is read. An entity score must name one entity.
-pub fn scoreSource(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.Score {
-    const score = try resolveScore(compiler, identifier, env) orelse return null;
-    if (!try checkSingleEntity(compiler, identifier)) return null;
+pub fn scoreSource(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.Error!ir.Score {
+    const score = try resolveScore(compiler, identifier, env);
+    try checkSingleEntity(compiler, identifier);
     return score;
 }
 
 /// `#x` is the global value of objective `<ns>.x`. `@s.#x` is the value of an entity in the same objective.
 /// A local `#x` is the fake player `#x_<mcfun>` in `<ns>`.
-pub fn resolveScore(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.Score {
+pub fn resolveScore(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.Error!ir.Score {
     if (env.getLocal(.score, identifier.name)) |local| {
         if (identifier.selector != null) {
-            try compiler.addError("'#{s}' is local, so it has no entity values. Declare it at the top level", .{identifier.name});
-            return null;
+            return compiler.fail("'#{s}' is local, so it has no entity values. Declare it at the top level", .{identifier.name});
         }
         return ir.Score.local(local.generated_name, local.owner, compiler.scope.output_namespace);
     }
-    const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
+    const namespace = try declarations.resolveNamespace(compiler, identifier.namespace);
     const global = compiler.globals.get(try declarations.qualifiedKey(compiler, namespace, identifier.name)) orelse {
-        try compiler.addError("unknown score '#{s}'", .{identifier.name});
-        return null;
+        return compiler.fail("unknown score '#{s}'", .{identifier.name});
     };
     return .{ .holder = identifier.selector orelse Compiler.global_holder, .objective = global.name, .namespace = global.output_namespace };
 }
 
-pub fn checkSingleEntity(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!bool {
-    const selector = identifier.selector orelse return true;
-    if (try compiler.command_tree.checkSelector(compiler.arena, selector)) |failure| {
-        try compiler.addError("{s}", .{failure.message});
-        return false;
-    }
-    if (isSingleEntitySelector(selector)) return true;
+pub fn checkSingleEntity(compiler: *Compiler, identifier: ast.Identifier) Compiler.Error!void {
+    const selector = identifier.selector orelse return;
+    if (try compiler.command_tree.checkSelector(compiler.arena, selector)) |failure| return compiler.fail("{s}", .{failure.message});
+    if (isSingleEntitySelector(selector)) return;
 
     const sigil = if (identifier.kind == .entity_data) "$" else "#";
-    try compiler.addError("'{s}.{s}{s}' needs a selector for one entity (@s, @p, @r, @n or limit=1)", .{ selector, sigil, identifier.name });
-    return false;
+    return compiler.fail("'{s}.{s}{s}' needs a selector for one entity (@s, @p, @r, @n or limit=1)", .{ selector, sigil, identifier.name });
 }
 
 fn isSingleEntitySelector(selector: []const u8) bool {
@@ -165,24 +159,18 @@ fn isSingleEntitySelector(selector: []const u8) bool {
     return after < selector.len and (selector[after] == ',' or selector[after] == ']');
 }
 
-pub fn toScoreValue(compiler: *Compiler, value: Compiler.Value) Compiler.CompileError!?i32 {
+pub fn toScoreValue(compiler: *Compiler, value: Compiler.Value) Compiler.Error!i32 {
     if (value == .typed_number) {
         const number = value.typed_number;
-        if (number.hasFraction()) {
-            try compiler.addError("a score holds whole numbers, so it cannot hold '{s}'", .{number.text});
-        } else {
-            try compiler.addError("a score has no number types: write '{s}' with no suffix", .{number.text});
-        }
-        return null;
+        if (number.hasFraction()) return compiler.fail("a score holds whole numbers, so it cannot hold '{s}'", .{number.text});
+        return compiler.fail("a score has no number types: write '{s}' with no suffix", .{number.text});
     }
     if (value != .number) {
-        try compiler.addError("a score must hold a number, found {s}", .{@tagName(value)});
-        return null;
+        return compiler.fail("a score must hold a number, found {s}", .{@tagName(value)});
     }
 
     return std.math.cast(i32, value.number) orelse {
-        try compiler.addError("value {d} does not fit in a score (32-bit)", .{value.number});
-        return null;
+        return compiler.fail("value {d} does not fit in a score (32-bit)", .{value.number});
     };
 }
 
@@ -190,18 +178,18 @@ pub fn globalScore(global: Compiler.GlobalScore) ir.Score {
     return .{ .holder = Compiler.global_holder, .objective = global.name, .namespace = global.output_namespace };
 }
 
-pub fn constantScore(compiler: *Compiler, value: i32) Compiler.CompileError!ir.Score {
+pub fn constantScore(compiler: *Compiler, value: i32) std.mem.Allocator.Error!ir.Score {
     try compiler.constants.put(compiler.arena, value, {});
     return ir.Score.constant(compiler.arena, value);
 }
 
-pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
+pub fn newTemp(compiler: *Compiler) std.mem.Allocator.Error!ir.Score {
     defer compiler.mcfun.temp_count += 1;
     return tempScore(compiler, compiler.mcfun.temp_count);
 }
 
 /// Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.
-pub fn tempScore(compiler: *Compiler, index: usize) Compiler.CompileError!ir.Score {
+pub fn tempScore(compiler: *Compiler, index: usize) std.mem.Allocator.Error!ir.Score {
     return ir.Score.temp(compiler.arena, compiler.mcfun.folder, index, compiler.scope.output_namespace);
 }
 
