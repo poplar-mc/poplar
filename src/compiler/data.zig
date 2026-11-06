@@ -47,7 +47,7 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
         }
     }
 
-    compiler.temp_count = 0;
+    compiler.mcfun.temp_count = 0;
     const temp = try scores.newTemp(compiler);
     try scores.compileInto(compiler, temp, expression, env, commands);
     try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = temp } });
@@ -120,7 +120,7 @@ pub fn dataPath(compiler: *Compiler, identifier: ast.Identifier, env: *const Env
     const name = identifier.name;
     const root = Compiler.pathRoot(name);
     if (identifier.namespace == null) {
-        if (Compiler.localOf(env, '$', root)) |local| return dataLocal(compiler, try std.mem.concat(compiler.arena, u8, &.{ local.generated_name, name[root.len..] }));
+        if (env.getLocal(.data, root)) |local| return dataLocal(compiler, try std.mem.concat(compiler.arena, u8, &.{ local.generated_name, name[root.len..] }));
     }
     const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
     const global = compiler.data_globals.get(try declarations.qualifiedKey(compiler, namespace, root)) orelse {

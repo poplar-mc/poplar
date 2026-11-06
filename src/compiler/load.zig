@@ -221,7 +221,7 @@ pub const event_builtins = std.StaticStringMap(Compiler.Event.Kind).initComptime
 pub fn compileEvent(compiler: *Compiler, call: ast.Call, builtin: []const u8, env: *Environment) Compiler.CompileError!void {
     const kind = event_builtins.get(builtin).?;
     const is_trigger = kind == .trigger;
-    if (!compiler.in_load) return compiler.addError("'{s}' must be in 'mcfun load'", .{builtin});
+    if (!compiler.mcfun.in_load) return compiler.addError("'{s}' must be in 'mcfun load'", .{builtin});
     if (isInRuntimeBranch(env)) return compiler.addError("'{s}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'", .{builtin});
 
     // `onEvent(criteria, callback)` and `onTrigger(name, callback)` take a name first; the player events only a callback.

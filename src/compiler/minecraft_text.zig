@@ -50,8 +50,8 @@ fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Compiler
     };
 
     // Old keys from an earlier helper do no harm, because a macro line reads only the names it uses.
-    if (needs_macro_keys) try commands.append(compiler.arena, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = compiler.forwarded_args.? } });
-    compiler.temp_count = 0;
+    if (needs_macro_keys) try commands.append(compiler.arena, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = compiler.mcfun.forwarded_args.? } });
+    compiler.mcfun.temp_count = 0;
     for (command_text.inserts) |insert| {
         const target: ir.DataPath = .inStorage(.macro, insert.macro_name);
         switch (insert.source) {
@@ -83,7 +83,7 @@ pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environme
 
     const can_return = Compiler.containsReturn(execute.body);
     if (can_return) {
-        if (compiler.forwarded_args != null) return compiler.addError("'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet", .{});
+        if (compiler.mcfun.forwarded_args != null) return compiler.addError("'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet", .{});
         if (subcommands.is_macro) return compiler.addError("'return' inside 'execute (...)' with a data insert is not supported yet", .{});
     }
 
@@ -94,7 +94,7 @@ pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environme
     const name = try compiler.newGeneratedName("macro");
     try compiler.generated.append(compiler.arena, .{ .name = name, .commands = try compiler.arena.dupe(ir.Command, &.{execute_command}) });
     // The body can forward the macro arguments too, so in an mcfun that uses them they always go along.
-    try callMacroHelper(compiler, name, subcommands, compiler.forwarded_args != null, env, commands);
+    try callMacroHelper(compiler, name, subcommands, compiler.mcfun.forwarded_args != null, env, commands);
 }
 
 /// Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line. `$(key)` in the
@@ -194,7 +194,7 @@ fn isUsedMacroName(compiler: *const Compiler, name: []const u8, used: []const Co
     for (used) |insert| {
         if (std.mem.eql(u8, insert.macro_name, name)) return true;
     }
-    return compiler.macro_keys.contains(name);
+    return compiler.mcfun.macro_keys.contains(name);
 }
 
 /// Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.

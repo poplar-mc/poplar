@@ -242,7 +242,6 @@ fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
         .compound => |entries| entries.len == right.compound.len and for (entries, right.compound) |entry, other| {
             if (!std.mem.eql(u8, entry.key, other.key) or std.meta.activeTag(entry.value) != std.meta.activeTag(other.value) or !valuesEqual(entry.value, other.value)) break false;
         } else true,
-        .local => unreachable, // `evaluate` never returns a local.
     };
 }
 
@@ -279,7 +278,6 @@ pub fn valueToText(compiler: *Compiler, value: Compiler.Value) Compiler.CompileE
         .boolean => |boolean| if (boolean) "true" else "false",
         .null => "null",
         .list, .compound => valueToSnbt(compiler, value),
-        .local => unreachable, // `evaluate` never returns a local.
     };
 }
 

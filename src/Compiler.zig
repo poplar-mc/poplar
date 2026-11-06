@@ -144,8 +144,6 @@ data_globals: std.StringArrayHashMapUnmanaged(GlobalData) = .empty,
 constants: std.AutoArrayHashMapUnmanaged(i32, void) = .empty,
 errors: std.ArrayList(Diagnostic) = .empty,
 generated: std.ArrayList(ir.McFunction) = .empty,
-temp_count: usize = 0,
-generated_count: usize = 0,
 /// Where the compiler is: the source position for errors, the namespace, and the mcfun.
 path: []const u8 = "",
 position: Position = .{ .line = 0, .column = 0 },
@@ -160,23 +158,9 @@ tick_namespaces: std.StringArrayHashMapUnmanaged(void) = .empty,
 mcfun_calls: std.StringHashMapUnmanaged(std.StringArrayHashMapUnmanaged(void)) = .empty,
 /// Set when a recursive call saves temps, so that `poplar/load` clears the stack.
 uses_stack: bool = false,
-/// `{a:"$(a)"}` for the macro arguments that the current mcfun uses. Calls to its generated functions pass it on.
-forwarded_args: ?[]const u8 = null,
-/// The `$(name)` keys that the current mcfun uses.
-macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
-/// The test function of the innermost `while`, for `break` and `continue`.
-current_loop: ?[]const u8 = null,
-/// True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
-return_through_body: bool = false,
 /// The namespace of the pack. `text(#hp)` writes it into a text component.
 pack_namespace: []const u8 = "ns",
-/// True while a namespace's `mcfun load` is compiled. Only there `onEvent` is allowed.
-in_load: bool = false,
 events: std.ArrayList(Event) = .empty,
-/// Removes every data local of the current mcfun. It runs at each exit, so no value is left for the next call.
-current_cleanup: []const ir.Command = &.{},
-/// The locals that are visible at the statement being compiled. A recursive call saves them.
-live_locals: std.ArrayList(Environment.Local) = .empty,
 /// `#i_countdown` → where it comes from, so two different locals cannot get the same generated name.
 local_names: std.StringHashMapUnmanaged(LocalOrigin) = .empty,
 /// Every local declaration, for the language server.
@@ -299,35 +283,33 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
 
         var macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty;
         try collectMacroKeys(self.arena, mcfun.body, &macro_keys);
-        self.macro_keys = macro_keys;
         const is_hook = declaration.origin == .project and (std.mem.eql(u8, mcfun.name, "load") or std.mem.eql(u8, mcfun.name, "tick"));
         if (is_hook and macro_keys.count() > 0) {
             try self.addError("mcfun '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ mcfun.name, macro_keys.keys()[0] });
             continue;
         }
 
-        self.mcfun = .{
-            .folder = try ir.generatedFolder(self.arena, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
-            .name = declaration.ir_name,
-            .key = mcfun_key,
-        };
-        self.generated_count = 0;
-        self.live_locals.clearRetainingCapacity();
-        self.current_cleanup = try self.localCleanup(mcfun.body);
-        self.in_load = declaration.origin == .project and std.mem.eql(u8, mcfun.name, "load");
-
-        var env: Environment = .{};
         var forwarded: std.ArrayList(u8) = .empty;
         for (macro_keys.keys(), 0..) |key, index| {
             try forwarded.appendSlice(self.arena, if (index == 0) "{" else ",");
             try forwarded.print(self.arena, "{s}:\"$({s})\"", .{ key, key });
         }
         if (macro_keys.count() > 0) try forwarded.append(self.arena, '}');
-        self.forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.arena) else null;
 
+        self.mcfun = .{
+            .folder = try ir.generatedFolder(self.arena, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
+            .name = declaration.ir_name,
+            .key = mcfun_key,
+            .macro_keys = macro_keys,
+            .forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.arena) else null,
+            .in_load = declaration.origin == .project and std.mem.eql(u8, mcfun.name, "load"),
+        };
+        self.mcfun.cleanup = try self.localCleanup(mcfun.body);
+
+        var env: Environment = .{};
         var commands: std.ArrayList(ir.Command) = .empty;
         try self.compileBlock(mcfun.body, &env, &commands);
-        if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.arena, self.current_cleanup);
+        if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.arena, self.mcfun.cleanup);
 
         try mc_functions.append(self.arena, .{
             .name = declaration.ir_name,
@@ -362,8 +344,8 @@ pub fn scopeOf(self: *const Compiler, namespace: []const u8, imports: []const as
 }
 
 fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
-    const outer_live_count = self.live_locals.items.len;
-    defer self.live_locals.shrinkRetainingCapacity(outer_live_count);
+    const outer_live_count = self.mcfun.live_locals.items.len;
+    defer self.mcfun.live_locals.shrinkRetainingCapacity(outer_live_count);
 
     for (body, 0..) |statement, index| {
         try self.compileStatement(statement, env, commands);
@@ -397,11 +379,11 @@ fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment
         .@"for" => |loop| try self.compileFor(loop, env, commands),
         .@"return" => |value| try self.compileReturn(value, env, commands),
         .@"break" => {
-            if (self.current_loop == null) return self.addError("'break' must be inside a 'while' (not in 'execute (...)')", .{});
+            if (self.mcfun.loop == null) return self.addError("'break' must be inside a 'while' (not in 'execute (...)')", .{});
             try commands.append(self.arena, .{ .return_value = 0 });
         },
         .@"continue" => {
-            const loop = self.current_loop orelse return self.addError("'continue' must be inside a 'while' (not in 'execute (...)')", .{});
+            const loop = self.mcfun.loop orelse return self.addError("'continue' must be inside a 'while' (not in 'execute (...)')", .{});
             try commands.append(self.arena, .{ .return_run = try self.createCommand(calls.generatedCall(self, loop)) });
         },
         .@"while" => |loop| try self.compileWhile(loop, env, commands),
@@ -414,13 +396,13 @@ fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment
 /// Compiles an `execute (...)` body. A body that can `return` is always a function, called as
 /// `if function ...`: it returns 1 for each entity that returns from the mcfun, and then the mcfun returns.
 pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Environment, loop: ?[]const u8) CompileError!?ir.Command {
-    const outer_loop = self.current_loop;
-    const outer_through_body = self.return_through_body;
-    self.current_loop = loop;
-    self.return_through_body = true;
+    const outer_loop = self.mcfun.loop;
+    const outer_through_body = self.mcfun.return_through_body;
+    self.mcfun.loop = loop;
+    self.mcfun.return_through_body = true;
     defer {
-        self.current_loop = outer_loop;
-        self.return_through_body = outer_through_body;
+        self.mcfun.loop = outer_loop;
+        self.mcfun.return_through_body = outer_through_body;
     }
 
     if (!containsReturn(body)) return self.compileBodyAsCommand(body, env, "execute");
@@ -431,13 +413,13 @@ pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Envir
     const name = try self.newGeneratedName("execute");
     try self.generated.append(self.arena, .{ .name = name, .commands = try body_commands.toOwnedSlice(self.arena) });
 
-    self.return_through_body = outer_through_body;
+    self.mcfun.return_through_body = outer_through_body;
     return try self.onBodyReturn(name);
 }
 
 /// `execute if function <body> run ...`: when the body returned, return from this function too.
 fn onBodyReturn(self: *Compiler, body_name: []const u8) CompileError!ir.Command {
-    const pass_on: ir.Command = if (self.return_through_body) .{ .return_value = 1 } else .{ .return_run = try self.createCommand(.{ .score_get = try self.resultScore() }) };
+    const pass_on: ir.Command = if (self.mcfun.return_through_body) .{ .return_value = 1 } else .{ .return_run = try self.createCommand(.{ .score_get = try self.resultScore() }) };
     const checks = try self.arena.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .function_returns = body_name } }});
     return .{ .execute = .{ .checks = checks, .run = try self.createCommand(pass_on) } };
 }
@@ -475,7 +457,7 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     const global_key = try declarations.qualifiedKey(self, self.scope.namespace, name);
     const is_global = if (kind == .score) self.globals.contains(global_key) else self.data_globals.contains(global_key);
     const key = try std.fmt.allocPrint(self.arena, "{c}{s}", .{ sigil, name });
-    if (is_global or env.get(key) != null) return self.addError("'{s}' is already declared", .{key});
+    if (is_global or env.getLocal(kind, name) != null) return self.addError("'{s}' is already declared", .{key});
 
     const generated_base = try std.fmt.allocPrint(self.arena, "{s}_{s}", .{ name, self.mcfun.folder });
     const generated_name = if (kind == .score) try std.fmt.allocPrint(self.arena, "#{s}", .{generated_base}) else generated_base;
@@ -491,14 +473,14 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     const local: Environment.Local = .{ .kind = kind, .generated_name = generated_name, .owner = self.mcfun.name };
     switch (kind) {
         .score => {
-            self.temp_count = 0;
+            self.mcfun.temp_count = 0;
             try scores.compileInto(self, ir.Score.local(generated_name, self.mcfun.name, self.scope.output_namespace), var_decl.value, env, commands);
         },
         .data => try data.compileDataAssign(self, data.dataLocal(self, generated_name), var_decl.value, env, commands),
     }
 
-    _ = try env.declare(self.arena, key, .{ .local = local });
-    try self.live_locals.append(self.arena, local);
+    try env.declareLocal(self.arena, name, local);
+    try self.mcfun.live_locals.append(self.arena, local);
     for (self.locals.items) |existing| {
         if (std.meta.eql(existing.position, self.position) and std.mem.eql(u8, existing.path, self.path)) break;
     } else try self.locals.append(self.arena, .{
@@ -642,14 +624,6 @@ fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, command
     }
 }
 
-/// The local `#name` or `$name` that is visible here.
-pub fn localOf(env: *const Environment, sigil: u8, name: []const u8) ?Environment.Local {
-    var buffer: [256]u8 = undefined;
-    const key = std.fmt.bufPrint(&buffer, "{c}{s}", .{ sigil, name }) catch return null;
-    const value = env.get(key) orelse return null;
-    return if (value == .local) value.local else null;
-}
-
 fn ifContainsReturn(if_statement: ast.If) bool {
     const else_body = if_statement.else_body orelse &.{};
     return containsReturn(if_statement.then_body) or containsReturn(else_body);
@@ -732,7 +706,7 @@ fn endsWithJump(body: []const ast.Statement) bool {
 }
 
 fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
-    self.temp_count = 0;
+    self.mcfun.temp_count = 0;
     var setup: std.ArrayList(ir.Command) = .empty;
     const condition = try conditions.lowerCondition(self, if_statement.condition, env, false, &setup) orelse return;
 
@@ -803,7 +777,7 @@ fn appendBranches(
         const else_if = else_body[0].kind.@"if";
         // The rest of the chain belongs to this `else if`. `compileStatement` restores the position after the chain.
         self.position = else_body[0].position;
-        self.temp_count = 0;
+        self.mcfun.temp_count = 0;
         var else_setup: std.ArrayList(ir.Command) = .empty;
         const else_condition = try conditions.lowerCondition(self, else_if.condition, env, false, &else_setup) orelse return;
         return self.appendBranches(else_if, env, wrapper, else_condition, else_setup.items, is_runtime);
@@ -831,8 +805,8 @@ fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *Envi
 }
 
 pub fn newGeneratedName(self: *Compiler, kind: []const u8) CompileError![]const u8 {
-    defer self.generated_count += 1;
-    const path = try std.fmt.allocPrint(self.arena, "poplar/{s}/{s}_{d}", .{ self.mcfun.folder, kind, self.generated_count });
+    defer self.mcfun.generated_count += 1;
+    const path = try std.fmt.allocPrint(self.arena, "poplar/{s}/{s}_{d}", .{ self.mcfun.folder, kind, self.mcfun.generated_count });
     const namespace = self.scope.output_namespace orelse return path;
     return std.fmt.allocPrint(self.arena, "{s}:{s}", .{ namespace, path });
 }
@@ -850,40 +824,40 @@ pub fn createCommand(self: *Compiler, command: ir.Command) CompileError!*const i
 }
 
 fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
-    if (self.return_through_body) {
+    if (self.mcfun.return_through_body) {
         const result = try self.resultScore();
-        self.temp_count = 0;
+        self.mcfun.temp_count = 0;
         if (value) |expression| {
             try scores.compileInto(self, result, expression, env, commands);
         } else {
             try commands.append(self.arena, .{ .score_set = .{ .score = result, .value = 0 } });
         }
-        try commands.appendSlice(self.arena, self.current_cleanup);
+        try commands.appendSlice(self.arena, self.mcfun.cleanup);
         return commands.append(self.arena, .{ .return_value = 1 });
     }
 
     const expression = value orelse {
-        try commands.appendSlice(self.arena, self.current_cleanup);
+        try commands.appendSlice(self.arena, self.mcfun.cleanup);
         return commands.append(self.arena, .{ .return_value = 0 });
     };
 
     if (!values.containsRuntimeValue(self, expression, env)) {
         const result = try values.evaluate(self, expression, env) orelse return;
         const number = try scores.toScoreValue(self, result) orelse return;
-        try commands.appendSlice(self.arena, self.current_cleanup);
+        try commands.appendSlice(self.arena, self.mcfun.cleanup);
         return commands.append(self.arena, .{ .return_value = number });
     }
 
-    self.temp_count = 0;
+    self.mcfun.temp_count = 0;
     if (expression.kind == .macro_key) {
-        try commands.appendSlice(self.arena, self.current_cleanup);
+        try commands.appendSlice(self.arena, self.mcfun.cleanup);
         return commands.append(self.arena, .{ .return_macro_argument = expression.kind.macro_key });
     }
     // The value can read a local, so it is computed before the locals are removed.
-    if (self.current_cleanup.len > 0) {
+    if (self.mcfun.cleanup.len > 0) {
         const temp = try scores.newTemp(self);
         try scores.compileInto(self, temp, expression, env, commands);
-        try commands.appendSlice(self.arena, self.current_cleanup);
+        try commands.appendSlice(self.arena, self.mcfun.cleanup);
         return commands.append(self.arena, .{ .return_run = try self.createCommand(.{ .score_get = temp }) });
     }
     const read: ir.Command = blk: {
@@ -916,7 +890,7 @@ fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *
     const test_name = try self.newGeneratedName("while");
     const body_name = try std.fmt.allocPrint(self.arena, "{s}_body", .{test_name});
 
-    self.temp_count = 0;
+    self.mcfun.temp_count = 0;
     var test_commands: std.ArrayList(ir.Command) = .empty;
     const condition = try conditions.lowerCondition(self, loop.condition, env, false, &test_commands) orelse return;
     // `while (true)` runs the body with no check. It must be able to stop.
@@ -940,10 +914,10 @@ fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *
     }
     if (reads_test_result) try test_commands.append(self.arena, .{ .return_value = 0 });
 
-    const outer_loop = self.current_loop;
-    const outer_through_body = self.return_through_body;
-    self.current_loop = test_name;
-    self.return_through_body = true;
+    const outer_loop = self.mcfun.loop;
+    const outer_through_body = self.mcfun.return_through_body;
+    self.mcfun.loop = test_name;
+    self.mcfun.return_through_body = true;
 
     var body_env: Environment = .{ .outer = env, .runtime_branch = true };
     var body_commands: std.ArrayList(ir.Command) = .empty;
@@ -951,14 +925,14 @@ fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *
     const call_test = calls.generatedCall(self, test_name);
     try body_commands.append(self.arena, if (can_return) .{ .return_run = try self.createCommand(call_test) } else call_test);
 
-    self.current_loop = outer_loop;
-    self.return_through_body = outer_through_body;
+    self.mcfun.loop = outer_loop;
+    self.mcfun.return_through_body = outer_through_body;
 
     try self.generated.append(self.arena, .{ .name = test_name, .commands = try test_commands.toOwnedSlice(self.arena) });
     try self.generated.append(self.arena, .{ .name = body_name, .commands = try body_commands.toOwnedSlice(self.arena) });
 
     if (!can_return) return commands.append(self.arena, call_test);
-    if (self.forwarded_args == null) return commands.append(self.arena, try self.onBodyReturn(test_name));
+    if (self.mcfun.forwarded_args == null) return commands.append(self.arena, try self.onBodyReturn(test_name));
 
     // `if function` cannot pass the macro arguments, so the result of the loop goes through a temp.
     const returned = try scores.newTemp(self);
@@ -1020,12 +994,29 @@ pub const Scope = struct {
     output_namespace: ?[]const u8 = null,
 };
 
+/// What the compiler knows about the mcfun that it is compiling. Assigning a new one resets it all.
 pub const CurrentMcfun = struct {
     /// As it appears in generated names (`ir.generatedFolder`): `heal`, or `std.clamp` for std.
     folder: []const u8 = "",
     /// The IR name (`combat:heal`), and the key with the source namespace (`combat:heal`, `std:clamp`).
     name: []const u8 = "",
     key: []const u8 = "",
+    temp_count: usize = 0,
+    generated_count: usize = 0,
+    /// The `$(name)` keys that it uses.
+    macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
+    /// `{a:"$(a)"}` for the macro arguments that it uses. Calls to its generated functions pass it on.
+    forwarded_args: ?[]const u8 = null,
+    /// The test function of the innermost `while`, for `break` and `continue`.
+    loop: ?[]const u8 = null,
+    /// True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
+    return_through_body: bool = false,
+    /// True in a namespace's `mcfun load`. Only there `onEvent` is allowed.
+    in_load: bool = false,
+    /// Removes each of its data locals. It runs at each exit, so no value is left for the next call.
+    cleanup: []const ir.Command = &.{},
+    /// The locals that are visible at the statement being compiled. A recursive call saves them.
+    live_locals: std.ArrayList(Environment.Local) = .empty,
 };
 
 /// Errors inside an expression point to where it starts. Returns the outer position for `restorePosition`.

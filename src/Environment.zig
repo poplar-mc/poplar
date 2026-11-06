@@ -11,8 +11,6 @@ pub const Value = union(enum) {
     null,
     list: []const Value,
     compound: []const Entry,
-    /// A `#` or `$` variable declared in a function body. Its key in the environment has the sigil: `#i`.
-    local: Local,
 
     pub const Entry = struct {
         key: []const u8,
@@ -33,6 +31,8 @@ pub const Local = struct {
 pub const AssignResult = enum { assigned, not_found, crosses_runtime_branch };
 
 store: std.StringHashMapUnmanaged(Value) = .empty,
+score_locals: std.StringHashMapUnmanaged(Local) = .empty,
+data_locals: std.StringHashMapUnmanaged(Local) = .empty,
 outer: ?*Environment = null,
 /// True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
 runtime_branch: bool = false,
@@ -49,6 +49,19 @@ pub fn declare(self: *Environment, arena: std.mem.Allocator, name: []const u8, v
 
     try self.store.put(arena, name, value);
     return true;
+}
+
+/// The local `#name` or `$name` that is visible here.
+pub fn getLocal(self: *const Environment, kind: Local.Kind, name: []const u8) ?Local {
+    const locals = if (kind == .score) self.score_locals else self.data_locals;
+    if (locals.get(name)) |local| return local;
+    if (self.outer) |outer| return outer.getLocal(kind, name);
+    return null;
+}
+
+pub fn declareLocal(self: *Environment, arena: std.mem.Allocator, name: []const u8, local: Local) std.mem.Allocator.Error!void {
+    const locals = if (local.kind == .score) &self.score_locals else &self.data_locals;
+    try locals.put(arena, name, local);
 }
 
 pub fn assign(self: *Environment, name: []const u8, value: Value) AssignResult {

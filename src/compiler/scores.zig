@@ -13,7 +13,7 @@ const values = @import("values.zig");
 
 pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const target = try resolveScore(compiler, identifier, env) orelse return;
-    compiler.temp_count = 0;
+    compiler.mcfun.temp_count = 0;
 
     if (isSafeInPlace(expression, identifier)) return compileInto(compiler, target, expression, env, commands);
     if (try swappedInPlace(compiler, expression, identifier)) |swapped| return compileInto(compiler, target, swapped, env, commands);
@@ -75,9 +75,9 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
             if (call.callee.kind != .identifier) return compiler.addError("only an mcfun call can be used as a runtime value", .{});
             const found = try declarations.findMcfun(compiler, call.callee.kind.identifier) orelse return;
             // Temps made after this point hold arguments. They are not needed after the call.
-            const live_count = compiler.temp_count;
+            const live_count = compiler.mcfun.temp_count;
             const run = try calls.compileMcfunCall(compiler, call, found.declaration, env, commands) orelse return;
-            compiler.temp_count = live_count;
+            compiler.mcfun.temp_count = live_count;
             const store: ir.Command = .{ .store_result = .{ .target = .{ .score = target }, .run = try compiler.createCommand(run) } };
 
             if (!try calls.canReach(compiler, found.key, compiler.mcfun.key)) return commands.append(compiler.arena, store);
@@ -129,7 +129,7 @@ pub fn scoreSource(compiler: *Compiler, identifier: ast.Identifier, env: *const 
 /// `#x` is the global value of objective `<ns>.x`. `@s.#x` is the value of an entity in the same objective.
 /// A local `#x` is the fake player `#x_<mcfun>` in `<ns>`.
 pub fn resolveScore(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.Score {
-    if (Compiler.localOf(env, '#', identifier.name)) |local| {
+    if (env.getLocal(.score, identifier.name)) |local| {
         if (identifier.selector != null) {
             try compiler.addError("'#{s}' is local, so it has no entity values. Declare it at the top level", .{identifier.name});
             return null;
@@ -196,8 +196,8 @@ pub fn constantScore(compiler: *Compiler, value: i32) Compiler.CompileError!ir.S
 }
 
 pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
-    defer compiler.temp_count += 1;
-    return tempScore(compiler, compiler.temp_count);
+    defer compiler.mcfun.temp_count += 1;
+    return tempScore(compiler, compiler.mcfun.temp_count);
 }
 
 /// Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.

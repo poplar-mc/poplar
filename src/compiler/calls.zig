@@ -123,7 +123,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
 /// can hold a compound by the time of the call, so it is not reported. Null otherwise.
 fn nonCompoundGlobal(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?[]const u8 {
     if (identifier.kind != .data or !std.mem.eql(u8, Compiler.pathRoot(identifier.name), identifier.name)) return null;
-    if (identifier.namespace == null and Compiler.localOf(env, '$', identifier.name) != null) return null;
+    if (identifier.namespace == null and env.getLocal(.data, identifier.name) != null) return null;
     const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
     const global = compiler.data_globals.get(try declarations.qualifiedKey(compiler, namespace, identifier.name)) orelse return null;
     if (global.initial_snbt[0] == '{') return null;
@@ -176,7 +176,7 @@ fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environme
 
 /// Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use them.
 pub fn generatedCall(compiler: *Compiler, name: []const u8) ir.Command {
-    const forwarded = compiler.forwarded_args orelse return .{ .function = name };
+    const forwarded = compiler.mcfun.forwarded_args orelse return .{ .function = name };
     return .{ .function_with = .{ .name = name, .arguments = .{ .compound = forwarded } } };
 }
 
@@ -186,7 +186,7 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
     var saved_scores: std.ArrayList(ir.Score) = .empty;
     var saved_data: std.ArrayList([]const u8) = .empty;
     for (0..live_temp_count) |index| try saved_scores.append(compiler.arena, try scores.tempScore(compiler, index));
-    for (compiler.live_locals.items) |local| switch (local.kind) {
+    for (compiler.mcfun.live_locals.items) |local| switch (local.kind) {
         .score => try saved_scores.append(compiler.arena, ir.Score.local(local.generated_name, local.owner, compiler.scope.output_namespace)),
         .data => try saved_data.append(compiler.arena, local.generated_name),
     };
@@ -351,9 +351,9 @@ pub fn compileCall(compiler: *Compiler, call: ast.Call, env: *Environment, comma
     if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return data.compileListBuiltin(compiler, name, call, env, commands);
     const callee = try declarations.findMcfun(compiler, call.callee.kind.identifier) orelse return;
 
-    compiler.temp_count = 0;
+    compiler.mcfun.temp_count = 0;
     const command = try compileMcfunCall(compiler, call, callee.declaration, env, commands) orelse return;
-    if (compiler.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(compiler, command, null, 0, commands);
+    if (compiler.mcfun.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(compiler, command, null, 0, commands);
     try commands.append(compiler.arena, command);
 }
 
