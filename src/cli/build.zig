@@ -19,7 +19,7 @@ fn run(ctx: zli.CommandContext) !void {
 
     const out = root.output(ctx);
     const started = std.Io.Timestamp.now(ctx.io, .awake);
-    const result = try project.compile(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .output = .write });
+    const result = try project.build(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .mode = .write });
     out.diagnostics(result.diagnostics);
     const summary = result.summary orelse {
         out.errorCount(result.diagnostics.len, ", nothing was written");

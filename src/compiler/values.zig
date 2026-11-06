@@ -7,9 +7,9 @@ const Token = @import("../Token.zig");
 const calls = @import("calls.zig");
 const data = @import("data.zig");
 
-pub fn containsRuntimeValue(compiler: *const Compiler, expression: *const ast.Expr, env: *const Environment) bool {
+pub fn containsRuntimeValue(compiler: *const Compiler, expression: *const ast.Expression, env: *const Environment) bool {
     return switch (expression.kind) {
-        .identifier => |identifier| identifier.storage != .compile_time,
+        .identifier => |identifier| identifier.kind != .compile_time,
         .minecraft_check, .macro_key => true,
         .prefix => |prefix| containsRuntimeValue(compiler, prefix.operand, env),
         .infix => |infix| containsRuntimeValue(compiler, infix.left, env) or containsRuntimeValue(compiler, infix.right, env),
@@ -68,7 +68,7 @@ pub fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Comp
     return null;
 }
 
-pub fn evaluate(compiler: *Compiler, expression: *const ast.Expr, env: *Environment) Compiler.CompileError!?Compiler.Value {
+pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.CompileError!?Compiler.Value {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     return switch (expression.kind) {
@@ -86,7 +86,7 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expr, env: *Environm
         .boolean => |boolean| .{ .boolean = boolean },
         .null => .null,
         .identifier => |identifier| {
-            switch (identifier.storage) {
+            switch (identifier.kind) {
                 .compile_time => {},
                 .score => {
                     try compiler.addError("score '#{s}' cannot be used here", .{identifier.name});
@@ -246,7 +246,7 @@ pub fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
     };
 }
 
-pub fn operatorText(op: Token.TokenType) []const u8 {
+pub fn operatorText(op: Token.Tag) []const u8 {
     return switch (op) {
         .plus => "+",
         .minus => "-",

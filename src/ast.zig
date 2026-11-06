@@ -3,15 +3,15 @@ const Token = @import("Token.zig");
 
 pub const Program = struct {
     // `namespace combat;`, the first statement of every file. Null when it is missing.
-    namespace: ?Import,
-    imports: []const Import,
-    functions: []const Function,
+    namespace: ?NamespaceName,
+    imports: []const NamespaceName,
+    mcfuns: []const Mcfun,
     globals: []const Global,
     data_files: []const DataFile,
 };
 
 // `import magic;` or `namespace magic;`: a namespace name and where it is written.
-pub const Import = struct {
+pub const NamespaceName = struct {
     name: []const u8,
     line: usize,
     column: usize,
@@ -41,17 +41,17 @@ pub const DataFile = struct {
     json_column: usize,
 };
 
-pub const Function = struct {
+pub const Mcfun = struct {
     name: []const u8,
-    body: []const Stmt,
+    body: []const Statement,
     line: usize,
 };
 
-pub const Stmt = struct {
+pub const Statement = struct {
     pub const Kind = union(enum) {
         var_decl: VarDecl,
         assign: Assign,
-        @"return": ?*Expr,
+        @"return": ?*Expression,
         @"break",
         @"continue",
         @"if": If,
@@ -59,16 +59,13 @@ pub const Stmt = struct {
         @"while": While,
         command: Command,
         execute: Execute,
-        expression: *Expr,
+        expression: *Expression,
     };
 
     line: usize,
     column: usize,
     kind: Kind,
 };
-
-// `entity_data` is the NBT of an entity: `@s.$Health`. The name is the NBT path.
-pub const Storage = enum { compile_time, score, data, entity_data };
 
 // The NBT number types of a number literal: `0.05f`, `1b`.
 pub const NumberType = enum {
@@ -102,8 +99,11 @@ pub const TypedNumber = struct {
 };
 
 pub const Identifier = struct {
+    // `entity_data` is the NBT of an entity: `@s.$Health`. The name is the NBT path.
+    pub const Kind = enum { compile_time, score, data, entity_data };
+
     name: []const u8,
-    storage: Storage,
+    kind: Kind,
     // `magic` in `magic:heal()` or `#magic:mana`. Null means the namespace of the file.
     namespace: ?[]const u8 = null,
     // Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
@@ -112,36 +112,36 @@ pub const Identifier = struct {
 
 pub const VarDecl = struct {
     target: Identifier,
-    value: *Expr,
+    value: *Expression,
 };
 
 pub const Assign = struct {
     target: Identifier,
-    value: *Expr,
+    value: *Expression,
 };
 
 pub const If = struct {
-    condition: *Expr,
-    then_body: []const Stmt,
-    else_body: ?[]const Stmt,
+    condition: *Expression,
+    then_body: []const Statement,
+    else_body: ?[]const Statement,
 };
 
 pub const While = struct {
-    condition: *Expr,
-    body: []const Stmt,
+    condition: *Expression,
+    body: []const Statement,
 };
 
 pub const For = struct {
-    start: *Expr,
-    end: *Expr,
+    start: *Expression,
+    end: *Expression,
     capture: []const u8,
-    body: []const Stmt,
+    body: []const Statement,
 };
 
 pub const Execute = struct {
     subcommands: []const CommandPart,
     subcommands_column: usize,
-    body: []const Stmt,
+    body: []const Statement,
 };
 
 pub const Command = struct {
@@ -153,7 +153,7 @@ pub const Command = struct {
 pub const CommandPart = struct {
     pub const Content = union(enum) {
         text: []const u8,
-        insert: *Expr,
+        insert: *Expression,
     };
 
     offset: usize,
@@ -161,7 +161,7 @@ pub const CommandPart = struct {
 };
 
 // An expression and where it starts. An infix or a call starts at its left side.
-pub const Expr = struct {
+pub const Expression = struct {
     line: usize,
     column: usize,
     kind: Kind,
@@ -176,7 +176,7 @@ pub const Expr = struct {
         prefix: Prefix,
         infix: Infix,
         call: Call,
-        list: []const *Expr,
+        list: []const *Expression,
         compound: []const Entry,
         // `@a` on its own, as a value: `actionBar(@a, "hi")`.
         selector: []const u8,
@@ -190,29 +190,29 @@ pub const Expr = struct {
 // One `key: value` of a compound literal.
 pub const Entry = struct {
     key: []const u8,
-    value: *Expr,
+    value: *Expression,
 };
 
 pub const Prefix = struct {
-    op: Token.TokenType,
-    operand: *Expr,
+    op: Token.Tag,
+    operand: *Expression,
 };
 
 pub const Infix = struct {
-    op: Token.TokenType,
-    left: *Expr,
-    right: *Expr,
+    op: Token.Tag,
+    left: *Expression,
+    right: *Expression,
 };
 
 pub const Call = struct {
     // `f() with {name: "Steve"}`, `f() with $player` or `f() with entity @s`.
     pub const With = union(enum) {
-        value: *Expr,
+        value: *Expression,
         // `entity @s` or `block ~ ~ ~`, as it is written.
         raw: []const u8,
     };
 
-    callee: *Expr,
-    args: []const *Expr,
+    callee: *Expression,
+    args: []const *Expression,
     with: ?With = null,
 };

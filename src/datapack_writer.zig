@@ -198,7 +198,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace
             operatorText(operation.op),
             scoreText(namespace, operation.source),
         }),
-        .score_set_param => |set| try text.print(gpa, "scoreboard players set {f} $({s})", .{ scoreText(namespace, set.score), set.param }),
+        .score_set_macro_argument => |set| try text.print(gpa, "scoreboard players set {f} $({s})", .{ scoreText(namespace, set.score), set.macro_argument }),
         .data_set => |data| try text.print(gpa, "data modify {f} set value {s}", .{ dataPathText(namespace, data.target), data.snbt }),
         .data_set_if_unset => |data| {
             const target = dataPathText(namespace, data.target);
@@ -241,7 +241,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace
             try text.print(gpa, "function {f}", .{functionId(namespace, call.name)});
             switch (call.arguments) {
                 .compound => |compound| try text.print(gpa, " {s}", .{compound}),
-                .data_storage => |storage| try text.print(gpa, " with storage {s}:{s}", .{ storage.namespace orelse namespace, if (storage.storage == .std) "std" else "data" }),
+                .data_storage => |storage| try text.print(gpa, " with storage {s}:{s}", .{ storage.namespace orelse namespace, if (storage.kind == .std) "std" else "data" }),
                 .args_storage => try text.print(gpa, " with storage {s}:poplar args", .{namespace}),
                 .macro_storage => try text.print(gpa, " with storage {s}:poplar macro", .{namespace}),
                 .data_path => |path| try text.print(gpa, " with {f}", .{dataPathText(namespace, path)}),
@@ -266,7 +266,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace
             try renderCommand(text, gpa, namespace, run.*);
         },
         .return_value => |value| try text.print(gpa, "return {d}", .{value}),
-        .return_param => |param| try text.print(gpa, "return $({s})", .{param}),
+        .return_macro_argument => |macro_argument| try text.print(gpa, "return $({s})", .{macro_argument}),
         .store_result => |store| {
             switch (store.target) {
                 .score => |score| try text.print(gpa, "execute store result score {f} run ", .{scoreText(namespace, score)}),
@@ -291,7 +291,7 @@ fn renderRun(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []cons
 
 fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, check: ir.Check) !void {
     try text.appendSlice(gpa, if (check.negated) " unless " else " if ");
-    switch (check.score_test) {
+    switch (check.condition) {
         .data_test => |path| return text.print(gpa, "data {f}", .{dataPathText(namespace, path)}),
         .function_returns => |name| return text.print(gpa, "function {f}", .{functionId(namespace, name)}),
         .raw => |raw| return text.appendSlice(gpa, raw),
@@ -299,7 +299,7 @@ fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []co
     }
     try text.appendSlice(gpa, "score ");
 
-    switch (check.score_test) {
+    switch (check.condition) {
         .matches => |matches| {
             try text.print(gpa, "{f} matches ", .{scoreText(namespace, matches.score)});
             if (matches.min != null and matches.min == matches.max) {

@@ -30,7 +30,7 @@ pub const Command = union(enum) {
     // Null is Poplar's objective `poplar.<ns>`.
     add_objective: Objective,
     score_set: ScoreValue,
-    score_set_param: ScoreParam,
+    score_set_macro_argument: ScoreMacroArgument,
     score_set_if_unset: ScoreValue,
     score_add: ScoreValue,
     score_remove: ScoreValue,
@@ -59,8 +59,8 @@ pub const Command = union(enum) {
     data_get: DataPath,
     return_run: *const Command,
     return_value: i32,
-    // `return $(param)`, which returns the value of a macro argument.
-    return_param: []const u8,
+    // `return $(key)`, which returns the value of a macro argument.
+    return_macro_argument: []const u8,
 };
 
 pub const StoreResult = struct {
@@ -149,14 +149,14 @@ pub const DataToScore = struct {
     scale: i32 = 1,
 };
 
-pub const ScoreParam = struct {
+pub const ScoreMacroArgument = struct {
     score: Score,
-    param: []const u8,
+    macro_argument: []const u8,
 };
 
 // Calls an mcfun with macro arguments.
 pub const DataStorage = struct {
-    storage: Storage = .data,
+    kind: Storage = .data,
     namespace: ?[]const u8 = null,
 };
 
@@ -223,19 +223,19 @@ pub const ExecuteRaw = struct {
 
 // A negated check is written as `unless`.
 pub const Check = struct {
-    negated: bool,
-    score_test: ScoreTest,
-};
+    pub const Test = union(enum) {
+        matches: Matches,
+        compare: Compare,
+        // `if data storage ns:data stats.bonus` passes when the path exists. The path can also be an NBT filter: `{name:"Steve"}`.
+        data_test: DataPath,
+        // `if function ns:<name>` runs the function and passes when it returns a value that is not 0.
+        function_returns: []const u8,
+        // A Minecraft check as the user wrote it, such as `block ~ ~-1 ~ stone`.
+        raw: []const u8,
+    };
 
-pub const ScoreTest = union(enum) {
-    matches: Matches,
-    compare: Compare,
-    // `if data storage ns:data stats.bonus` passes when the path exists. The path can also be an NBT filter: `{name:"Steve"}`.
-    data_test: DataPath,
-    // `if function ns:<name>` runs the function and passes when it returns a value that is not 0.
-    function_returns: []const u8,
-    // A Minecraft check as the user wrote it, such as `block ~ ~-1 ~ stone`.
-    raw: []const u8,
+    negated: bool,
+    condition: Test,
 };
 
 pub const Matches = struct {

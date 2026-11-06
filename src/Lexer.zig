@@ -5,12 +5,12 @@ const Lexer = @This();
 
 input: []const u8,
 pos: usize = 0,
-readPos: usize = 0,
+read_pos: usize = 0,
 ch: u8 = '\x00',
 line: usize = 1,
 line_start: usize = 0,
 token_start: usize = 0,
-previous_type: ?Token.TokenType = null,
+previous_tag: ?Token.Tag = null,
 // The number of `{` that are open, so that a `{` or `[` at the top level after a name starts a data file body.
 brace_depth: usize = 0,
 // The open `(` of an `if` or `while` condition, counted from its first `(`. Zero outside a condition.
@@ -29,19 +29,19 @@ pub fn init(input: []const u8) Lexer {
 }
 
 fn readChar(self: *Lexer) void {
-    if (self.readPos >= self.input.len) {
+    if (self.read_pos >= self.input.len) {
         self.ch = '\x00';
     } else {
-        self.ch = self.input[self.readPos];
+        self.ch = self.input[self.read_pos];
     }
 
-    self.pos = self.readPos;
-    self.readPos += 1;
+    self.pos = self.read_pos;
+    self.read_pos += 1;
 }
 
 pub fn nextToken(self: *Lexer) Token {
     const tok = self.readToken();
-    self.previous_type = tok.type;
+    self.previous_tag = tok.tag;
     return tok;
 }
 
@@ -53,8 +53,8 @@ fn readToken(self: *Lexer) Token {
 
     switch (self.ch) {
         '(' => {
-            if (self.previous_type == .execute) return self.readExecuteSubcommands();
-            const opens_condition = self.previous_type == .@"if" or self.previous_type == .@"while";
+            if (self.previous_tag == .execute) return self.readExecuteSubcommands();
+            const opens_condition = self.previous_tag == .@"if" or self.previous_tag == .@"while";
             if (opens_condition or self.condition_paren_depth > 0) self.condition_paren_depth += 1;
             tok = self.newToken(.left_paren, "(");
         },
@@ -64,7 +64,7 @@ fn readToken(self: *Lexer) Token {
             tok = self.newToken(.right_paren, ")");
         },
         '{' => {
-            const after_name = self.previous_type == .identifier or self.previous_type == .string;
+            const after_name = self.previous_tag == .identifier or self.previous_tag == .string;
             if (self.brace_depth == 0 and after_name) return self.readJsonBody();
             self.brace_depth += 1;
             tok = self.newToken(.left_brace, "{");
@@ -75,7 +75,7 @@ fn readToken(self: *Lexer) Token {
         },
         ',' => tok = self.newToken(.comma, ","),
         '.' => {
-            if (self.previous_type == .selector and self.peekChar() == '$') return self.readEntityDataPath();
+            if (self.previous_tag == .selector and self.peekChar() == '$') return self.readEntityDataPath();
             if (self.peekChar() == '.') {
                 self.readChar();
                 tok = self.newToken(.dot_dot, "..");
@@ -85,7 +85,7 @@ fn readToken(self: *Lexer) Token {
         },
         '|' => tok = self.newToken(.pipe, "|"),
         '[' => {
-            const after_name = self.previous_type == .identifier or self.previous_type == .string;
+            const after_name = self.previous_tag == .identifier or self.previous_tag == .string;
             if (self.brace_depth == 0 and after_name) return self.readJsonBody();
             tok = self.newToken(.left_bracket, "[");
         },
@@ -93,7 +93,7 @@ fn readToken(self: *Lexer) Token {
         ':' => tok = self.newToken(.colon, ":"),
         '$', '#' => {
             if (self.ch == '$' and self.peekChar() == '(') return self.readMacroKey();
-            const token_type: Token.TokenType = if (self.ch == '#') .score_identifier else .data_identifier;
+            const tag: Token.Tag = if (self.ch == '#') .score_identifier else .data_identifier;
             if (isLetter(self.peekChar())) {
                 self.readChar();
                 // `#magic:mana` and `$magic:item.count` name a variable of another namespace.
@@ -102,12 +102,12 @@ fn readToken(self: *Lexer) Token {
                 if (self.ch == ':' and isLetter(self.peekChar())) {
                     self.readChar();
                 } else {
-                    self.readPos = start;
+                    self.read_pos = start;
                     self.readChar();
                 }
-                if (token_type == .data_identifier) return self.readDataPathFrom(start);
+                if (tag == .data_identifier) return self.readDataPathFrom(start);
                 _ = self.readIdentifier();
-                return self.newToken(token_type, self.input[start..self.pos]);
+                return self.newToken(tag, self.input[start..self.pos]);
             }
             tok = self.newToken(.illegal, self.input[self.pos .. self.pos + 1]);
         },
@@ -167,7 +167,7 @@ fn readToken(self: *Lexer) Token {
                 }
                 if (self.startsConditionCheck()) return self.newToken(.condition_text, self.readConditionText());
                 const literal = self.readIdentifier();
-                return self.newToken(Token.Keywords.get(literal) orelse .identifier, literal);
+                return self.newToken(Token.keywords.get(literal) orelse .identifier, literal);
             } else if (std.ascii.isDigit(self.ch)) {
                 return self.newToken(.number, self.readNumber());
             } else if (self.pos >= self.input.len) {
@@ -181,14 +181,14 @@ fn readToken(self: *Lexer) Token {
     return tok;
 }
 
-fn newToken(self: *Lexer, t: Token.TokenType, literal: []const u8) Token {
+fn newToken(self: *const Lexer, tag: Token.Tag, literal: []const u8) Token {
     const offset = if (self.line_start == 0) self.first_line_column else 0;
-    return Token.init(t, literal, self.line, self.token_start - self.line_start + 1 + offset);
+    return .{ .tag = tag, .literal = literal, .line = self.line, .column = self.token_start - self.line_start + 1 + offset };
 }
 
 // Division cannot follow these tokens, so a `/` here starts a command.
 fn startsStatement(self: *Lexer) bool {
-    const previous = self.previous_type orelse return true;
+    const previous = self.previous_tag orelse return true;
     return previous == .semicolon or previous == .left_brace or previous == .right_brace;
 }
 
@@ -209,7 +209,7 @@ fn readExecuteSubcommands(self: *Lexer) Token {
     const text = self.readBalanced(')') orelse return self.newToken(.unclosed, "\"");
     if (self.ch != ')') {
         // Lex the rest of the line again as normal tokens, so a `{` on it still opens the body.
-        self.readPos = self.token_start;
+        self.read_pos = self.token_start;
         self.readChar();
         return self.newToken(.unclosed, ")");
     }
@@ -230,7 +230,7 @@ fn readMacroKey(self: *Lexer) Token {
 
 // `entity` or `block` right after `with`.
 fn startsWithSource(self: *Lexer) bool {
-    if (self.previous_type != .with) return false;
+    if (self.previous_tag != .with) return false;
     var end = self.pos;
     while (end < self.input.len and isLetter(self.input[end])) end += 1;
     const word = self.input[self.pos..end];
@@ -267,8 +267,8 @@ fn readEntityDataPath(self: *Lexer) Token {
 
 // Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not followed
 // by a key ends the path, so `$a..` is still a range.
-fn readDataPath(self: *Lexer, token_type: Token.TokenType) Token {
-    return self.readDataPathAt(token_type, self.pos);
+fn readDataPath(self: *Lexer, tag: Token.Tag) Token {
+    return self.readDataPathAt(tag, self.pos);
 }
 
 fn readDataPathFrom(self: *Lexer, start: usize) Token {
@@ -276,7 +276,7 @@ fn readDataPathFrom(self: *Lexer, start: usize) Token {
 }
 
 // `start` is where the token text starts, which can be before the current character (a `ns:` prefix).
-fn readDataPathAt(self: *Lexer, token_type: Token.TokenType, start: usize) Token {
+fn readDataPathAt(self: *Lexer, tag: Token.Tag, start: usize) Token {
     var depth: usize = 0;
     var quote: ?u8 = null;
 
@@ -305,7 +305,7 @@ fn readDataPathAt(self: *Lexer, token_type: Token.TokenType, start: usize) Token
     if (quote != null) return self.newToken(.unclosed, "\"");
     if (depth > 0) return self.newToken(.unclosed, "]");
     if (self.pos == start) return self.newToken(.illegal, ".$");
-    return self.newToken(token_type, self.input[start..self.pos]);
+    return self.newToken(tag, self.input[start..self.pos]);
 }
 
 // The `execute if` subcommands of Minecraft 26.3. In a condition, `block ~ ~-1 ~ stone` is raw text.
@@ -318,7 +318,7 @@ const condition_words = std.StaticStringMap(void).initComptime(.{
 // something that is not an operator. So `block == 1` and `(block)` still read `block` as a name.
 fn startsConditionCheck(self: *Lexer) bool {
     if (self.condition_paren_depth == 0) return false;
-    const previous = self.previous_type orelse return false;
+    const previous = self.previous_tag orelse return false;
     if (previous != .left_paren and previous != .@"and" and previous != .@"or" and previous != .bang) return false;
 
     var end = self.pos;
@@ -393,13 +393,13 @@ fn readJsonBody(self: *Lexer) Token {
                 depth -|= 1;
                 if (depth == 0) {
                     self.readChar();
-                    return Token.init(.json_body, self.input[start..self.pos], start_line, start_column);
+                    return .{ .tag = .json_body, .literal = self.input[start..self.pos], .line = start_line, .column = start_column };
                 }
             },
             else => {},
         }
     }
-    return Token.init(.unclosed, "}", start_line, start_column);
+    return .{ .tag = .unclosed, .literal = "}", .line = start_line, .column = start_column };
 }
 
 // Reads up to `end` outside quotes and brackets, or up to the end of the line.
@@ -509,53 +509,53 @@ fn peekCharAt(self: *Lexer, distance: usize) u8 {
 
 test "reads a Minecraft check in a condition up to 'and'" {
     var l = Lexer.init("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)");
-    try std.testing.expectEqual(.@"if", l.nextToken().type);
-    try std.testing.expectEqual(.left_paren, l.nextToken().type);
+    try std.testing.expectEqual(.@"if", l.nextToken().tag);
+    try std.testing.expectEqual(.left_paren, l.nextToken().tag);
     const check = l.nextToken();
-    try std.testing.expectEqual(.condition_text, check.type);
+    try std.testing.expectEqual(.condition_text, check.tag);
     try std.testing.expectEqualStrings("block ~ ~-1 ~ stone[a=b]", check.literal);
-    try std.testing.expectEqual(.@"and", l.nextToken().type);
+    try std.testing.expectEqual(.@"and", l.nextToken().tag);
     for (0..8) |_| _ = l.nextToken();
-    try std.testing.expectEqual(.identifier, l.nextToken().type);
+    try std.testing.expectEqual(.identifier, l.nextToken().tag);
 }
 
 test "reads a data file body over many lines" {
     var l = Lexer.init("predicate p {\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}\nmcfun");
-    try std.testing.expectEqual(.identifier, l.nextToken().type);
-    try std.testing.expectEqual(.identifier, l.nextToken().type);
+    try std.testing.expectEqual(.identifier, l.nextToken().tag);
+    try std.testing.expectEqual(.identifier, l.nextToken().tag);
     const body = l.nextToken();
-    try std.testing.expectEqual(.json_body, body.type);
+    try std.testing.expectEqual(.json_body, body.tag);
     try std.testing.expectEqualStrings("{\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}", body.literal);
     const after = l.nextToken();
-    try std.testing.expectEqual(.mcfun, after.type);
+    try std.testing.expectEqual(.mcfun, after.tag);
     try std.testing.expectEqual(5, after.line);
 
     var unclosed = Lexer.init("recipe r { \"a\": 1");
     _ = unclosed.nextToken();
     _ = unclosed.nextToken();
-    try std.testing.expectEqual(.unclosed, unclosed.nextToken().type);
+    try std.testing.expectEqual(.unclosed, unclosed.nextToken().tag);
 }
 
 test "skips comments" {
     var l = Lexer.init("// first\nvar // second\n");
 
     const tok = l.nextToken();
-    try std.testing.expectEqual(.@"var", tok.type);
-    try std.testing.expectEqual(.eof, l.nextToken().type);
+    try std.testing.expectEqual(.@"var", tok.tag);
+    try std.testing.expectEqual(.eof, l.nextToken().tag);
 }
 
 test "reads commands and keeps division" {
     var l = Lexer.init("x = a / b; /give @s stone{a:[I;1]} 1;");
 
     for (0..3) |_| _ = l.nextToken();
-    try std.testing.expectEqual(.slash, l.nextToken().type);
+    try std.testing.expectEqual(.slash, l.nextToken().tag);
     _ = l.nextToken();
-    try std.testing.expectEqual(.semicolon, l.nextToken().type);
+    try std.testing.expectEqual(.semicolon, l.nextToken().tag);
 
     const command = l.nextToken();
-    try std.testing.expectEqual(.command, command.type);
+    try std.testing.expectEqual(.command, command.tag);
     try std.testing.expectEqualStrings("give @s stone{a:[I;1]} 1", command.literal);
-    try std.testing.expectEqual(.semicolon, l.nextToken().type);
+    try std.testing.expectEqual(.semicolon, l.nextToken().tag);
 }
 
 test "reads illegal characters as tokens" {
@@ -563,14 +563,14 @@ test "reads illegal characters as tokens" {
 
     _ = l.nextToken();
     try std.testing.expectEqualStrings("\\", l.nextToken().literal);
-    try std.testing.expectEqual(.unclosed, l.nextToken().type);
-    try std.testing.expectEqual(.eof, l.nextToken().type);
+    try std.testing.expectEqual(.unclosed, l.nextToken().tag);
+    try std.testing.expectEqual(.eof, l.nextToken().tag);
 }
 
 test "a string ends at the end of its line" {
     var l = Lexer.init("\"a\nb");
 
-    try std.testing.expectEqual(.unclosed, l.nextToken().type);
+    try std.testing.expectEqual(.unclosed, l.nextToken().tag);
     const next = l.nextToken();
     try std.testing.expectEqualStrings("b", next.literal);
     try std.testing.expectEqual(2, next.line);
@@ -579,11 +579,11 @@ test "a string ends at the end of its line" {
 test "reads entity data paths after a selector" {
     var l = Lexer.init("@s.$Inventory[{Slot:0b}].count * 2; @p.$\"a.b\"");
 
-    try std.testing.expectEqual(.selector, l.nextToken().type);
+    try std.testing.expectEqual(.selector, l.nextToken().tag);
     const path = l.nextToken();
-    try std.testing.expectEqual(.entity_data, path.type);
+    try std.testing.expectEqual(.entity_data, path.tag);
     try std.testing.expectEqualStrings("Inventory[{Slot:0b}].count", path.literal);
-    try std.testing.expectEqual(.star, l.nextToken().type);
+    try std.testing.expectEqual(.star, l.nextToken().tag);
     _ = l.nextToken();
     _ = l.nextToken();
     _ = l.nextToken();
@@ -593,5 +593,5 @@ test "reads entity data paths after a selector" {
     try std.testing.expectEqualStrings("stats.inventory[0].count", data.nextToken().literal);
     _ = data.nextToken();
     try std.testing.expectEqualStrings("a", data.nextToken().literal);
-    try std.testing.expectEqual(.dot_dot, data.nextToken().type);
+    try std.testing.expectEqual(.dot_dot, data.nextToken().tag);
 }

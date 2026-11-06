@@ -20,7 +20,7 @@ pub fn qualifiedKey(compiler: *Compiler, namespace: []const u8, name: []const u8
 
 // Where the files of a namespace go. Null is the pack namespace, which std is written into.
 pub fn outputNamespace(compiler: *const Compiler, namespace: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, namespace, Compiler.std_namespace) or std.mem.eql(u8, namespace, compiler.namespace)) return null;
+    if (std.mem.eql(u8, namespace, Compiler.std_namespace) or std.mem.eql(u8, namespace, compiler.pack_namespace)) return null;
     return namespace;
 }
 
@@ -65,7 +65,7 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
         try data_folders.tagFolder(compiler.gpa, data_file.type_word, &compiler.command_tree.registries.map) orelse
         return compiler.addError("unknown data file type '{s}'{f}", .{ data_file.type_word, Suggestion{ .closest = CommandTree.closestId(data_folders.folders.keys(), data_file.type_word) } });
 
-    var namespace = compiler.scope.output_namespace orelse compiler.namespace;
+    var namespace = compiler.scope.output_namespace orelse compiler.pack_namespace;
     var file_path: []const u8 = undefined;
     switch (data_file.name) {
         .identifier => |name| {
@@ -100,7 +100,7 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
     path_entry.value_ptr.* = location;
 
     // A data file in the namespace of its file can be named in Minecraft text: `self:isSitting`.
-    const is_own = std.mem.eql(u8, namespace, compiler.scope.output_namespace orelse compiler.namespace);
+    const is_own = std.mem.eql(u8, namespace, compiler.scope.output_namespace orelse compiler.pack_namespace);
     if (is_own) {
         const name = switch (data_file.name) {
             .identifier => |identifier| identifier,
@@ -116,7 +116,7 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
         entry.value_ptr.* = .{ .type_word = data_file.type_word, .id = id, .path = compiler.position.path, .line = data_file.line };
     }
 
-    if (try jsonError(compiler, data_file)) |position| {
+    if (try jsonErrorPosition(compiler, data_file)) |position| {
         compiler.position.line = position.line;
         compiler.position.column = position.column;
         return compiler.addError("invalid JSON in {s} '{s}'", .{ data_file.type_word, file_path });
@@ -133,7 +133,7 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
 pub const JsonPosition = struct { line: usize, column: usize };
 
 // Where the JSON body stops being valid, as a line and column in the source file.
-pub fn jsonError(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?JsonPosition {
+pub fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?JsonPosition {
     var scanner: std.json.Scanner = .initCompleteInput(compiler.gpa, data_file.json);
     defer scanner.deinit();
     var diagnostics: std.json.Diagnostics = .{};
@@ -164,20 +164,20 @@ pub const Suggestion = struct {
 
 // A name that the project and std both define is reported in the project file, where it can be renamed.
 // Otherwise the later definition is reported.
-pub fn addDuplicateError(compiler: *Compiler, existing: Compiler.Located, later: Compiler.Located) Compiler.CompileError!void {
+pub fn addDuplicateError(compiler: *Compiler, existing: Compiler.McfunDeclaration, later: Compiler.McfunDeclaration) Compiler.CompileError!void {
     const project_side, const other = if (existing.origin != .std and later.origin == .std) .{ existing, later } else .{ later, existing };
     compiler.position.path = project_side.path;
-    compiler.position.line = project_side.function.line;
+    compiler.position.line = project_side.mcfun.line;
     compiler.position.column = null;
     if (other.origin == .std and project_side.origin != .std) {
-        return compiler.addError("function '{s}' is already defined in {s}:{d}. Rename yours", .{ later.function.name, other.path, other.function.line });
+        return compiler.addError("function '{s}' is already defined in {s}:{d}. Rename yours", .{ later.mcfun.name, other.path, other.mcfun.line });
     }
-    try compiler.addError("function '{s}' is already defined at {s}:{d}", .{ later.function.name, other.path, other.function.line });
+    try compiler.addError("function '{s}' is already defined at {s}:{d}", .{ later.mcfun.name, other.path, other.mcfun.line });
 }
 
 pub fn addGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!void {
     if (decl.target.namespace) |namespace| return compiler.addError("'{s}:' cannot be declared here. Declare it in a file with 'namespace {s};'", .{ namespace, namespace });
-    switch (decl.target.storage) {
+    switch (decl.target.kind) {
         .score => {},
         .compile_time => return compiler.addError("only score (#) and data ($) variables can be declared at the top level", .{}),
         .data => return addDataGlobal(compiler, decl),
@@ -228,35 +228,28 @@ pub fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileErr
     };
 }
 
-// The mcfun whose return value is used, for example `double` in `#y = double();`.
-pub fn findMcfn(compiler: *Compiler, call: ast.Call) Compiler.CompileError!?FoundMcfun {
-    if (call.callee.kind == .identifier) return findFunction(compiler, call.callee.kind.identifier);
-    try compiler.addError("only an mcfun call can be used as a runtime value", .{});
-    return null;
-}
-
 pub const FoundMcfun = struct {
-    // `combat:heal`, the key in `functions` and `mcfun_calls`.
+    // `combat:heal`, the key in `mcfuns` and `mcfun_calls`.
     key: []const u8,
-    located: Compiler.Located,
+    declaration: Compiler.McfunDeclaration,
 };
 
 // `heal` in this namespace or `magic:heal` in an imported one. Null after an error.
-pub fn findFunction(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!?FoundMcfun {
+pub fn findMcfun(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!?FoundMcfun {
     const namespace = try resolveNamespace(compiler, identifier.namespace) orelse return null;
-    const function_key = try qualifiedKey(compiler, namespace, identifier.name);
-    const located = compiler.functions.get(function_key) orelse {
+    const mcfun_key = try qualifiedKey(compiler, namespace, identifier.name);
+    const declaration = compiler.mcfuns.get(mcfun_key) orelse {
         try compiler.addError("unknown function '{s}'", .{identifier.name});
         return null;
     };
-    return .{ .key = function_key, .located = located };
+    return .{ .key = mcfun_key, .declaration = declaration };
 }
 
 // The namespaces other than the pack namespace that have mcfuns: each one gets its own `poplar.<ns>` objective for temps and locals.
 pub fn outputNamespaces(compiler: *Compiler) Compiler.CompileError![]const []const u8 {
     var namespaces: std.StringArrayHashMapUnmanaged(void) = .empty;
-    for (compiler.functions.values()) |located| {
-        if (outputNamespace(compiler, located.namespace)) |namespace| try namespaces.put(compiler.gpa, namespace, {});
+    for (compiler.mcfuns.values()) |declaration| {
+        if (outputNamespace(compiler, declaration.namespace)) |namespace| try namespaces.put(compiler.gpa, namespace, {});
     }
     return namespaces.keys();
 }

@@ -11,7 +11,7 @@ const data = @import("data.zig");
 const declarations = @import("declarations.zig");
 const values = @import("values.zig");
 
-pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expression: *const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const target = try resolveScore(compiler, identifier, env) orelse return;
     compiler.temp_count = 0;
 
@@ -24,15 +24,15 @@ pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expre
 }
 
 // `#n = 3 + #n` is the same as `#n = #n + 3`, which is computed in `#n` with no temp.
-pub fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expr, target: ast.Identifier) Compiler.CompileError!?*const ast.Expr {
+pub fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) Compiler.CompileError!?*const ast.Expression {
     if (expression.kind != .infix) return null;
     const infix = expression.kind.infix;
     if (infix.op != .plus and infix.op != .star) return null;
     if (infix.right.kind != .identifier or !referencesScore(infix.right, target) or referencesScore(infix.left, target)) return null;
-    return try compiler.createExpr(.{ .line = expression.line, .column = expression.column, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
+    return try compiler.createExpression(.{ .line = expression.line, .column = expression.column, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
 }
 
-pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, expression, env)) {
@@ -42,9 +42,9 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
     }
 
     switch (expression.kind) {
-        .macro_key => |name| return commands.append(compiler.gpa, .{ .score_set_param = .{ .score = target, .param = name } }),
+        .macro_key => |name| return commands.append(compiler.gpa, .{ .score_set_macro_argument = .{ .score = target, .macro_argument = name } }),
         .identifier => |identifier| {
-            if (identifier.storage == .data or identifier.storage == .entity_data) {
+            if (identifier.kind == .data or identifier.kind == .entity_data) {
                 const source = try data.dataPathOf(compiler, identifier, env) orelse return;
                 return commands.append(compiler.gpa, .{ .data_to_score = .{ .source = source, .score = target } });
             }
@@ -72,10 +72,11 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
             if (calls.isBuiltinCall(call, "len")) return data.compileLength(compiler, target, call, env, commands);
             if (data.isStringCall(call)) return compiler.addError("'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'", .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name });
             if (data.isStringTest(call)) return compiler.addError("'{s}' is a condition. Use it in 'if' or 'while'", .{call.callee.kind.identifier.name});
-            const found = try declarations.findMcfn(compiler, call) orelse return;
+            if (call.callee.kind != .identifier) return compiler.addError("only an mcfun call can be used as a runtime value", .{});
+            const found = try declarations.findMcfun(compiler, call.callee.kind.identifier) orelse return;
             // Temps made after this point hold arguments. They are not needed after the call.
             const live_count = compiler.temp_count;
-            const run = try calls.compileMcfnCall(compiler, call, found.located, env, commands) orelse return;
+            const run = try calls.compileMcfunCall(compiler, call, found.declaration, env, commands) orelse return;
             compiler.temp_count = live_count;
             const store: ir.Command = .{ .store_result = .{ .target = .{ .score = target }, .run = try compiler.createCommand(run) } };
 
@@ -86,7 +87,7 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
     }
 }
 
-pub fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const outer_position = compiler.enterExpression(operand);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, operand, env)) {
@@ -104,7 +105,7 @@ pub fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, oper
         return appendOperation(compiler, commands, target, op, try constantScore(compiler, number));
     }
 
-    if (operand.kind == .identifier and operand.kind.identifier.storage == .score) {
+    if (operand.kind == .identifier and operand.kind.identifier.kind == .score) {
         const source = try scoreSource(compiler, operand.kind.identifier, env) orelse return;
         return appendOperation(compiler, commands, target, op, source);
     }
@@ -151,7 +152,7 @@ pub fn checkSingleEntity(compiler: *Compiler, identifier: ast.Identifier) Compil
     }
     if (isSingleEntitySelector(selector)) return true;
 
-    const sigil = if (identifier.storage == .entity_data) "$" else "#";
+    const sigil = if (identifier.kind == .entity_data) "$" else "#";
     try compiler.addError("'{s}.{s}{s}' needs a selector for one entity (@s, @p, @r, @n or limit=1)", .{ selector, sigil, identifier.name });
     return false;
 }
@@ -204,7 +205,7 @@ pub fn tempScore(compiler: *Compiler, index: usize) Compiler.CompileError!ir.Sco
     return .{ .holder = try std.fmt.allocPrint(compiler.gpa, "#poplar.{s}.t{d}", .{ compiler.mcfun.folder, index }), .namespace = compiler.scope.output_namespace };
 }
 
-pub fn scoreOperator(op: Token.TokenType) ?ir.Operator {
+pub fn scoreOperator(op: Token.Tag) ?ir.Operator {
     return switch (op) {
         .plus => .add,
         .minus => .sub,
@@ -215,9 +216,9 @@ pub fn scoreOperator(op: Token.TokenType) ?ir.Operator {
     };
 }
 
-pub fn referencesScore(expression: *const ast.Expr, target: ast.Identifier) bool {
+pub fn referencesScore(expression: *const ast.Expression, target: ast.Identifier) bool {
     return switch (expression.kind) {
-        .identifier => |identifier| identifier.storage == .score and
+        .identifier => |identifier| identifier.kind == .score and
             std.mem.eql(u8, identifier.name, target.name) and
             std.mem.eql(u8, identifier.selector orelse "", target.selector orelse ""),
         .prefix => |prefix| referencesScore(prefix.operand, target),
@@ -228,7 +229,7 @@ pub fn referencesScore(expression: *const ast.Expr, target: ast.Identifier) bool
 
 // The target can only be computed in place if it is read before it is first written,
 // which is true when it appears only as the leftmost operand.
-pub fn isSafeInPlace(expression: *const ast.Expr, target: ast.Identifier) bool {
+pub fn isSafeInPlace(expression: *const ast.Expression, target: ast.Identifier) bool {
     return switch (expression.kind) {
         .infix => |infix| isSafeInPlace(infix.left, target) and !referencesScore(infix.right, target),
         .prefix => |prefix| isSafeInPlace(prefix.operand, target),

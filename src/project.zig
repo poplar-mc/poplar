@@ -11,7 +11,7 @@ const schema_json = @embedFile("poplar.schema.json");
 
 pub const out_dir_name = "poplar-out";
 
-pub const Output = enum { write, check };
+pub const Mode = enum { write, check };
 
 pub const Summary = struct {
     // `zipName`, the name of the pack.
@@ -26,24 +26,17 @@ pub const Summary = struct {
     }
 };
 
-// The folder that a source path is relative to.
-const Root = enum {
-    // `src/` of the project.
-    project,
-    // The standard library, from `import std;`.
-    std,
+// The folder name that a source's display path starts with.
+fn originFolder(origin: Compiler.Origin) []const u8 {
+    return switch (origin) {
+        .project => "src",
+        .std => "std",
+    };
+}
 
-    fn displayName(root: Root) []const u8 {
-        return switch (root) {
-            .project => "src",
-            .std => "std",
-        };
-    }
-};
-
-// A file to load. The path is relative to its root folder.
+// A file to load. The path is relative to the folder of its origin.
 const SourceFile = struct {
-    root: Root,
+    origin: Compiler.Origin,
     path: []const u8,
 };
 
@@ -58,7 +51,7 @@ pub const Diagnostic = struct {
 pub const Options = struct {
     // The folder of the standard library, which `import "std";` loads.
     std_path: []const u8,
-    output: Output,
+    mode: Mode,
     // Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
     overlay: ?*const std.StringHashMapUnmanaged([]const u8) = null,
     // The language server loads the command tree one time and passes it in.
@@ -75,8 +68,8 @@ pub const Result = struct {
     files: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
 };
 
-// Compiles the project in `project_path`. Errors in the user's files are in the result, not printed.
-pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, options: Options) !Result {
+// Compiles the project in `project_path`, and writes the pack in `.write` mode. Errors in the user's files are in the result, not printed.
+pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, options: Options) !Result {
     var diagnostics: std.ArrayList(Diagnostic) = .empty;
     const cwd = std.Io.Dir.cwd();
 
@@ -107,10 +100,10 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
     };
     const compiler = try arena.create(Compiler);
     compiler.* = Compiler.init(arena, command_tree);
-    compiler.namespace = config.namespace;
+    compiler.pack_namespace = config.namespace;
 
     var loader: Loader = .{
-        .allocator = arena,
+        .arena = arena,
         .io = io,
         .src_dir = src_dir,
         .src_path = try std.fs.path.join(arena, &.{ project_real_path, "src" }),
@@ -137,7 +130,7 @@ pub fn compile(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, o
     }
 
     var summary: Summary = .{ .name = config.zip_name, .function_count = ir_program.functions.len };
-    if (options.output == .write) {
+    if (options.mode == .write) {
         try project_dir.deleteTree(io, out_dir_name);
         var out_dir = try project_dir.createDirPathOpen(io, out_dir_name, .{});
         defer out_dir.close(io);
@@ -168,7 +161,7 @@ pub fn installedStdPath(arena: std.mem.Allocator, io: std.Io) ![]const u8 {
 // Parses every `.poplar` file in `src/`, and the standard library when a file imports `std`, and gives each
 // program to the compiler.
 const Loader = struct {
-    allocator: std.mem.Allocator,
+    arena: std.mem.Allocator,
     io: std.Io,
     src_dir: std.Io.Dir,
     // The absolute path of `src_dir`.
@@ -188,23 +181,23 @@ const Loader = struct {
 
     // Returns false if there were errors.
     fn load(loader: *Loader) !bool {
-        const allocator = loader.allocator;
+        const arena = loader.arena;
         var has_errors = false;
 
         var programs: std.ArrayList(LoadedProgram) = .empty;
-        const project_files = try sourceFiles(allocator, loader.io, loader.src_dir, .project);
+        const project_files = try sourceFiles(arena, loader.io, loader.src_dir, .project);
         if (project_files.len == 0) {
             try loader.addError("", 0, null, "the src/ folder has no .poplar files", .{});
             return false;
         }
         for (project_files) |file| {
-            if (try loader.parse(file, &has_errors)) |program| try programs.append(allocator, program);
+            if (try loader.parse(file, &has_errors)) |program| try programs.append(arena, program);
         }
 
         var namespaces: std.StringHashMapUnmanaged(void) = .empty;
         var imports_std = false;
         for (programs.items) |loaded| {
-            try namespaces.put(allocator, loaded.program.namespace.?.name, {});
+            try namespaces.put(arena, loaded.program.namespace.?.name, {});
             for (loaded.program.imports) |import| {
                 if (std.mem.eql(u8, import.name, "std")) imports_std = true;
             }
@@ -212,9 +205,9 @@ const Loader = struct {
 
         if (imports_std) {
             if (try loader.openStd()) {
-                try namespaces.put(allocator, "std", {});
-                for (try sourceFiles(allocator, loader.io, loader.std_dir.?, .std)) |file| {
-                    if (try loader.parse(file, &has_errors)) |program| try programs.append(allocator, program);
+                try namespaces.put(arena, "std", {});
+                for (try sourceFiles(arena, loader.io, loader.std_dir.?, .std)) |file| {
+                    if (try loader.parse(file, &has_errors)) |program| try programs.append(arena, program);
                 }
             } else {
                 try loader.addError("", 0, null, "cannot find the standard library at '{s}'", .{loader.std_path});
@@ -228,15 +221,14 @@ const Loader = struct {
                 try loader.addError(loaded.display_path, import.line, import.column, "no file has 'namespace {s};'", .{import.name});
                 has_errors = true;
             }
-            const origin: Compiler.Origin = if (loaded.root == .std) .std else .project;
-            try loader.compiler.addProgram(loaded.display_path, loaded.program, origin);
+            try loader.compiler.addProgram(loaded.display_path, loaded.program, loaded.origin);
         }
 
         return !has_errors;
     }
 
     const LoadedProgram = struct {
-        root: Root,
+        origin: Compiler.Origin,
         display_path: []const u8,
         program: ast.Program,
     };
@@ -244,13 +236,13 @@ const Loader = struct {
     // Parses one file. Null if it has no `namespace` line. After another parse error the rest still loads,
     // so the editor knows its names.
     fn parse(loader: *Loader, file: SourceFile, has_errors: *bool) !?LoadedProgram {
-        const allocator = loader.allocator;
-        const display_path = try std.fs.path.join(allocator, &.{ file.root.displayName(), file.path });
+        const arena = loader.arena;
+        const display_path = try std.fs.path.join(arena, &.{ originFolder(file.origin), file.path });
         const input = try loader.read(file, display_path) orelse return null;
 
-        var parser = try Parser.init(allocator, Lexer.init(input));
+        var parser = try Parser.init(arena, Lexer.init(input));
         const program = try parser.parseProgram();
-        for (parser.errors.items) |err| try loader.diagnostics.append(allocator, .{ .path = display_path, .line = err.line, .column = err.column, .message = err.message });
+        for (parser.errors.items) |err| try loader.diagnostics.append(arena, .{ .path = display_path, .line = err.line, .column = err.column, .message = err.message });
         if (parser.errors.items.len > 0) has_errors.* = true;
 
         if (program.namespace == null) {
@@ -259,26 +251,26 @@ const Loader = struct {
             has_errors.* = true;
             return null;
         }
-        return .{ .root = file.root, .display_path = display_path, .program = program };
+        return .{ .origin = file.origin, .display_path = display_path, .program = program };
     }
 
     // The text of a file: from the overlay when an editor has it open, else from the disk. Null if it does not exist.
     fn read(loader: *Loader, file: SourceFile, display_path: []const u8) !?[]const u8 {
-        const root_path = switch (file.root) {
+        const root_path = switch (file.origin) {
             .project => loader.src_path,
             .std => loader.std_real_path,
         };
-        const absolute_path = try std.fs.path.join(loader.allocator, &.{ root_path, file.path });
-        try loader.files.put(loader.allocator, display_path, absolute_path);
+        const absolute_path = try std.fs.path.join(loader.arena, &.{ root_path, file.path });
+        try loader.files.put(loader.arena, display_path, absolute_path);
 
         if (loader.overlay) |overlay| {
             if (overlay.get(absolute_path)) |text| return text;
         }
-        const root_dir = switch (file.root) {
+        const root_dir = switch (file.origin) {
             .project => loader.src_dir,
             .std => loader.std_dir.?,
         };
-        return root_dir.readFileAlloc(loader.io, file.path, loader.allocator, .unlimited) catch |err| switch (err) {
+        return root_dir.readFileAlloc(loader.io, file.path, loader.arena, .unlimited) catch |err| switch (err) {
             error.FileNotFound => null,
             else => err,
         };
@@ -288,29 +280,29 @@ const Loader = struct {
         if (loader.std_dir != null) return true;
         const cwd = std.Io.Dir.cwd();
         loader.std_dir = cwd.openDir(loader.io, loader.std_path, .{}) catch return false;
-        loader.std_real_path = try cwd.realPathFileAlloc(loader.io, loader.std_path, loader.allocator);
+        loader.std_real_path = try cwd.realPathFileAlloc(loader.io, loader.std_path, loader.arena);
         return true;
     }
 
     fn addError(loader: *Loader, path: []const u8, line: usize, column: ?usize, comptime format: []const u8, args: anytype) !void {
-        const message = try std.fmt.allocPrint(loader.allocator, format, args);
-        try loader.diagnostics.append(loader.allocator, .{ .path = path, .line = line, .column = column, .message = message });
+        const message = try std.fmt.allocPrint(loader.arena, format, args);
+        try loader.diagnostics.append(loader.arena, .{ .path = path, .line = line, .column = column, .message = message });
     }
 };
 
 // Every `.poplar` file under `dir`, sorted, so the build does not depend on the order of the file system.
-fn sourceFiles(allocator: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, root: Root) ![]const SourceFile {
+fn sourceFiles(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, origin: Compiler.Origin) ![]const SourceFile {
     var iterable = try dir.openDir(io, ".", .{ .iterate = true });
     defer iterable.close(io);
-    var walker = try iterable.walk(allocator);
+    var walker = try iterable.walk(arena);
     defer walker.deinit();
 
     var files: std.ArrayList(SourceFile) = .empty;
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".poplar")) continue;
-        const path = try allocator.dupe(u8, entry.path);
+        const path = try arena.dupe(u8, entry.path);
         std.mem.replaceScalar(u8, path, std.fs.path.sep, '/');
-        try files.append(allocator, .{ .root = root, .path = path });
+        try files.append(arena, .{ .origin = origin, .path = path });
     }
     std.mem.sort(SourceFile, files.items, {}, lessThanPath);
     return files.items;
@@ -388,7 +380,7 @@ test "builds every file in src/, and std when a file imports it" {
     const command_tree = try CommandTree.load(arena.allocator());
     var compiler = Compiler.init(arena.allocator(), &command_tree);
     try std.testing.expect(try loadForTest(arena.allocator(), io, src_dir, std_path, &compiler));
-    try std.testing.expectEqual(3, compiler.functions.count());
+    try std.testing.expectEqual(3, compiler.mcfuns.count());
 
     try tmp.dir.writeFile(io, .{ .sub_path = "src/broken.poplar", .data = "import magic;\nmcfun three() {}\n" });
     var second = Compiler.init(arena.allocator(), &command_tree);
@@ -442,7 +434,7 @@ test "only the std mcfuns that the project calls are written, under std/" {
 fn loadForTest(arena: std.mem.Allocator, io: std.Io, src_dir: std.Io.Dir, std_path: []const u8, compiler: *Compiler) !bool {
     var diagnostics: std.ArrayList(Diagnostic) = .empty;
     var loader: Loader = .{
-        .allocator = arena,
+        .arena = arena,
         .io = io,
         .src_dir = src_dir,
         .src_path = try src_dir.realPathFileAlloc(io, ".", arena),

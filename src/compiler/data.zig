@@ -12,7 +12,7 @@ const scores = @import("scores.zig");
 const values = @import("values.zig");
 
 // Sets data in storage or an entity path. A score or math is stored as an int.
-pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
 
@@ -32,7 +32,7 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
 
     if (expression.kind == .identifier) {
         const identifier = expression.kind.identifier;
-        switch (identifier.storage) {
+        switch (identifier.kind) {
             .score => {
                 const score = try scores.scoreSource(compiler, identifier, env) orelse return;
                 return commands.append(compiler.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
@@ -55,11 +55,11 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
 // A runtime value inside a literal, and where it goes: `[1]` in `pos[1]`, `.hp` in `stats.hp`.
 pub const LiteralPart = struct {
     path: []const u8,
-    value: *const ast.Expr,
+    value: *const ast.Expression,
 };
 
 // `$pos = [#x, #y, 0];` sets the literal with a `0` for each runtime part, then stores each part at its path.
-pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression: *const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     var parts: std.ArrayList(LiteralPart) = .empty;
     const template = try literalTemplate(compiler, expression, "", env, &parts) orelse return;
 
@@ -71,7 +71,7 @@ pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression
 }
 
 // The literal as a value, with `0` in the place of each runtime part.
-pub fn literalTemplate(compiler: *Compiler, expression: *const ast.Expr, path: []const u8, env: *Environment, parts: *std.ArrayList(LiteralPart)) Compiler.CompileError!?Compiler.Value {
+pub fn literalTemplate(compiler: *Compiler, expression: *const ast.Expression, path: []const u8, env: *Environment, parts: *std.ArrayList(LiteralPart)) Compiler.CompileError!?Compiler.Value {
     if (!values.containsRuntimeValue(compiler, expression, env)) return try values.evaluate(compiler, expression, env);
 
     switch (expression.kind) {
@@ -99,13 +99,13 @@ pub fn literalTemplate(compiler: *Compiler, expression: *const ast.Expr, path: [
     }
 }
 
-pub fn isDataIdentifier(expression: *const ast.Expr) bool {
-    return expression.kind == .identifier and (expression.kind.identifier.storage == .data or expression.kind.identifier.storage == .entity_data);
+pub fn isDataIdentifier(expression: *const ast.Expression) bool {
+    return expression.kind == .identifier and (expression.kind.identifier.kind == .data or expression.kind.identifier.kind == .entity_data);
 }
 
 // A `#` variable in `<ns>:data`, or the NBT path of one entity.
 pub fn dataPathOf(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.DataPath {
-    if (identifier.storage == .entity_data) return entityDataPath(compiler, identifier);
+    if (identifier.kind == .entity_data) return entityDataPath(compiler, identifier);
     return dataPath(compiler, identifier, env);
 }
 
@@ -145,21 +145,21 @@ pub fn storageOf(namespace: []const u8) ir.Storage {
 
 // `text(#hp)` → `{score:{name:"#global",objective:"<ns>.hp"}}`, `text($x)` → `{storage:"<ns>:data",nbt:"x"}`,
 // `text(@s.$Name)` → `{entity:"@s",nbt:"Name"}`. A compile-time value becomes a string.
-pub fn textComponent(compiler: *Compiler, argument: *const ast.Expr, env: *Environment) Compiler.CompileError!?Compiler.Value {
+pub fn textComponent(compiler: *Compiler, argument: *const ast.Expression, env: *Environment) Compiler.CompileError!?Compiler.Value {
     if (argument.kind == .identifier) {
         const identifier = argument.kind.identifier;
-        switch (identifier.storage) {
+        switch (identifier.kind) {
             .score => {
                 const score = try scores.resolveScore(compiler, identifier, env) orelse return null;
                 // A local score is in Poplar's objective `poplar.<ns>`, a global one in `<ns>.<name>`.
-                const score_namespace = score.namespace orelse compiler.namespace;
+                const score_namespace = score.namespace orelse compiler.pack_namespace;
                 const objective = if (score.objective) |name| try std.fmt.allocPrint(compiler.gpa, "{s}.{s}", .{ score_namespace, name }) else try std.fmt.allocPrint(compiler.gpa, "poplar.{s}", .{score_namespace});
                 const holder: Compiler.Value = .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
                 return .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{.{ .key = "score", .value = holder }}) };
             },
             .data => {
                 const path = try dataPath(compiler, identifier, env) orelse return null;
-                const storage = try std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ path.namespace orelse compiler.namespace, if (path.holder.storage == .std) "std" else "data" });
+                const storage = try std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ path.namespace orelse compiler.pack_namespace, if (path.holder.storage == .std) "std" else "data" });
                 return .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path.path } } }) };
             },
             .entity_data => return .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "entity", .value = .{ .string = identifier.selector.? } }, .{ .key = "nbt", .value = .{ .string = identifier.name } } }) },
@@ -213,7 +213,7 @@ pub fn compileListBuiltin(compiler: *Compiler, name: []const u8, call: ast.Call,
 }
 
 // The first argument of a list helper: a `$` variable or entity data.
-pub fn listArgument(compiler: *Compiler, name: []const u8, argument: *const ast.Expr, env: *const Environment) Compiler.CompileError!?ir.DataPath {
+pub fn listArgument(compiler: *Compiler, name: []const u8, argument: *const ast.Expression, env: *const Environment) Compiler.CompileError!?ir.DataPath {
     const outer_position = compiler.enterExpression(argument);
     defer compiler.restorePosition(outer_position);
     if (!isDataIdentifier(argument)) {
@@ -257,7 +257,7 @@ pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Cal
         const source = try dataPathOf(compiler, argument.kind.identifier, env) orelse return;
         return commands.append(compiler.gpa, .{ .data_set_string = .{ .target = target, .source = source } });
     }
-    const score = if (argument.kind == .identifier and argument.kind.identifier.storage == .score)
+    const score = if (argument.kind == .identifier and argument.kind.identifier.kind == .score)
         try scores.scoreSource(compiler, argument.kind.identifier, env) orelse return
     else blk: {
         const temp = try scores.newTemp(compiler);
@@ -269,7 +269,7 @@ pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Cal
 }
 
 // The data that a string helper reads: a `$` path, entity data, or another string helper (through the scratch value).
-pub fn stringSource(compiler: *Compiler, argument: *const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.DataPath {
+pub fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.DataPath {
     if (isDataIdentifier(argument)) return try dataPathOf(compiler, argument.kind.identifier, env);
     if (argument.kind == .call and isStringCall(argument.kind.call)) {
         try compileStringInto(compiler, string_scratch, argument.kind.call, env, commands);
@@ -281,7 +281,7 @@ pub fn stringSource(compiler: *Compiler, argument: *const ast.Expr, env: *Enviro
     return null;
 }
 
-pub fn constantIndex(compiler: *Compiler, expression: *const ast.Expr, env: *Environment) Compiler.CompileError!?i32 {
+pub fn constantIndex(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.CompileError!?i32 {
     if (values.containsRuntimeValue(compiler, expression, env)) {
         const outer_position = compiler.enterExpression(expression);
         defer compiler.restorePosition(outer_position);
@@ -310,10 +310,10 @@ pub fn stringTest(compiler: *Compiler, call: ast.Call, env: *Environment, negate
     const is_start = calls.isBuiltinCall(call, "startsWith");
     try setup.append(compiler.gpa, .{ .data_set_string = .{ .target = test_value, .source = source, .start = if (is_start) 0 else -length, .end = if (is_start) length else null } });
     const filter = try std.fmt.allocPrint(compiler.gpa, "{{{s}:{s}}}", .{ string_test_key, try values.valueToSnbt(compiler, .{ .string = affix }) });
-    return try conditions.singleCheck(compiler, .{ .negated = negated, .score_test = .{ .data_test = .{ .holder = .{ .storage = .poplar }, .path = filter } } });
+    return try conditions.singleCheck(compiler, .{ .negated = negated, .condition = .{ .data_test = .{ .holder = .{ .storage = .poplar }, .path = filter } } });
 }
 
-pub fn constantString(compiler: *Compiler, expression: *const ast.Expr, env: *Environment, builtin: []const u8) Compiler.CompileError!?[]const u8 {
+pub fn constantString(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, builtin: []const u8) Compiler.CompileError!?[]const u8 {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, expression, env)) {

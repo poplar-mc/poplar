@@ -223,8 +223,8 @@ pub fn @"textDocument/definition"(self: *Lsp, arena: std.mem.Allocator, params: 
         .score => if (compiler.globals.get(key)) |global| .{ global.path, global.line } else return null,
         .data => if (compiler.data_globals.get(key)) |global| .{ global.path, global.line } else return null,
         .entity_data => return null,
-        .name => if (compiler.functions.get(key)) |located|
-            .{ located.path, located.function.line }
+        .name => if (compiler.mcfuns.get(key)) |declaration|
+            .{ declaration.path, declaration.mcfun.line }
         else if (compiler.named_data_files.get(key)) |data_file|
             .{ data_file.path, data_file.line }
         else
@@ -249,7 +249,7 @@ pub fn @"textDocument/completion"(self: *Lsp, arena: std.mem.Allocator, params: 
     const place: ?Place = if (analysis) |found| try placeOf(arena, found, params.textDocument.uri, params.position) else null;
 
     // A name in the file's own namespace without its `ns:`, any other with it.
-    const own: []const u8 = if (compiler) |found| try std.fmt.allocPrint(arena, "{s}:", .{found.file_namespaces.get(place.?.path) orelse found.namespace}) else "";
+    const own: []const u8 = if (compiler) |found| try std.fmt.allocPrint(arena, "{s}:", .{found.file_namespaces.get(place.?.path) orelse found.pack_namespace}) else "";
     switch (sigil) {
         '#' => if (compiler) |found| {
             for (found.globals.keys()) |name| try items.append(arena, .{ .label = completionLabel(name, own), .kind = .Variable, .detail = "score" });
@@ -271,16 +271,16 @@ pub fn @"textDocument/completion"(self: *Lsp, arena: std.mem.Allocator, params: 
             if (start == 0 or text[start - 1] == '\n') {
                 for (data_folders.folders.keys()) |word| try items.append(arena, .{ .label = word, .kind = .Keyword, .detail = "data file" });
             }
-            for (Token.Keywords.keys()) |keyword| try items.append(arena, .{ .label = keyword, .kind = .Keyword });
+            for (Token.keywords.keys()) |keyword| try items.append(arena, .{ .label = keyword, .kind = .Keyword });
             for (builtins) |each| try items.append(arena, .{ .label = each.name, .kind = .Function, .detail = each.signature });
             if (compiler) |found| {
                 var data_files = found.named_data_files.iterator();
                 while (data_files.next()) |entry| {
                     try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Constant, .detail = entry.value_ptr.id });
                 }
-                var functions = found.functions.iterator();
+                var functions = found.mcfuns.iterator();
                 while (functions.next()) |entry| {
-                    try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Function, .detail = try signature(arena, entry.value_ptr.function) });
+                    try items.append(arena, .{ .label = completionLabel(entry.key_ptr.*, own), .kind = .Function, .detail = try signature(arena, entry.value_ptr.mcfun) });
                 }
             }
         },
@@ -389,9 +389,9 @@ fn analyze(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !?*Analysis {
     }
 
     if (self.command_tree == null) self.command_tree = try CommandTree.load(self.command_tree_arena.allocator());
-    analysis.result = try project.compile(analysis_arena, self.io, analysis.project_root, .{
+    analysis.result = try project.build(analysis_arena, self.io, analysis.project_root, .{
         .std_path = self.std_path,
-        .output = .check,
+        .mode = .check,
         .overlay = &overlay,
         .command_tree = &self.command_tree.?,
     });
@@ -458,7 +458,7 @@ fn namespaceBefore(text: []const u8, start: usize) struct { ?[]const u8, usize }
 
 // `combat:heal`: how the compiler keys the declaration that `word` names, from the namespace of its file.
 fn wordKey(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, word: Word, name: []const u8) ![]const u8 {
-    const namespace = word.namespace orelse compiler.file_namespaces.get(place.path) orelse compiler.namespace;
+    const namespace = word.namespace orelse compiler.file_namespaces.get(place.path) orelse compiler.pack_namespace;
     return std.fmt.allocPrint(arena, "{s}:{s}", .{ namespace, name });
 }
 
@@ -482,13 +482,13 @@ fn placeOf(arena: std.mem.Allocator, analysis: *const Analysis, uri: []const u8,
 }
 
 // The function that contains `place`: the last one that starts above it in the same file.
-fn enclosingFunction(compiler: *const Compiler, place: Place) ?[]const u8 {
-    var best: ?*const ast.Function = null;
-    for (compiler.functions.values()) |located| {
-        if (!std.mem.eql(u8, located.path, place.path) or located.function.line > place.line) continue;
-        if (best == null or located.function.line > best.?.line) best = located.function;
+fn enclosingMcfun(compiler: *const Compiler, place: Place) ?[]const u8 {
+    var nearest: ?*const ast.Mcfun = null;
+    for (compiler.mcfuns.values()) |declaration| {
+        if (!std.mem.eql(u8, declaration.path, place.path) or declaration.mcfun.line > place.line) continue;
+        if (nearest == null or declaration.mcfun.line > nearest.?.line) nearest = declaration.mcfun;
     }
-    return if (best) |function| function.name else null;
+    return if (nearest) |mcfun| mcfun.name else null;
 }
 
 // The local `name` that is visible at `place`: the nearest one declared above it in the same function.
@@ -503,11 +503,11 @@ fn findLocal(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, 
 
 // The locals of the function at `place` that are declared above it. Block scope is not checked.
 fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, kind: Environment.Local.Kind) ![]const Compiler.LocalVariable {
-    const function = enclosingFunction(compiler, place) orelse return &.{};
+    const owner = enclosingMcfun(compiler, place) orelse return &.{};
     var visible: std.ArrayList(Compiler.LocalVariable) = .empty;
     for (compiler.locals.items) |local| {
         if (local.local.kind != kind or local.line > place.line) continue;
-        if (!std.mem.eql(u8, local.local.owner, function) or !std.mem.eql(u8, local.path, place.path)) continue;
+        if (!std.mem.eql(u8, local.local.owner, owner) or !std.mem.eql(u8, local.path, place.path)) continue;
         try visible.append(arena, local);
     }
     return visible.items;
@@ -531,7 +531,7 @@ fn describe(self: *Lsp, arena: std.mem.Allocator, analysis: *Analysis, word: Wor
                 return try std.fmt.allocPrint(arena, "```poplar\nvar #{s}\n```\nA local in `{s}`: the fake player `{s}`.", .{ word.text, local.local.owner, local.local.generated_name });
             };
             const global = compiler.globals.get(key) orelse return null;
-            return try std.fmt.allocPrint(arena, "```poplar\nvar #{s} = {d};\n```\nA score in the objective `{s}.{s}`.", .{ word.text, global.initial_value, global.output_namespace orelse compiler.namespace, global.name });
+            return try std.fmt.allocPrint(arena, "```poplar\nvar #{s} = {d};\n```\nA score in the objective `{s}.{s}`.", .{ word.text, global.initial_value, global.output_namespace orelse compiler.pack_namespace, global.name });
         },
         .data => {
             const root = Compiler.pathRoot(word.text);
@@ -539,27 +539,27 @@ fn describe(self: *Lsp, arena: std.mem.Allocator, analysis: *Analysis, word: Wor
                 return try std.fmt.allocPrint(arena, "```poplar\nvar ${s}\n```\nA local in `{s}`: the key `{s}`.", .{ root, local.local.owner, local.local.generated_name });
             };
             const global = compiler.data_globals.get(key) orelse return null;
-            return try std.fmt.allocPrint(arena, "```poplar\nvar ${s} = {s};\n```\nIn the storage `{s}:data`.", .{ root, global.initial_snbt, global.output_namespace orelse compiler.namespace });
+            return try std.fmt.allocPrint(arena, "```poplar\nvar ${s} = {s};\n```\nIn the storage `{s}:data`.", .{ root, global.initial_snbt, global.output_namespace orelse compiler.pack_namespace });
         },
         .name => {
             if (compiler.named_data_files.get(key)) |data_file| {
                 return try std.fmt.allocPrint(arena, "```poplar\n{s} {s}\n```\nThe data file `{s}`.", .{ data_file.type_word, word.text, data_file.id });
             }
-            const located = compiler.functions.get(key) orelse return null;
-            const source = try self.textOf(arena, try analysis.absolutePath(located.path));
-            const doc = try docComment(arena, source, located.function.line);
-            return try std.fmt.allocPrint(arena, "```poplar\n{s}\n```\n{s}", .{ try signature(arena, located.function), doc });
+            const declaration = compiler.mcfuns.get(key) orelse return null;
+            const source = try self.textOf(arena, try analysis.absolutePath(declaration.path));
+            const doc = try docComment(arena, source, declaration.mcfun.line);
+            return try std.fmt.allocPrint(arena, "```poplar\n{s}\n```\n{s}", .{ try signature(arena, declaration.mcfun), doc });
         },
         .entity_data => unreachable,
     }
 }
 
 // `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
-fn signature(arena: std.mem.Allocator, function: *const ast.Function) ![]const u8 {
+fn signature(arena: std.mem.Allocator, mcfun: *const ast.Mcfun) ![]const u8 {
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-    try Compiler.collectMacroKeys(arena, function.body, &keys);
-    if (keys.count() == 0) return std.fmt.allocPrint(arena, "mcfun {s}()", .{function.name});
-    return std.fmt.allocPrint(arena, "mcfun {s}() with {{{s}}}", .{ function.name, try std.mem.join(arena, ", ", keys.keys()) });
+    try Compiler.collectMacroKeys(arena, mcfun.body, &keys);
+    if (keys.count() == 0) return std.fmt.allocPrint(arena, "mcfun {s}()", .{mcfun.name});
+    return std.fmt.allocPrint(arena, "mcfun {s}() with {{{s}}}", .{ mcfun.name, try std.mem.join(arena, ", ", keys.keys()) });
 }
 
 // The `//` lines right above line `line` (1-based), without the slashes.

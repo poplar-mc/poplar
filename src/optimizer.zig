@@ -53,12 +53,12 @@ fn removeIdentities(gpa: Allocator, commands: []const ir.Command) Allocator.Erro
 // A score value that the optimizer knows: a number, or the value of a macro argument.
 const KnownValue = union(enum) {
     number: i32,
-    param: []const u8,
+    macro_argument: []const u8,
 
     fn eql(a: KnownValue, b: KnownValue) bool {
         return switch (a) {
             .number => |number| b == .number and b.number == number,
-            .param => |param| b == .param and std.mem.eql(u8, b.param, param),
+            .macro_argument => |macro_argument| b == .macro_argument and std.mem.eql(u8, b.macro_argument, macro_argument),
         };
     }
 };
@@ -103,7 +103,7 @@ const KnownScores = struct {
         if (runsOtherCode(command)) return known.entries.clearRetainingCapacity();
         switch (command) {
             .score_set, .score_add, .score_remove, .score_set_if_unset => |set| known.forget(set.score),
-            .score_set_param => |set| known.forget(set.score),
+            .score_set_macro_argument => |set| known.forget(set.score),
             .score_operation => |operation| known.forget(operation.target),
             .data_to_score => |store| known.forget(store.score),
             .store_result => |store| {
@@ -119,7 +119,7 @@ const KnownScores = struct {
     fn learn(known: *KnownScores, gpa: Allocator, command: ir.Command) Allocator.Error!void {
         const learned: ?struct { ir.Score, KnownValue } = switch (command) {
             .score_set => |set| .{ set.score, .{ .number = set.value } },
-            .score_set_param => |set| .{ set.score, .{ .param = set.param } },
+            .score_set_macro_argument => |set| .{ set.score, .{ .macro_argument = set.macro_argument } },
             .score_operation => |operation| if (operation.op == .assign)
                 if (known.get(operation.source)) |value| .{ operation.target, value } else null
             else
@@ -141,8 +141,8 @@ fn propagateKnownValues(gpa: Allocator, commands: []const ir.Command) Allocator.
     for (commands) |command| {
         const optimized: ?ir.Command = switch (command) {
             .score_set => |set| if (isKnown(known, set.score, .{ .number = set.value })) null else command,
-            .score_set_param => |set| blk: {
-                const value: KnownValue = .{ .param = set.param };
+            .score_set_macro_argument => |set| blk: {
+                const value: KnownValue = .{ .macro_argument = set.macro_argument };
                 if (isKnown(known, set.score, value)) break :blk null;
                 const copy = known.scoreWithValue(value) orelse break :blk command;
                 break :blk .{ .score_operation = .{ .target = set.score, .op = .assign, .source = copy } };
@@ -198,7 +198,7 @@ fn removeDeadWrites(gpa: Allocator, function_name: []const u8, commands: []const
     for (commands, 0..) |command, index| {
         const written = switch (command) {
             .score_set, .score_add, .score_remove => |set| set.score,
-            .score_set_param => |set| set.score,
+            .score_set_macro_argument => |set| set.score,
             .score_operation => |operation| operation.target,
             .data_to_score => |store| store.score,
             else => null,
@@ -267,7 +267,7 @@ fn inlineStores(gpa: Allocator, function_name: []const u8, commands: []const ir.
 fn definedTemp(command: ir.Command, function_name: []const u8) ?ir.Score {
     const score = switch (command) {
         .score_set, .score_add, .score_remove => |set| set.score,
-        .score_set_param => |set| set.score,
+        .score_set_macro_argument => |set| set.score,
         .score_operation => |operation| blk: {
             const can_fail = operation.op == .div or operation.op == .mod;
             if (can_fail and !isConstant(operation.source)) return null;
@@ -313,7 +313,7 @@ fn mentionsInText(command: ir.Command, name: []const u8) bool {
         .raw, .macro => |text| std.mem.indexOf(u8, text, name) != null,
         .function_with => |call| call.arguments == .compound and std.mem.indexOf(u8, call.arguments.compound, name) != null,
         .execute => |execute| for (execute.checks) |check| {
-            if (check.score_test == .raw and std.mem.indexOf(u8, check.score_test.raw, name) != null) break true;
+            if (check.condition == .raw and std.mem.indexOf(u8, check.condition.raw, name) != null) break true;
         } else mentionsInText(execute.run.*, name),
         .execute_raw => |execute| std.mem.indexOf(u8, execute.subcommands, name) != null or mentionsInText(execute.run.*, name),
         .store_result => |store| mentionsInText(store.run.*, name),
@@ -342,7 +342,7 @@ pub fn readsScore(command: ir.Command, score: ir.Score) bool {
 fn setsScore(command: ir.Command, score: ir.Score) bool {
     return switch (command) {
         .score_set => |set| set.score.eql(score),
-        .score_set_param => |set| set.score.eql(score),
+        .score_set_macro_argument => |set| set.score.eql(score),
         .score_operation => |operation| operation.op == .assign and operation.target.eql(score),
         .data_to_score => |store| store.score.eql(score),
         .store_result => |store| store.target == .score and store.target.score.eql(score),
@@ -371,7 +371,7 @@ fn runsOtherCode(command: ir.Command) bool {
 
 fn canReturn(command: ir.Command) bool {
     return switch (command) {
-        .return_run, .return_value, .return_param => true,
+        .return_run, .return_value, .return_macro_argument => true,
         .execute => |execute| canReturn(execute.run.*),
         .execute_raw => |execute| canReturn(execute.run.*),
         else => false,
@@ -614,7 +614,7 @@ fn callsTempReader(command: ir.Command, temp: ir.Score) bool {
 // `if function ...` written by the user runs code as part of the check.
 fn runsCheckedCode(execute: ir.Execute) bool {
     for (execute.checks) |check| {
-        if (check.score_test == .raw and std.mem.startsWith(u8, check.score_test.raw, "function ")) return true;
+        if (check.condition == .raw and std.mem.startsWith(u8, check.condition.raw, "function ")) return true;
     }
     return false;
 }
@@ -622,7 +622,7 @@ fn runsCheckedCode(execute: ir.Execute) bool {
 // The function of an `execute if function ...` check.
 fn checkedFunction(execute: ir.Execute) ?[]const u8 {
     for (execute.checks) |check| {
-        if (check.score_test == .function_returns) return check.score_test.function_returns;
+        if (check.condition == .function_returns) return check.condition.function_returns;
     }
     return null;
 }
@@ -643,7 +643,7 @@ fn readsTempsOf(name: []const u8, temp: ir.Score) bool {
 }
 
 fn checkReads(check: ir.Check, score: ir.Score) bool {
-    return switch (check.score_test) {
+    return switch (check.condition) {
         .data_test, .function_returns => false,
         // `score @s ...` in a check written by the user can name any score.
         .raw => |raw| std.mem.indexOf(u8, raw, score.holder) != null,
@@ -729,19 +729,19 @@ test "uses known values, removes dead writes and scales data gets" {
     const copy_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
     const after_call_temp: ir.Score = .{ .holder = "#poplar.f.t2" };
     const global: ir.Score = .{ .holder = "#global", .objective = "x" };
-    const at_most_one: ir.Check = .{ .negated = false, .score_test = .{ .matches = .{ .score = temp, .min = null, .max = 1 } } };
+    const at_most_one: ir.Check = .{ .negated = false, .condition = .{ .matches = .{ .score = temp, .min = null, .max = 1 } } };
 
     const commands = [_]ir.Command{
-        .{ .score_set_param = .{ .score = temp, .param = "n" } },
+        .{ .score_set_macro_argument = .{ .score = temp, .macro_argument = "n" } },
         .{ .execute = .{ .checks = &.{at_most_one}, .run = &ir.Command{ .return_value = 1 } } },
         // Removed: the temp already holds `n`.
-        .{ .score_set_param = .{ .score = temp, .param = "n" } },
+        .{ .score_set_macro_argument = .{ .score = temp, .macro_argument = "n" } },
         // Becomes a copy of the temp.
-        .{ .score_set_param = .{ .score = copy_temp, .param = "n" } },
+        .{ .score_set_macro_argument = .{ .score = copy_temp, .macro_argument = "n" } },
         .{ .score_to_data = .{ .target = .inStorage(.args, "n"), .score = copy_temp } },
         // Kept: the call can change every score.
         .{ .function = "other" },
-        .{ .score_set_param = .{ .score = after_call_temp, .param = "n" } },
+        .{ .score_set_macro_argument = .{ .score = after_call_temp, .macro_argument = "n" } },
         .{ .score_to_data = .{ .target = .inStorage(.args, "m"), .score = after_call_temp } },
         // `set 7` is removed, and `*= 3` becomes `set 21`.
         .{ .score_set = .{ .score = global, .value = 7 } },
@@ -754,7 +754,7 @@ test "uses known values, removes dead writes and scales data gets" {
     const result = try optimizeFunction(gpa, "f", &commands);
     try std.testing.expectEqual(8, result.len);
     try std.testing.expect(result[2].store_result.run.* == .score_operation);
-    try std.testing.expect(result[4].store_result.run.* == .score_set_param);
+    try std.testing.expect(result[4].store_result.run.* == .score_set_macro_argument);
     try std.testing.expectEqual(21, result[5].score_set.value);
     try std.testing.expectEqual(100, result[7].data_to_score.scale);
 }

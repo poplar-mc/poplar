@@ -32,9 +32,9 @@ fn sharedStorage(inserts: []const Compiler.Insert) ?ir.DataStorage {
         if (!insert.isWholeDataVar()) return null;
         const path = insert.source.data;
         if (path.holder.storage != .data and path.holder.storage != .std) return null;
-        const storage: ir.DataStorage = .{ .storage = path.holder.storage, .namespace = path.namespace };
+        const storage: ir.DataStorage = .{ .kind = path.holder.storage, .namespace = path.namespace };
         if (shared) |other| {
-            if (other.storage != storage.storage or !ir.optionalEql(other.namespace, storage.namespace)) return null;
+            if (other.kind != storage.kind or !ir.optionalEql(other.namespace, storage.namespace)) return null;
         }
         shared = storage;
     }
@@ -62,7 +62,7 @@ pub fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Comp
                     try data.compileStringInto(compiler, target, expression.kind.call, env, commands);
                     continue;
                 }
-                const score = if (expression.kind == .identifier and expression.kind.identifier.storage == .score)
+                const score = if (expression.kind == .identifier and expression.kind.identifier.kind == .score)
                     try scores.scoreSource(compiler, expression.kind.identifier, env) orelse return
                 else blk: {
                     const temp = try scores.newTemp(compiler);
@@ -146,7 +146,7 @@ pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env
 
 // Where the value of a runtime insert comes from, and its macro name. The same value again in the line
 // gives the insert that is already there.
-pub fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expr, env: *Environment, used: []const Compiler.Insert) Compiler.CompileError!?Compiler.Insert {
+pub fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, used: []const Compiler.Insert) Compiler.CompileError!?Compiler.Insert {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
 
@@ -154,7 +154,7 @@ pub fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expr, env: *Env
     var source: Compiler.Insert.Source = .{ .value = expression };
     if (expression.kind == .identifier) {
         const identifier = expression.kind.identifier;
-        switch (identifier.storage) {
+        switch (identifier.kind) {
             .data, .entity_data => {
                 const path = try data.dataPathOf(compiler, identifier, env) orelse return null;
                 source = .{ .data = path };
@@ -183,7 +183,7 @@ pub fn isSameInsert(a: Compiler.Insert.Source, b: Compiler.Insert.Source) bool {
             if (b != .value or expression.kind != .identifier or b.value.kind != .identifier) return false;
             const left = expression.kind.identifier;
             const right = b.value.kind.identifier;
-            return left.storage == .score and right.storage == .score and std.mem.eql(u8, left.name, right.name) and
+            return left.kind == .score and right.kind == .score and std.mem.eql(u8, left.name, right.name) and
                 std.mem.eql(u8, left.selector orelse "", right.selector orelse "");
         },
     }
@@ -247,7 +247,7 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
         // A storage or bossbar id is not a Poplar declaration: `self:` only gives it the namespace.
         if (!text_id.names_declaration) {
             if (!std.mem.eql(u8, written, "self")) continue;
-            try resolved.print(compiler.gpa, "{s}{s}", .{ built.text[copied..start], compiler.scope.output_namespace orelse compiler.namespace });
+            try resolved.print(compiler.gpa, "{s}{s}", .{ built.text[copied..start], compiler.scope.output_namespace orelse compiler.pack_namespace });
             copied = colon;
             continue;
         }
@@ -310,10 +310,10 @@ pub fn sourceNamespaceOf(compiler: *Compiler, written: []const u8) Compiler.Comp
 
 // `combat:healPlayer` → `combat:heal_player`, `std:clamp` → `<pack>:std/clamp`, `combat:isSitting` → `combat:is_sitting`.
 pub fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError!?[]const u8 {
-    const output = declarations.outputNamespace(compiler, namespace) orelse compiler.namespace;
+    const output = declarations.outputNamespace(compiler, namespace) orelse compiler.pack_namespace;
     const name_key = try declarations.qualifiedKey(compiler, namespace, name);
     if (compiler.data_file_names.get(name_key)) |path| return try std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ output, path });
-    if (!compiler.functions.contains(name_key)) return null;
+    if (!compiler.mcfuns.contains(name_key)) return null;
     return try std.fmt.allocPrint(compiler.gpa, "{s}:{f}", .{ output, datapack_writer.functionPath(try declarations.outputPath(compiler, namespace, name)) });
 }
 
@@ -321,7 +321,7 @@ pub fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) Compil
 pub fn declaredNames(compiler: *Compiler, namespace: []const u8) Compiler.CompileError![]const []const u8 {
     const key_prefix = try declarations.qualifiedKey(compiler, namespace, "");
     var names: std.ArrayList([]const u8) = .empty;
-    for ([_][]const []const u8{ compiler.data_file_names.keys(), compiler.functions.keys() }) |keys| {
+    for ([_][]const []const u8{ compiler.data_file_names.keys(), compiler.mcfuns.keys() }) |keys| {
         for (keys) |declared| {
             if (std.mem.startsWith(u8, declared, key_prefix)) try names.append(compiler.gpa, declared[key_prefix.len..]);
         }

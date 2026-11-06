@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Token = @This();
 
-pub const TokenType = enum {
+pub const Tag = enum {
     left_paren,
     right_paren,
     left_brace,
@@ -71,7 +71,7 @@ pub const TokenType = enum {
     unclosed,
 };
 
-pub const Keywords = std.StaticStringMap(TokenType).initComptime(.{
+pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "and", .@"and" },
     .{ "break", .@"break" },
     .{ "continue", .@"continue" },
@@ -93,16 +93,7 @@ pub const Keywords = std.StaticStringMap(TokenType).initComptime(.{
     .{ "with", .with },
 });
 
-type: TokenType,
+tag: Tag,
 literal: []const u8,
 line: usize,
 column: usize,
-
-pub fn init(@"type": TokenType, literal: []const u8, line: usize, column: usize) Token {
-    return .{
-        .type = @"type",
-        .literal = literal,
-        .line = line,
-        .column = column,
-    };
-}

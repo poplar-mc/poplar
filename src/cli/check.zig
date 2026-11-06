@@ -17,7 +17,7 @@ fn run(ctx: zli.CommandContext) !void {
     defer arena.deinit();
 
     const out = root.output(ctx);
-    const result = try project.compile(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .output = .check });
+    const result = try project.build(arena.allocator(), ctx.io, root.projectPath(ctx), .{ .std_path = root.stdPath(ctx), .mode = .check });
     out.diagnostics(result.diagnostics);
     const summary = result.summary orelse {
         out.errorCount(result.diagnostics.len, "");

@@ -10,7 +10,7 @@ const minecraft_text = @import("minecraft_text.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
-pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expr, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.CompileError!?Compiler.Condition {
+pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.CompileError!?Compiler.Condition {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, expression, env)) {
@@ -40,14 +40,14 @@ pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expr, env: *En
         .call => |call| if (data.isStringTest(call)) return data.stringTest(compiler, call, env, negated, setup),
         .minecraft_check => |parts| return minecraftCheck(compiler, parts, expression.column, env, negated),
         // `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs `== true`.
-        .identifier => |identifier| if (identifier.storage == .data or identifier.storage == .entity_data) {
+        .identifier => |identifier| if (identifier.kind == .data or identifier.kind == .entity_data) {
             const path = try data.dataPathOf(compiler, identifier, env) orelse return null;
-            return try singleCheck(compiler, .{ .negated = negated, .score_test = .{ .data_test = path } });
+            return try singleCheck(compiler, .{ .negated = negated, .condition = .{ .data_test = path } });
         },
         else => {},
     }
 
-    if (expression.kind == .identifier and expression.kind.identifier.storage == .score) {
+    if (expression.kind == .identifier and expression.kind.identifier.kind == .score) {
         try compiler.addError("a score needs a comparison in a condition: 'if (#{s} != 0)'", .{expression.kind.identifier.name});
         return null;
     }
@@ -64,7 +64,7 @@ pub fn minecraftCheck(compiler: *Compiler, parts: []const ast.CommandPart, colum
     }
 
     const text = try minecraft_text.checkMinecraftText(compiler, parts, check, column, "execute if ", " run say x") orelse return null;
-    return try singleCheck(compiler, .{ .negated = negated, .score_test = .{ .raw = text } });
+    return try singleCheck(compiler, .{ .negated = negated, .condition = .{ .raw = text } });
 }
 
 // `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
@@ -84,14 +84,14 @@ pub fn dataCondition(compiler: *Compiler, identifier: ast.Identifier, value: Com
     try filter.appendSlice(compiler.gpa, snbt);
     try filter.appendNTimes(compiler.gpa, '}', depth);
 
-    return try singleCheck(compiler, .{ .negated = negated, .score_test = .{ .data_test = path.withPath(try filter.toOwnedSlice(compiler.gpa)) } });
+    return try singleCheck(compiler, .{ .negated = negated, .condition = .{ .data_test = path.withPath(try filter.toOwnedSlice(compiler.gpa)) } });
 }
 
 pub fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.CompileError!?Compiler.Condition {
     const check_negated = negated != (infix.op == .bang_eql);
     const op = compareOperator(infix.op);
 
-    if ((infix.op == .eql_eql or infix.op == .bang_eql) and isTextComparison(compiler, infix.left, infix.right, env)) {
+    if ((infix.op == .eql_eql or infix.op == .bang_eql) and isNbtFilterComparison(compiler, infix.left, infix.right, env)) {
         if (data.isDataIdentifier(infix.left)) return dataComparison(compiler, infix.left, infix.right, env, check_negated);
         if (data.isDataIdentifier(infix.right)) return dataComparison(compiler, infix.right, infix.left, env, check_negated);
     }
@@ -106,7 +106,7 @@ pub fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment,
             .number => |number| try matchesCondition(compiler, left_score, op, number, check_negated),
             .score => |right_score| try singleCheck(compiler, .{
                 .negated = check_negated,
-                .score_test = .{ .compare = .{ .left = left_score, .op = op, .right = right_score } },
+                .condition = .{ .compare = .{ .left = left_score, .op = op, .right = right_score } },
             }),
         },
     };
@@ -114,7 +114,7 @@ pub fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment,
 
 // `==` between data and a compile-time string, bool, list, compound or typed number is an NBT filter.
 // A number comparison still goes through a score, which also works for other number types.
-pub fn dataComparison(compiler: *Compiler, data_side: *const ast.Expr, other: *const ast.Expr, env: *Environment, negated: bool) Compiler.CompileError!?Compiler.Condition {
+pub fn dataComparison(compiler: *Compiler, data_side: *const ast.Expression, other: *const ast.Expression, env: *Environment, negated: bool) Compiler.CompileError!?Compiler.Condition {
     const outer_position = compiler.enterExpression(other);
     defer compiler.restorePosition(outer_position);
     if (values.containsRuntimeValue(compiler, other, env)) {
@@ -126,9 +126,9 @@ pub fn dataComparison(compiler: *Compiler, data_side: *const ast.Expr, other: *c
 }
 
 // True when one side is data and the other is a compile-time value that is not a plain int.
-pub fn isTextComparison(compiler: *Compiler, left: *const ast.Expr, right: *const ast.Expr, env: *Environment) bool {
+pub fn isNbtFilterComparison(compiler: *Compiler, left: *const ast.Expression, right: *const ast.Expression, env: *Environment) bool {
     if (!data.isDataIdentifier(left) and !data.isDataIdentifier(right)) return false;
-    for ([_]*const ast.Expr{ left, right }) |side| {
+    for ([_]*const ast.Expression{ left, right }) |side| {
         if (data.isDataIdentifier(side) or values.containsRuntimeValue(compiler, side, env)) continue;
         switch (side.kind) {
             .string, .boolean, .list, .compound, .typed_number => return true,
@@ -139,7 +139,7 @@ pub fn isTextComparison(compiler: *Compiler, left: *const ast.Expr, right: *cons
     return false;
 }
 
-pub fn lowerOperand(compiler: *Compiler, expression: *const ast.Expr, env: *Environment, setup: *std.ArrayList(ir.Command)) Compiler.CompileError!?Compiler.Operand {
+pub fn lowerOperand(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, setup: *std.ArrayList(ir.Command)) Compiler.CompileError!?Compiler.Operand {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, expression, env)) {
@@ -155,7 +155,7 @@ pub fn lowerOperand(compiler: *Compiler, expression: *const ast.Expr, env: *Envi
         return .{ .number = value.number };
     }
 
-    if (expression.kind == .identifier and expression.kind.identifier.storage == .score) {
+    if (expression.kind == .identifier and expression.kind.identifier.kind == .score) {
         return .{ .score = try scores.scoreSource(compiler, expression.kind.identifier, env) orelse return null };
     }
 
@@ -191,7 +191,7 @@ pub fn matchesCondition(compiler: *Compiler, score: ir.Score, op: ir.CompareOp, 
 
     return singleCheck(compiler, .{
         .negated = negated,
-        .score_test = .{ .matches = .{ .score = score, .min = range_min, .max = range_max } },
+        .condition = .{ .matches = .{ .score = score, .min = range_min, .max = range_max } },
     });
 }
 
@@ -221,7 +221,7 @@ pub fn combineOr(compiler: *Compiler, left: Compiler.Condition, right: Compiler.
     return .{ .clauses = try std.mem.concat(compiler.gpa, []const ir.Check, &.{ left.clauses, right.clauses }) };
 }
 
-pub fn compareOperator(op: Token.TokenType) ir.CompareOp {
+pub fn compareOperator(op: Token.Tag) ir.CompareOp {
     return switch (op) {
         .less => .lt,
         .less_eql => .le,

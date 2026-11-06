@@ -46,13 +46,13 @@ pub fn init(gpa: std.mem.Allocator, lexer: Lexer) ParseError!Parser {
 }
 
 pub fn parseProgram(self: *Parser) ParseError!ast.Program {
-    var namespace: ?ast.Import = null;
+    var namespace: ?ast.NamespaceName = null;
     if (self.currentIs(.namespace)) {
         namespace = try self.parseNamespaceStatement();
         try self.nextToken();
     }
-    var imports: std.ArrayList(ast.Import) = .empty;
-    var functions: std.ArrayList(ast.Function) = .empty;
+    var imports: std.ArrayList(ast.NamespaceName) = .empty;
+    var mcfuns: std.ArrayList(ast.Mcfun) = .empty;
     var globals: std.ArrayList(ast.Global) = .empty;
     var data_files: std.ArrayList(ast.DataFile) = .empty;
 
@@ -80,8 +80,8 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
             } else {
                 try self.skipToDeclaration();
             }
-        } else if (try self.parseFunction()) |function| {
-            try functions.append(self.gpa, function);
+        } else if (try self.parseMcfun()) |mcfun| {
+            try mcfuns.append(self.gpa, mcfun);
         } else {
             try self.skipToDeclaration();
         }
@@ -91,14 +91,14 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
     return .{
         .namespace = namespace,
         .imports = try imports.toOwnedSlice(self.gpa),
-        .functions = try functions.toOwnedSlice(self.gpa),
+        .mcfuns = try mcfuns.toOwnedSlice(self.gpa),
         .globals = try globals.toOwnedSlice(self.gpa),
         .data_files = try data_files.toOwnedSlice(self.gpa),
     };
 }
 
 // `import magic;`
-fn parseImport(self: *Parser) ParseError!?ast.Import {
+fn parseImport(self: *Parser) ParseError!?ast.NamespaceName {
     const line = self.current.line;
     const column = self.current.column;
     if (self.peekIs(.string)) {
@@ -112,7 +112,7 @@ fn parseImport(self: *Parser) ParseError!?ast.Import {
 }
 
 // `namespace combat;`
-fn parseNamespaceStatement(self: *Parser) ParseError!?ast.Import {
+fn parseNamespaceStatement(self: *Parser) ParseError!?ast.NamespaceName {
     const line = self.current.line;
     const column = self.current.column;
     if (!try self.expectPeek(.identifier)) return null;
@@ -140,7 +140,7 @@ fn parseDataFile(self: *Parser) ParseError!?ast.DataFile {
     const column = self.current.column;
 
     try self.nextToken();
-    const name: ast.DataFile.Name = switch (self.current.type) {
+    const name: ast.DataFile.Name = switch (self.current.tag) {
         .identifier => .{ .identifier = self.current.literal },
         .string => .{ .id = try self.decodeString(self.current.literal) orelse return null },
         else => {
@@ -169,7 +169,7 @@ fn parseDataFile(self: *Parser) ParseError!?ast.DataFile {
     };
 }
 
-fn parseFunction(self: *Parser) ParseError!?ast.Function {
+fn parseMcfun(self: *Parser) ParseError!?ast.Mcfun {
     if (!self.currentIs(.mcfun)) {
         try self.addError("expected 'import', 'var', 'mcfun' or a data file, found {s}", .{try self.describe(self.current)});
         return null;
@@ -197,8 +197,8 @@ fn parseFunction(self: *Parser) ParseError!?ast.Function {
     };
 }
 
-fn parseBlock(self: *Parser) ParseError!?[]const ast.Stmt {
-    var statements: std.ArrayList(ast.Stmt) = .empty;
+fn parseBlock(self: *Parser) ParseError!?[]const ast.Statement {
+    var statements: std.ArrayList(ast.Statement) = .empty;
 
     try self.nextToken();
 
@@ -224,7 +224,7 @@ fn skipStatement(self: *Parser) ParseError!void {
     var depth: usize = 0;
 
     while (!self.currentIs(.eof)) {
-        switch (self.current.type) {
+        switch (self.current.tag) {
             .left_brace => depth += 1,
             .right_brace => depth -|= 1,
             .semicolon => if (depth == 0) return,
@@ -244,7 +244,7 @@ fn skipToDeclaration(self: *Parser) ParseError!void {
         const starts_declaration = self.peekIs(.import) or self.peekIs(.@"var") or self.peekIs(.mcfun);
         if (depth == 0 and starts_declaration) return;
 
-        const ends_declaration = switch (self.peek.type) {
+        const ends_declaration = switch (self.peek.tag) {
             .left_brace => blk: {
                 depth += 1;
                 break :blk false;
@@ -261,7 +261,7 @@ fn skipToDeclaration(self: *Parser) ParseError!void {
     }
 }
 
-fn parseStatement(self: *Parser) ParseError!?ast.Stmt {
+fn parseStatement(self: *Parser) ParseError!?ast.Statement {
     const line = self.current.line;
     const column = self.current.column;
     const kind = try self.parseStatementKind() orelse return null;
@@ -269,15 +269,15 @@ fn parseStatement(self: *Parser) ParseError!?ast.Stmt {
     return .{ .line = line, .column = column, .kind = kind };
 }
 
-fn parseStatementKind(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseStatementKind(self: *Parser) ParseError!?ast.Statement.Kind {
     const is_assignment = (self.currentIdentifier() != null and self.peekIs(.eql)) or self.currentIs(.selector);
     if (is_assignment) return self.parseAssignStatement();
 
-    return switch (self.current.type) {
+    return switch (self.current.tag) {
         .@"var" => self.parseVarStatement(),
         .@"return" => self.parseReturnStatement(),
         .@"break", .@"continue" => blk: {
-            const kind: ast.Stmt.Kind = if (self.currentIs(.@"break")) .@"break" else .@"continue";
+            const kind: ast.Statement.Kind = if (self.currentIs(.@"break")) .@"break" else .@"continue";
             if (!try self.expectPeek(.semicolon)) return null;
             break :blk kind;
         },
@@ -290,7 +290,7 @@ fn parseStatementKind(self: *Parser) ParseError!?ast.Stmt.Kind {
     };
 }
 
-fn parseCommandStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseCommandStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     const command: ast.Command = .{
         .text = self.current.literal,
         .parts = try self.parseCommandParts(self.current.literal, self.current.column + 1) orelse return null,
@@ -322,7 +322,7 @@ fn parseCommandParts(self: *Parser, text: []const u8, text_column: usize) ParseE
     return try parts.toOwnedSlice(self.gpa);
 }
 
-fn parseInsert(self: *Parser, source: []const u8, column: usize) ParseError!?*ast.Expr {
+fn parseInsert(self: *Parser, source: []const u8, column: usize) ParseError!?*ast.Expression {
     var lexer = Lexer.init(source);
     lexer.line = self.current.line;
     lexer.first_line_column = column - 1;
@@ -339,7 +339,7 @@ fn parseInsert(self: *Parser, source: []const u8, column: usize) ParseError!?*as
     return expression;
 }
 
-fn parseExecuteStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseExecuteStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     if (!try self.expectPeek(.execute_subcommands)) return null;
     const subcommands_column = self.current.column;
     const subcommands = try self.parseCommandParts(self.current.literal, subcommands_column) orelse return null;
@@ -354,7 +354,7 @@ fn parseExecuteStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     } };
 }
 
-fn parseVarStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseVarStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     try self.nextToken();
     const target = self.currentIdentifier() orelse {
         try self.addError("expected a variable name, found {s}", .{try self.describe(self.current)});
@@ -370,7 +370,7 @@ fn parseVarStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     return .{ .var_decl = .{ .target = target, .value = value } };
 }
 
-fn parseAssignStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseAssignStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     const target = try self.parseIdentifier() orelse return null;
 
     if (!try self.expectPeek(.eql)) return null;
@@ -382,7 +382,7 @@ fn parseAssignStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     return .{ .assign = .{ .target = target, .value = value } };
 }
 
-fn parseReturnStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseReturnStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     if (self.peekIs(.semicolon)) {
         try self.nextToken();
         return .{ .@"return" = null };
@@ -396,13 +396,13 @@ fn parseReturnStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     return .{ .@"return" = value };
 }
 
-fn parseIfStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseIfStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     const condition = try self.parseCondition() orelse return null;
 
     if (!try self.expectPeek(.left_brace)) return null;
     const then_body = try self.parseBlock() orelse return null;
 
-    var else_body: ?[]const ast.Stmt = null;
+    var else_body: ?[]const ast.Statement = null;
 
     if (self.peekIs(.@"else")) {
         try self.nextToken();
@@ -410,7 +410,7 @@ fn parseIfStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
         if (self.peekIs(.@"if")) {
             try self.nextToken();
             const else_if = try self.parseStatement() orelse return null;
-            else_body = try self.gpa.dupe(ast.Stmt, &.{else_if});
+            else_body = try self.gpa.dupe(ast.Statement, &.{else_if});
         } else {
             if (!try self.expectPeek(.left_brace)) return null;
             else_body = try self.parseBlock() orelse return null;
@@ -424,7 +424,7 @@ fn parseIfStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     } };
 }
 
-fn parseForStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseForStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     if (!try self.expectPeek(.left_paren)) return null;
     try self.nextToken();
     const start = try self.parseExpression(.lowest) orelse return null;
@@ -451,7 +451,7 @@ fn parseForStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     } };
 }
 
-fn parseWhileStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseWhileStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     const condition = try self.parseCondition() orelse return null;
 
     if (!try self.expectPeek(.left_brace)) return null;
@@ -460,7 +460,7 @@ fn parseWhileStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
     return .{ .@"while" = .{ .condition = condition, .body = body } };
 }
 
-fn parseCondition(self: *Parser) ParseError!?*ast.Expr {
+fn parseCondition(self: *Parser) ParseError!?*ast.Expression {
     if (!try self.expectPeek(.left_paren)) return null;
     try self.nextToken();
 
@@ -470,14 +470,14 @@ fn parseCondition(self: *Parser) ParseError!?*ast.Expr {
     return condition;
 }
 
-fn parseExpressionStatement(self: *Parser) ParseError!?ast.Stmt.Kind {
+fn parseExpressionStatement(self: *Parser) ParseError!?ast.Statement.Kind {
     const expression = try self.parseExpression(.lowest) orelse return null;
     if (!try self.expectPeek(.semicolon)) return null;
 
     return .{ .expression = expression };
 }
 
-fn parseExpression(self: *Parser, precedence: Precedence) ParseError!?*ast.Expr {
+fn parseExpression(self: *Parser, precedence: Precedence) ParseError!?*ast.Expression {
     var left = try self.parsePrefix() orelse return null;
 
     while (!self.peekIs(.semicolon) and @backingInt(precedence) < @backingInt(self.peekPrecedence())) {
@@ -488,9 +488,9 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!?*ast.Expr 
     return left;
 }
 
-fn parsePrefix(self: *Parser) ParseError!?*ast.Expr {
+fn parsePrefix(self: *Parser) ParseError!?*ast.Expression {
     const start = self.current;
-    const kind: ast.Expr.Kind = switch (self.current.type) {
+    const kind: ast.Expression.Kind = switch (self.current.tag) {
         .selector => if (self.peekIs(.dot) or self.peekIs(.entity_data))
             .{ .identifier = try self.parseIdentifier() orelse return null }
         else
@@ -504,7 +504,7 @@ fn parsePrefix(self: *Parser) ParseError!?*ast.Expr {
         .false => .{ .boolean = false },
         .null => .null,
         .bang, .minus => blk: {
-            const op = self.current.type;
+            const op = self.current.tag;
             try self.nextToken();
             const operand = try self.parseExpression(.prefix) orelse return null;
             break :blk .{ .prefix = .{ .op = op, .operand = operand } };
@@ -522,10 +522,10 @@ fn parsePrefix(self: *Parser) ParseError!?*ast.Expr {
         },
     };
 
-    return try self.createExpr(start.line, start.column, kind);
+    return try self.createExpression(start.line, start.column, kind);
 }
 
-fn parseNumber(self: *Parser) ParseError!?ast.Expr.Kind {
+fn parseNumber(self: *Parser) ParseError!?ast.Expression.Kind {
     const literal = self.current.literal;
     const number_type: ?ast.NumberType = switch (std.ascii.toLower(literal[literal.len - 1])) {
         'b' => .byte,
@@ -573,7 +573,7 @@ fn decodeString(self: *Parser, literal: []const u8) ParseError!?[]const u8 {
     return try decoded.toOwnedSlice(self.gpa);
 }
 
-fn parseGroupedExpression(self: *Parser) ParseError!?*ast.Expr {
+fn parseGroupedExpression(self: *Parser) ParseError!?*ast.Expression {
     try self.nextToken();
 
     const expression = try self.parseExpression(.lowest) orelse return null;
@@ -582,21 +582,21 @@ fn parseGroupedExpression(self: *Parser) ParseError!?*ast.Expr {
     return expression;
 }
 
-fn parseInfix(self: *Parser, left: *ast.Expr) ParseError!?*ast.Expr {
+fn parseInfix(self: *Parser, left: *ast.Expression) ParseError!?*ast.Expression {
     if (self.currentIs(.left_paren)) return self.parseCallExpression(left);
 
-    const op = self.current.type;
+    const op = self.current.tag;
     const precedence = self.currentPrecedence();
     try self.nextToken();
 
     const right = try self.parseExpression(precedence) orelse return null;
 
-    return try self.createExpr(left.line, left.column, .{ .infix = .{ .op = op, .left = left, .right = right } });
+    return try self.createExpression(left.line, left.column, .{ .infix = .{ .op = op, .left = left, .right = right } });
 }
 
 // `[1, 2, 3]`
-fn parseListLiteral(self: *Parser) ParseError!?[]const *ast.Expr {
-    var elements: std.ArrayList(*ast.Expr) = .empty;
+fn parseListLiteral(self: *Parser) ParseError!?[]const *ast.Expression {
+    var elements: std.ArrayList(*ast.Expression) = .empty;
     while (!self.peekIs(.right_bracket)) {
         try self.nextToken();
         try elements.append(self.gpa, try self.parseExpression(.lowest) orelse return null);
@@ -612,7 +612,7 @@ fn parseCompoundLiteral(self: *Parser) ParseError!?[]const ast.Entry {
     var entries: std.ArrayList(ast.Entry) = .empty;
     while (!self.peekIs(.right_brace)) {
         try self.nextToken();
-        const key = switch (self.current.type) {
+        const key = switch (self.current.tag) {
             .identifier => self.current.literal,
             .string => try self.decodeString(self.current.literal) orelse return null,
             else => {
@@ -630,8 +630,8 @@ fn parseCompoundLiteral(self: *Parser) ParseError!?[]const ast.Entry {
     return try entries.toOwnedSlice(self.gpa);
 }
 
-fn parseCallExpression(self: *Parser, callee: *ast.Expr) ParseError!?*ast.Expr {
-    var args: std.ArrayList(*ast.Expr) = .empty;
+fn parseCallExpression(self: *Parser, callee: *ast.Expression) ParseError!?*ast.Expression {
+    var args: std.ArrayList(*ast.Expression) = .empty;
 
     if (self.peekIs(.right_paren)) {
         try self.nextToken();
@@ -658,15 +658,15 @@ fn parseCallExpression(self: *Parser, callee: *ast.Expr) ParseError!?*ast.Expr {
             .{ .value = try self.parseExpression(.call) orelse return null };
     }
 
-    return try self.createExpr(callee.line, callee.column, .{ .call = .{
+    return try self.createExpression(callee.line, callee.column, .{ .call = .{
         .callee = callee,
         .args = try args.toOwnedSlice(self.gpa),
         .with = with,
     } });
 }
 
-fn createExpr(self: *Parser, line: usize, column: usize, kind: ast.Expr.Kind) ParseError!*ast.Expr {
-    const ptr = try self.gpa.create(ast.Expr);
+fn createExpression(self: *Parser, line: usize, column: usize, kind: ast.Expression.Kind) ParseError!*ast.Expression {
+    const ptr = try self.gpa.create(ast.Expression);
     ptr.* = .{ .line = line, .column = column, .kind = kind };
     return ptr;
 }
@@ -676,9 +676,9 @@ fn nextToken(self: *Parser) ParseError!void {
     self.current = self.peek;
     self.peek = self.lexer.nextToken();
 
-    while (self.peek.type == .illegal or self.peek.type == .unclosed) {
+    while (self.peek.tag == .illegal or self.peek.tag == .unclosed) {
         const literal = self.peek.literal;
-        const message = if (self.peek.type == .illegal)
+        const message = if (self.peek.tag == .illegal)
             try std.fmt.allocPrint(self.gpa, "unexpected character '{s}'", .{literal})
         else if (literal[0] == '"')
             "unterminated string"
@@ -697,13 +697,13 @@ fn parseIdentifier(self: *Parser) ParseError!?ast.Identifier {
     const selector = self.current.literal;
     if (self.peekIs(.entity_data)) {
         try self.nextToken();
-        return .{ .name = self.current.literal, .storage = .entity_data, .selector = selector };
+        return .{ .name = self.current.literal, .kind = .entity_data, .selector = selector };
     }
     if (!try self.expectPeek(.dot)) return null;
     if (!try self.expectPeek(.score_identifier)) return null;
 
     const name, const namespace = splitNamespace(self.current.literal);
-    return .{ .name = name, .storage = .score, .selector = selector, .namespace = namespace };
+    return .{ .name = name, .kind = .score, .selector = selector, .namespace = namespace };
 }
 
 // `magic:heal` or `bs.math:clamp` as a value or a callee.
@@ -711,11 +711,11 @@ fn parseQualifiedName(self: *Parser) ParseError!?ast.Identifier {
     const namespace = try self.parseNamespaceName() orelse return null;
     if (!try self.expectPeek(.colon)) return null;
     if (!try self.expectPeek(.identifier)) return null;
-    return .{ .name = self.current.literal, .storage = .compile_time, .namespace = namespace };
+    return .{ .name = self.current.literal, .kind = .compile_time, .namespace = namespace };
 }
 
 fn currentIdentifier(self: *Parser) ?ast.Identifier {
-    const storage: ast.Storage = switch (self.current.type) {
+    const kind: ast.Identifier.Kind = switch (self.current.tag) {
         .identifier => .compile_time,
         .score_identifier => .score,
         .data_identifier => .data,
@@ -723,7 +723,7 @@ fn currentIdentifier(self: *Parser) ?ast.Identifier {
     };
 
     const name, const namespace = splitNamespace(self.current.literal);
-    return .{ .name = name, .storage = storage, .namespace = namespace };
+    return .{ .name = name, .kind = kind, .namespace = namespace };
 }
 
 // The lexer keeps `magic:` on a `#` or `$` name: `magic:item.count` → `item.count` in `magic`.
@@ -734,27 +734,27 @@ fn splitNamespace(literal: []const u8) struct { []const u8, ?[]const u8 } {
     return .{ literal[colon + 1 ..], literal[0..colon] };
 }
 
-fn currentIs(self: *Parser, token_type: Token.TokenType) bool {
-    return self.current.type == token_type;
+fn currentIs(self: *Parser, tag: Token.Tag) bool {
+    return self.current.tag == tag;
 }
 
-fn peekIs(self: *Parser, token_type: Token.TokenType) bool {
-    return self.peek.type == token_type;
+fn peekIs(self: *Parser, tag: Token.Tag) bool {
+    return self.peek.tag == tag;
 }
 
-fn expectPeek(self: *Parser, token_type: Token.TokenType) ParseError!bool {
-    if (self.peekIs(token_type)) {
+fn expectPeek(self: *Parser, tag: Token.Tag) ParseError!bool {
+    if (self.peekIs(tag)) {
         try self.nextToken();
         return true;
     }
 
-    try self.addError("expected {s}, found {s}", .{ expectedText(token_type), try self.describe(self.peek) });
+    try self.addError("expected {s}, found {s}", .{ expectedText(tag), try self.describe(self.peek) });
     return false;
 }
 
 // How a message names a token that `expectPeek` wants.
-fn expectedText(token_type: Token.TokenType) []const u8 {
-    return switch (token_type) {
+fn expectedText(tag: Token.Tag) []const u8 {
+    return switch (tag) {
         .semicolon => "';'",
         .eql => "'='",
         .left_paren => "'('",
@@ -769,20 +769,20 @@ fn expectedText(token_type: Token.TokenType) []const u8 {
         .identifier => "a name",
         .score_identifier => "a score name",
         .execute_subcommands => "'(...)' after 'execute'",
-        else => @tagName(token_type),
+        else => @tagName(tag),
     };
 }
 
 fn currentPrecedence(self: *Parser) Precedence {
-    return precedenceOf(self.current.type);
+    return precedenceOf(self.current.tag);
 }
 
 fn peekPrecedence(self: *Parser) Precedence {
-    return precedenceOf(self.peek.type);
+    return precedenceOf(self.peek.tag);
 }
 
-fn precedenceOf(token_type: Token.TokenType) Precedence {
-    return switch (token_type) {
+fn precedenceOf(tag: Token.Tag) Precedence {
+    return switch (tag) {
         .@"or" => .@"or",
         .@"and" => .@"and",
         .eql_eql, .bang_eql => .equals,
@@ -808,7 +808,7 @@ fn appendError(self: *Parser, err: Error) ParseError!void {
 }
 
 fn describe(self: *const Parser, token: Token) ParseError![]const u8 {
-    if (token.type == .eof) return self.end_of_input;
+    if (token.tag == .eof) return self.end_of_input;
     return std.fmt.allocPrint(self.gpa, "'{s}'", .{token.literal});
 }
 
@@ -830,8 +830,8 @@ fn parseValidForTest(arena: std.mem.Allocator, source: []const u8) !ast.Program 
     return result.program;
 }
 
-fn firstStatement(program: ast.Program) ast.Stmt {
-    return program.functions[0].body[0];
+fn firstStatement(program: ast.Program) ast.Statement {
+    return program.mcfuns[0].body[0];
 }
 
 test "parse hello.poplar" {
@@ -845,9 +845,9 @@ test "parse hello.poplar" {
         \\}
     );
 
-    try std.testing.expectEqual(1, program.functions.len);
+    try std.testing.expectEqual(1, program.mcfuns.len);
 
-    const function = program.functions[0];
+    const function = program.mcfuns[0];
     try std.testing.expectEqualStrings("hello", function.name);
     try std.testing.expectEqual(2, function.line);
 
@@ -862,7 +862,7 @@ test "parse calls with a macro compound, a path or raw text, and macro keys" {
 
     const program = try parseValidForTest(arena.allocator(), "mcfun f() { g() with {name: $(name)}; g() with $players[0]; g() with entity @s; }");
 
-    const body = program.functions[0].body;
+    const body = program.mcfuns[0].body;
     try std.testing.expectEqualStrings("name", body[0].kind.expression.kind.call.with.?.value.kind.compound[0].value.kind.macro_key);
     try std.testing.expectEqualStrings("players[0]", body[1].kind.expression.kind.call.with.?.value.kind.identifier.name);
     try std.testing.expectEqualStrings("entity @s", body[2].kind.expression.kind.call.with.?.raw);
@@ -880,7 +880,7 @@ test "an expression in an insert has its position in the file" {
         \\}
     );
 
-    const body = program.functions[0].body;
+    const body = program.mcfuns[0].body;
     const command_insert = body[0].kind.command.parts[1].content.insert;
     const execute_insert = body[1].kind.execute.subcommands[1].content.insert;
     const check_insert = body[2].kind.@"if".condition.kind.minecraft_check[1].content.insert;
@@ -898,7 +898,7 @@ test "SNBT numbers keep their text and type, and a range still works" {
 
     const program = try parseValidForTest(arena.allocator(), "mcfun f() { g(0.05f, 0.05, 1b, 5L, 20D, 5); for (1..5) |i| {} }");
 
-    const args = program.functions[0].body[0].kind.expression.kind.call.args;
+    const args = program.mcfuns[0].body[0].kind.expression.kind.call.args;
     try std.testing.expectEqualStrings("0.05", args[0].kind.typed_number.text);
     try std.testing.expectEqual(.float, args[0].kind.typed_number.type.?);
     try std.testing.expectEqualStrings("0.05", args[1].kind.typed_number.text);
@@ -907,7 +907,7 @@ test "SNBT numbers keep their text and type, and a range still works" {
     try std.testing.expectEqual(.long, args[3].kind.typed_number.type.?);
     try std.testing.expectEqual(.double, args[4].kind.typed_number.type.?);
     try std.testing.expectEqual(5, args[5].kind.number);
-    try std.testing.expectEqual(5, program.functions[0].body[1].kind.@"for".end.kind.number);
+    try std.testing.expectEqual(5, program.mcfuns[0].body[1].kind.@"for".end.kind.number);
 }
 
 test "parse operator precedence" {
@@ -979,10 +979,10 @@ test "parse storage sigils" {
 
     const program = try parseValidForTest(arena.allocator(), "mcfun f() { var #hp = 1; var $name = 2; }");
 
-    const body = program.functions[0].body;
-    try std.testing.expectEqual(.score, body[0].kind.var_decl.target.storage);
+    const body = program.mcfuns[0].body;
+    try std.testing.expectEqual(.score, body[0].kind.var_decl.target.kind);
     try std.testing.expectEqualStrings("hp", body[0].kind.var_decl.target.name);
-    try std.testing.expectEqual(.data, body[1].kind.var_decl.target.storage);
+    try std.testing.expectEqual(.data, body[1].kind.var_decl.target.kind);
 }
 
 test "missing semicolon reports line" {
@@ -1033,7 +1033,7 @@ test "after a broken declaration, its body is skipped and the next declaration i
     try std.testing.expectEqual(1, result.errors.len);
     try std.testing.expectEqual(0, result.program.globals.len);
     try std.testing.expectEqual(1, result.program.data_files.len);
-    try std.testing.expectEqual(1, result.program.functions.len);
+    try std.testing.expectEqual(1, result.program.mcfuns.len);
 }
 
 test "decodes string escapes" {

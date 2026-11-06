@@ -49,8 +49,8 @@ pub fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
 pub fn reachableFromProject(compiler: *Compiler) Compiler.CompileError!std.StringHashMapUnmanaged(void) {
     var reached: std.StringHashMapUnmanaged(void) = .empty;
     var pending: std.ArrayList([]const u8) = .empty;
-    for (compiler.functions.keys(), compiler.functions.values()) |function_key, located| {
-        if (located.origin != .std) try pending.append(compiler.gpa, function_key);
+    for (compiler.mcfuns.keys(), compiler.mcfuns.values()) |mcfun_key, declaration| {
+        if (declaration.origin != .std) try pending.append(compiler.gpa, mcfun_key);
     }
     while (pending.pop()) |name| {
         const entry = try reached.getOrPut(compiler.gpa, name);
@@ -102,7 +102,7 @@ pub fn appendEventFunctions(compiler: *Compiler, functions: *std.ArrayList(ir.Mc
 }
 
 pub fn eventObjective(compiler: *Compiler, event: Compiler.Event, index: usize) Compiler.CompileError![]const u8 {
-    return event.trigger orelse std.fmt.allocPrint(compiler.gpa, "{s}.event_{d}", .{ event.namespace orelse compiler.namespace, index });
+    return event.trigger orelse std.fmt.allocPrint(compiler.gpa, "{s}.event_{d}", .{ event.namespace orelse compiler.pack_namespace, index });
 }
 
 // The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
@@ -128,7 +128,7 @@ pub fn isScoreRead(functions: []const ir.McFunction, score: ir.Score) bool {
 // `text(#mana)` names `#global` in the command text, so that counts as a use too.
 pub fn isGlobalValueUsed(compiler: *Compiler, functions: []const ir.McFunction, global: Compiler.GlobalScore) Compiler.CompileError!bool {
     const score = scores.globalScore(global);
-    const objective = try std.fmt.allocPrint(compiler.gpa, "\"{s}.{s}\"", .{ global.output_namespace orelse compiler.namespace, global.name });
+    const objective = try std.fmt.allocPrint(compiler.gpa, "\"{s}.{s}\"", .{ global.output_namespace orelse compiler.pack_namespace, global.name });
     for (functions) |function| {
         for (function.commands) |command| {
             if (optimizer.readsScore(command, score) or mentionsGlobalHolder(command, objective)) return true;
@@ -253,28 +253,28 @@ pub fn compileEvent(compiler: *Compiler, call: ast.Call, builtin: []const u8, en
 }
 
 // The IR name of an event's callback: an mcfun that uses no macro arguments. Null after an error.
-fn callbackOf(compiler: *Compiler, callback: *const ast.Expr, builtin: []const u8) Compiler.CompileError!?[]const u8 {
+fn callbackOf(compiler: *Compiler, callback: *const ast.Expression, builtin: []const u8) Compiler.CompileError!?[]const u8 {
     const outer_position = compiler.enterExpression(callback);
     defer compiler.restorePosition(outer_position);
-    if (callback.kind != .identifier or callback.kind.identifier.storage != .compile_time) {
+    if (callback.kind != .identifier or callback.kind.identifier.kind != .compile_time) {
         try compiler.addError("the callback of '{s}' must be the name of an mcfun", .{builtin});
         return null;
     }
     const name = callback.kind.identifier.name;
-    const found = try declarations.findFunction(compiler, callback.kind.identifier) orelse return null;
+    const found = try declarations.findMcfun(compiler, callback.kind.identifier) orelse return null;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-    try Compiler.collectMacroKeys(compiler.gpa, found.located.function.body, &keys);
+    try Compiler.collectMacroKeys(compiler.gpa, found.declaration.mcfun.body, &keys);
     if (keys.count() > 0) {
         try compiler.addError("the callback '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ name, keys.keys()[0] });
         return null;
     }
-    return found.located.ir_name;
+    return found.declaration.ir_name;
 }
 
 // Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name clashes with.
 fn poplarObjectiveClash(compiler: *Compiler, name: []const u8) Compiler.CompileError!?[]const u8 {
     if (std.mem.startsWith(u8, name, "poplar.")) return "poplar.";
-    const namespaces = try std.mem.concat(compiler.gpa, []const u8, &.{ &.{compiler.namespace}, try declarations.outputNamespaces(compiler) });
+    const namespaces = try std.mem.concat(compiler.gpa, []const u8, &.{ &.{compiler.pack_namespace}, try declarations.outputNamespaces(compiler) });
     for (namespaces) |namespace| {
         const prefix = try std.fmt.allocPrint(compiler.gpa, "{s}.", .{namespace});
         if (std.mem.startsWith(u8, name, prefix)) return prefix;
@@ -335,17 +335,17 @@ test "onEvent errors" {
 
     var compiler = try Compiler.compileForTest(arena.allocator(),
         \\mcfun load() {
-        \\    onEvent("deathCount", withParam);
+        \\    onEvent("deathCount", withMacroArgument);
         \\    onEvent("deathCount", missing);
         \\}
-        \\mcfun withParam() { /say $(x); }
+        \\mcfun withMacroArgument() { /say $(x); }
         \\mcfun other() { onEvent("deathCount", other); }
     );
     _ = try compiler.compile();
 
     const errors = compiler.errors.items;
     try std.testing.expectEqual(3, errors.len);
-    try std.testing.expectEqualStrings("the callback 'withParam' is run by the game, so it gets no macro arguments and cannot use '$(x)'", errors[0].message);
+    try std.testing.expectEqualStrings("the callback 'withMacroArgument' is run by the game, so it gets no macro arguments and cannot use '$(x)'", errors[0].message);
     try std.testing.expectEqualStrings("unknown function 'missing'", errors[1].message);
     try std.testing.expectEqualStrings("'onEvent' must be in 'mcfun load'", errors[2].message);
 }

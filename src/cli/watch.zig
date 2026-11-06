@@ -176,7 +176,7 @@ fn rebuild(ctx: zli.CommandContext, project_path: []const u8, world_copy: ?*Worl
 
     const out = root.output(ctx);
     const started = std.Io.Timestamp.now(ctx.io, .awake);
-    const result = try project.compile(arena.allocator(), ctx.io, project_path, .{ .std_path = root.stdPath(ctx), .output = .write });
+    const result = try project.build(arena.allocator(), ctx.io, project_path, .{ .std_path = root.stdPath(ctx), .mode = .write });
     out.diagnostics(result.diagnostics);
 
     // The time of day (UTC, because Zig has no time zones), so that each build is easy to tell apart.

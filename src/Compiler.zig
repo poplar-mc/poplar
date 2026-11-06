@@ -30,13 +30,13 @@ pub const Error = struct {
     message: []const u8,
 };
 
-pub const Located = struct {
+pub const McfunDeclaration = struct {
     path: []const u8,
-    function: *const ast.Function,
+    mcfun: *const ast.Mcfun,
     origin: Origin,
     // The namespace of the file, and the namespaces it imports.
     namespace: []const u8,
-    imports: []const ast.Import,
+    imports: []const ast.NamespaceName,
     // The name in the IR: `combat:heal`, or `heal` in the pack namespace.
     ir_name: []const u8,
 };
@@ -94,7 +94,7 @@ pub const Insert = struct {
     pub const Source = union(enum) {
         data: ir.DataPath,
         // A score, math or a value call, computed just before the helper is called.
-        value: *const ast.Expr,
+        value: *const ast.Expression,
     };
 
     macro_name: []const u8,
@@ -144,7 +144,7 @@ pub const Operand = union(enum) {
 
 gpa: std.mem.Allocator,
 command_tree: *const CommandTree,
-functions: std.StringArrayHashMapUnmanaged(Located) = .empty,
+mcfuns: std.StringArrayHashMapUnmanaged(McfunDeclaration) = .empty,
 globals: std.StringArrayHashMapUnmanaged(GlobalScore) = .empty,
 data_globals: std.StringArrayHashMapUnmanaged(GlobalData) = .empty,
 constants: std.AutoArrayHashMapUnmanaged(i32, void) = .empty,
@@ -175,7 +175,7 @@ current_loop: ?[]const u8 = null,
 // True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
 return_through_body: bool = false,
 // The namespace of the pack. `text(#hp)` writes it into a text component.
-namespace: []const u8 = "ns",
+pack_namespace: []const u8 = "ns",
 // True while a namespace's `mcfun load` is compiled. Only there `onEvent` is allowed.
 in_load: bool = false,
 events: std.ArrayList(Event) = .empty,
@@ -208,7 +208,7 @@ pub fn init(gpa: std.mem.Allocator, command_tree: *const CommandTree) Compiler {
 // (in tests) is in the pack namespace.
 pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origin: Origin) CompileError!void {
     self.position.path = path;
-    self.scope = self.scopeOf(if (program.namespace) |namespace| namespace.name else self.namespace, program.imports);
+    self.scope = self.scopeOf(if (program.namespace) |namespace| namespace.name else self.pack_namespace, program.imports);
     try self.file_namespaces.put(self.gpa, path, self.scope.namespace);
     if (program.namespace) |namespace| {
         self.position.line = namespace.line;
@@ -229,33 +229,33 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
         try imports.value_ptr.put(self.gpa, import.name, {});
     }
 
-    for (program.functions) |*function| {
+    for (program.mcfuns) |*mcfun| {
         if (origin == .project) {
-            if (std.mem.eql(u8, function.name, "load")) try self.load_namespaces.put(self.gpa, self.scope.namespace, {});
-            if (std.mem.eql(u8, function.name, "tick")) try self.tick_namespaces.put(self.gpa, self.scope.namespace, {});
+            if (std.mem.eql(u8, mcfun.name, "load")) try self.load_namespaces.put(self.gpa, self.scope.namespace, {});
+            if (std.mem.eql(u8, mcfun.name, "tick")) try self.tick_namespaces.put(self.gpa, self.scope.namespace, {});
         }
 
-        if (calls.isBuiltin(function.name)) {
-            self.position.line = function.line;
-            try self.addError("'{s}' is a built-in function, so it cannot be defined", .{function.name});
+        if (calls.isBuiltin(mcfun.name)) {
+            self.position.line = mcfun.line;
+            try self.addError("'{s}' is a built-in function, so it cannot be defined", .{mcfun.name});
             continue;
         }
 
-        const entry = try self.functions.getOrPut(self.gpa, try declarations.qualifiedKey(self, self.scope.namespace, function.name));
+        const entry = try self.mcfuns.getOrPut(self.gpa, try declarations.qualifiedKey(self, self.scope.namespace, mcfun.name));
 
-        const located: Located = .{
+        const declaration: McfunDeclaration = .{
             .path = path,
-            .function = function,
+            .mcfun = mcfun,
             .origin = origin,
             .namespace = self.scope.namespace,
             .imports = program.imports,
-            .ir_name = try declarations.functionName(self, self.scope.namespace, function.name),
+            .ir_name = try declarations.functionName(self, self.scope.namespace, mcfun.name),
         };
         if (entry.found_existing) {
-            try declarations.addDuplicateError(self, entry.value_ptr.*, located);
+            try declarations.addDuplicateError(self, entry.value_ptr.*, declaration);
             continue;
         }
-        entry.value_ptr.* = located;
+        entry.value_ptr.* = declaration;
     }
 
     for (program.globals) |global| {
@@ -287,47 +287,47 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
     const used = try load.reachableFromProject(self);
     var paths: std.StringHashMapUnmanaged([]const u8) = .empty;
 
-    for (self.functions.keys(), self.functions.values()) |function_key, located| {
-        const function = located.function;
+    for (self.mcfuns.keys(), self.mcfuns.values()) |mcfun_key, declaration| {
+        const mcfun = declaration.mcfun;
         // `import std;` costs nothing for the std mcfuns that the project never calls.
-        if (located.origin == .std and !used.contains(function_key)) continue;
+        if (declaration.origin == .std and !used.contains(mcfun_key)) continue;
 
-        self.position.path = located.path;
-        self.position.line = function.line;
+        self.position.path = declaration.path;
+        self.position.line = mcfun.line;
         self.position.column = null;
-        self.scope = self.scopeOf(located.namespace, located.imports);
+        self.scope = self.scopeOf(declaration.namespace, declaration.imports);
 
         // The file name is the snake_case of the name (`playerDied` → `player_died`), so both must be valid and unique.
-        const path = try std.fmt.allocPrint(self.gpa, "{f}", .{datapack_writer.functionPath(function.name)});
+        const path = try std.fmt.allocPrint(self.gpa, "{f}", .{datapack_writer.functionPath(mcfun.name)});
         if (!Config.isValidResourceName(path)) {
-            try self.addError("mcfun name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{function.name});
+            try self.addError("mcfun name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{mcfun.name});
             continue;
         }
-        const path_entry = try paths.getOrPut(self.gpa, try declarations.functionName(self, located.namespace, path));
+        const path_entry = try paths.getOrPut(self.gpa, try declarations.functionName(self, declaration.namespace, path));
         if (path_entry.found_existing) {
-            try self.addError("mcfun '{s}' and '{s}' have the same file name '{s}.mcfunction'", .{ path_entry.value_ptr.*, function.name, path });
+            try self.addError("mcfun '{s}' and '{s}' have the same file name '{s}.mcfunction'", .{ path_entry.value_ptr.*, mcfun.name, path });
             continue;
         }
-        path_entry.value_ptr.* = function.name;
+        path_entry.value_ptr.* = mcfun.name;
 
         var macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-        try collectMacroKeys(self.gpa, function.body, &macro_keys);
+        try collectMacroKeys(self.gpa, mcfun.body, &macro_keys);
         self.macro_keys = macro_keys;
-        const is_hook = located.origin == .project and (std.mem.eql(u8, function.name, "load") or std.mem.eql(u8, function.name, "tick"));
+        const is_hook = declaration.origin == .project and (std.mem.eql(u8, mcfun.name, "load") or std.mem.eql(u8, mcfun.name, "tick"));
         if (is_hook and macro_keys.count() > 0) {
-            try self.addError("mcfun '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ function.name, macro_keys.keys()[0] });
+            try self.addError("mcfun '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ mcfun.name, macro_keys.keys()[0] });
             continue;
         }
 
         self.mcfun = .{
-            .folder = try ir.generatedFolder(self.gpa, try declarations.outputPath(self, located.namespace, function.name)),
-            .name = located.ir_name,
-            .key = function_key,
+            .folder = try ir.generatedFolder(self.gpa, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
+            .name = declaration.ir_name,
+            .key = mcfun_key,
         };
         self.generated_count = 0;
         self.live_locals.clearRetainingCapacity();
-        self.current_cleanup = try self.localCleanup(function.body);
-        self.in_load = located.origin == .project and std.mem.eql(u8, function.name, "load");
+        self.current_cleanup = try self.localCleanup(mcfun.body);
+        self.in_load = declaration.origin == .project and std.mem.eql(u8, mcfun.name, "load");
 
         var env: Environment = .{};
         var forwarded: std.ArrayList(u8) = .empty;
@@ -339,11 +339,11 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
         self.forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.gpa) else null;
 
         var commands: std.ArrayList(ir.Command) = .empty;
-        try self.compileBlock(function.body, &env, &commands);
-        if (function.body.len == 0 or !isJump(function.body[function.body.len - 1].kind)) try commands.appendSlice(self.gpa, self.current_cleanup);
+        try self.compileBlock(mcfun.body, &env, &commands);
+        if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.gpa, self.current_cleanup);
 
         try mc_functions.append(self.gpa, .{
-            .name = located.ir_name,
+            .name = declaration.ir_name,
             .commands = try commands.toOwnedSlice(self.gpa),
         });
     }
@@ -370,11 +370,11 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
     };
 }
 
-pub fn scopeOf(self: *const Compiler, namespace: []const u8, imports: []const ast.Import) Scope {
+pub fn scopeOf(self: *const Compiler, namespace: []const u8, imports: []const ast.NamespaceName) Scope {
     return .{ .namespace = namespace, .imports = imports, .output_namespace = declarations.outputNamespace(self, namespace) };
 }
 
-pub fn compileBlock(self: *Compiler, body: []const ast.Stmt, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+pub fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const outer_live_count = self.live_locals.items.len;
     defer self.live_locals.shrinkRetainingCapacity(outer_live_count);
 
@@ -393,7 +393,7 @@ pub fn compileBlock(self: *Compiler, body: []const ast.Stmt, env: *Environment, 
     }
 }
 
-pub fn compileStatement(self: *Compiler, statement: ast.Stmt, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+pub fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const outer_line = self.position.line;
     const outer_column = self.position.column;
     self.position.line = statement.line;
@@ -433,7 +433,7 @@ pub fn compileStatement(self: *Compiler, statement: ast.Stmt, env: *Environment,
 
 // Compiles an `execute (...)` body. A body that can `return` is always a function, called as
 // `if function ...`: it returns 1 for each entity that returns from the mcfun, and then the mcfun returns.
-pub fn compileJumpBody(self: *Compiler, body: []const ast.Stmt, env: *Environment, loop: ?[]const u8) CompileError!?ir.Command {
+pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Environment, loop: ?[]const u8) CompileError!?ir.Command {
     const outer_loop = self.current_loop;
     const outer_through_body = self.return_through_body;
     self.current_loop = loop;
@@ -458,7 +458,7 @@ pub fn compileJumpBody(self: *Compiler, body: []const ast.Stmt, env: *Environmen
 // `execute if function <body> run ...`: when the body returned, return from this function too.
 pub fn onBodyReturn(self: *Compiler, body_name: []const u8) CompileError!ir.Command {
     const pass_on: ir.Command = if (self.return_through_body) .{ .return_value = 1 } else .{ .return_run = try self.createCommand(.{ .score_get = try self.resultScore() }) };
-    const checks = try self.gpa.dupe(ir.Check, &.{.{ .negated = false, .score_test = .{ .function_returns = body_name } }});
+    const checks = try self.gpa.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .function_returns = body_name } }});
     return .{ .execute = .{ .checks = checks, .run = try self.createCommand(pass_on) } };
 }
 
@@ -468,7 +468,7 @@ pub fn resultScore(self: *Compiler) CompileError!ir.Score {
 }
 
 pub fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
-    switch (var_decl.target.storage) {
+    switch (var_decl.target.kind) {
         .compile_time => {},
         .score => return self.declareLocal(.score, var_decl, env, commands),
         .data => return self.declareLocal(.data, var_decl, env, commands),
@@ -533,7 +533,7 @@ pub fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast
 // `data remove` for each data local declared anywhere in the body. A failed `set from` keeps the old value, so
 // without this a local could hold a value from an earlier call. `data remove` on a missing key fails without effect.
 // A score local needs nothing: every score write (`set`, `operation`, `store result`) overwrites it, and a failure writes 0.
-pub fn localCleanup(self: *Compiler, body: []const ast.Stmt) CompileError![]const ir.Command {
+pub fn localCleanup(self: *Compiler, body: []const ast.Statement) CompileError![]const ir.Command {
     var names: std.StringArrayHashMapUnmanaged(void) = .empty;
     try collectDataLocalNames(self.gpa, body, &names);
 
@@ -545,9 +545,9 @@ pub fn localCleanup(self: *Compiler, body: []const ast.Stmt) CompileError![]cons
     return cleanup.toOwnedSlice(self.gpa);
 }
 
-pub fn collectDataLocalNames(gpa: std.mem.Allocator, body: []const ast.Stmt, names: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+pub fn collectDataLocalNames(gpa: std.mem.Allocator, body: []const ast.Statement, names: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (body) |statement| switch (statement.kind) {
-        .var_decl => |var_decl| if (var_decl.target.storage == .data) try names.put(gpa, var_decl.target.name, {}),
+        .var_decl => |var_decl| if (var_decl.target.kind == .data) try names.put(gpa, var_decl.target.name, {}),
         .@"if" => |if_statement| {
             try collectDataLocalNames(gpa, if_statement.then_body, names);
             if (if_statement.else_body) |else_body| try collectDataLocalNames(gpa, else_body, names);
@@ -560,24 +560,24 @@ pub fn collectDataLocalNames(gpa: std.mem.Allocator, body: []const ast.Stmt, nam
 }
 
 // The `$(name)` keys that a body uses, in expressions and in Minecraft text.
-pub fn collectMacroKeys(gpa: std.mem.Allocator, body: []const ast.Stmt, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+pub fn collectMacroKeys(gpa: std.mem.Allocator, body: []const ast.Statement, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (body) |statement| switch (statement.kind) {
-        .var_decl => |var_decl| try collectExprMacroKeys(gpa, var_decl.value, keys),
-        .assign => |assign| try collectExprMacroKeys(gpa, assign.value, keys),
-        .@"return" => |value| if (value) |expression| try collectExprMacroKeys(gpa, expression, keys),
+        .var_decl => |var_decl| try collectExpressionMacroKeys(gpa, var_decl.value, keys),
+        .assign => |assign| try collectExpressionMacroKeys(gpa, assign.value, keys),
+        .@"return" => |value| if (value) |expression| try collectExpressionMacroKeys(gpa, expression, keys),
         .@"break", .@"continue" => {},
         .@"if" => |if_statement| {
-            try collectExprMacroKeys(gpa, if_statement.condition, keys);
+            try collectExpressionMacroKeys(gpa, if_statement.condition, keys);
             try collectMacroKeys(gpa, if_statement.then_body, keys);
             if (if_statement.else_body) |else_body| try collectMacroKeys(gpa, else_body, keys);
         },
         .@"while" => |loop| {
-            try collectExprMacroKeys(gpa, loop.condition, keys);
+            try collectExpressionMacroKeys(gpa, loop.condition, keys);
             try collectMacroKeys(gpa, loop.body, keys);
         },
         .@"for" => |loop| {
-            try collectExprMacroKeys(gpa, loop.start, keys);
-            try collectExprMacroKeys(gpa, loop.end, keys);
+            try collectExpressionMacroKeys(gpa, loop.start, keys);
+            try collectExpressionMacroKeys(gpa, loop.end, keys);
             try collectMacroKeys(gpa, loop.body, keys);
         },
         .command => |command| try collectPartsMacroKeys(gpa, command.parts, keys),
@@ -585,27 +585,27 @@ pub fn collectMacroKeys(gpa: std.mem.Allocator, body: []const ast.Stmt, keys: *s
             try collectPartsMacroKeys(gpa, execute.subcommands, keys);
             try collectMacroKeys(gpa, execute.body, keys);
         },
-        .expression => |expression| try collectExprMacroKeys(gpa, expression, keys),
+        .expression => |expression| try collectExpressionMacroKeys(gpa, expression, keys),
     };
 }
 
-fn collectExprMacroKeys(gpa: std.mem.Allocator, expression: *const ast.Expr, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+fn collectExpressionMacroKeys(gpa: std.mem.Allocator, expression: *const ast.Expression, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     switch (expression.kind) {
         .macro_key => |name| try keys.put(gpa, name, {}),
-        .prefix => |prefix| try collectExprMacroKeys(gpa, prefix.operand, keys),
+        .prefix => |prefix| try collectExpressionMacroKeys(gpa, prefix.operand, keys),
         .infix => |infix| {
-            try collectExprMacroKeys(gpa, infix.left, keys);
-            try collectExprMacroKeys(gpa, infix.right, keys);
+            try collectExpressionMacroKeys(gpa, infix.left, keys);
+            try collectExpressionMacroKeys(gpa, infix.right, keys);
         },
         .call => |call| {
-            for (call.args) |arg| try collectExprMacroKeys(gpa, arg, keys);
+            for (call.args) |arg| try collectExpressionMacroKeys(gpa, arg, keys);
             if (call.with) |with| switch (with) {
-                .value => |value| try collectExprMacroKeys(gpa, value, keys),
+                .value => |value| try collectExpressionMacroKeys(gpa, value, keys),
                 .raw => |text| try collectTextMacroKeys(gpa, text, keys),
             };
         },
-        .list => |elements| for (elements) |element| try collectExprMacroKeys(gpa, element, keys),
-        .compound => |entries| for (entries) |entry| try collectExprMacroKeys(gpa, entry.value, keys),
+        .list => |elements| for (elements) |element| try collectExpressionMacroKeys(gpa, element, keys),
+        .compound => |entries| for (entries) |entry| try collectExpressionMacroKeys(gpa, entry.value, keys),
         .minecraft_check => |parts| try collectPartsMacroKeys(gpa, parts, keys),
         .identifier, .number, .typed_number, .string, .boolean, .null, .selector => {},
     }
@@ -614,7 +614,7 @@ fn collectExprMacroKeys(gpa: std.mem.Allocator, expression: *const ast.Expr, key
 fn collectPartsMacroKeys(gpa: std.mem.Allocator, parts: []const ast.CommandPart, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (parts) |part| switch (part.content) {
         .text => |text| try collectTextMacroKeys(gpa, text, keys),
-        .insert => |expression| try collectExprMacroKeys(gpa, expression, keys),
+        .insert => |expression| try collectExpressionMacroKeys(gpa, expression, keys),
     };
 }
 
@@ -638,7 +638,7 @@ pub fn pathRoot(path: []const u8) []const u8 {
 }
 
 pub fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
-    switch (assign.target.storage) {
+    switch (assign.target.kind) {
         .compile_time => {},
         .score => return scores.compileScoreAssign(self, assign.target, assign.value, env, commands),
         .data => {
@@ -676,7 +676,7 @@ pub fn ifContainsReturn(if_statement: ast.If) bool {
     return containsReturn(if_statement.then_body) or containsReturn(else_body);
 }
 
-pub fn containsReturn(body: []const ast.Stmt) bool {
+pub fn containsReturn(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"return" => true,
@@ -691,7 +691,7 @@ pub fn containsReturn(body: []const ast.Stmt) bool {
     return false;
 }
 
-pub fn isJump(kind: ast.Stmt.Kind) bool {
+pub fn isJump(kind: ast.Statement.Kind) bool {
     return kind == .@"return" or kind == .@"break" or kind == .@"continue";
 }
 
@@ -701,7 +701,7 @@ pub fn ifContainsJump(if_statement: ast.If) bool {
     return containsJump(if_statement.then_body) or containsJump(else_body);
 }
 
-pub fn containsJump(body: []const ast.Stmt) bool {
+pub fn containsJump(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"return", .@"break", .@"continue" => true,
@@ -717,7 +717,7 @@ pub fn containsJump(body: []const ast.Stmt) bool {
 }
 
 // True if the body can leave this loop level with `break` or `return`.
-pub fn containsExit(body: []const ast.Stmt) bool {
+pub fn containsExit(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"return", .@"break" => true,
@@ -742,7 +742,7 @@ pub fn branchesEndWithJump(if_statement: ast.If) bool {
     return endsWithJump(else_body);
 }
 
-pub fn endsWithJump(body: []const ast.Stmt) bool {
+pub fn endsWithJump(body: []const ast.Statement) bool {
     if (body.len == 0) return false;
 
     return switch (body[body.len - 1].kind) {
@@ -836,7 +836,7 @@ pub fn appendBranches(
 }
 
 // `kind` names a generated function for a body with more than one command: `if` or `execute`.
-pub fn compileBodyAsCommand(self: *Compiler, body: []const ast.Stmt, env: *Environment, kind: []const u8) CompileError!?ir.Command {
+pub fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *Environment, kind: []const u8) CompileError!?ir.Command {
     var branch_env: Environment = .{ .outer = env, .runtime_branch = true };
     var body_commands: std.ArrayList(ir.Command) = .empty;
     try self.compileBlock(body, &branch_env, &body_commands);
@@ -859,8 +859,8 @@ pub fn newGeneratedName(self: *Compiler, kind: []const u8) CompileError![]const 
     return std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ namespace, path });
 }
 
-pub fn createExpr(self: *Compiler, expression: ast.Expr) CompileError!*const ast.Expr {
-    const pointer = try self.gpa.create(ast.Expr);
+pub fn createExpression(self: *Compiler, expression: ast.Expression) CompileError!*const ast.Expression {
+    const pointer = try self.gpa.create(ast.Expression);
     pointer.* = expression;
     return pointer;
 }
@@ -871,7 +871,7 @@ pub fn createCommand(self: *Compiler, command: ir.Command) CompileError!*const i
     return pointer;
 }
 
-pub fn compileReturn(self: *Compiler, value: ?*const ast.Expr, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+pub fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     if (self.return_through_body) {
         const result = try self.resultScore();
         self.temp_count = 0;
@@ -899,7 +899,7 @@ pub fn compileReturn(self: *Compiler, value: ?*const ast.Expr, env: *Environment
     self.temp_count = 0;
     if (expression.kind == .macro_key) {
         try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_param = expression.kind.macro_key });
+        return commands.append(self.gpa, .{ .return_macro_argument = expression.kind.macro_key });
     }
     // The value can read a local, so it is computed before the locals are removed.
     if (self.current_cleanup.len > 0) {
@@ -911,7 +911,7 @@ pub fn compileReturn(self: *Compiler, value: ?*const ast.Expr, env: *Environment
     const read: ir.Command = blk: {
         if (expression.kind == .identifier) {
             const identifier = expression.kind.identifier;
-            switch (identifier.storage) {
+            switch (identifier.kind) {
                 .data, .entity_data => break :blk .{ .data_get = try data.dataPathOf(self, identifier, env) orelse return },
                 .score => break :blk .{ .score_get = try scores.scoreSource(self, identifier, env) orelse return },
                 .compile_time => {},
@@ -928,7 +928,7 @@ pub fn compileReturn(self: *Compiler, value: ?*const ast.Expr, env: *Environment
 // Wraps a command in `return run`, unless it already returns.
 pub fn returnRun(self: *Compiler, command: ir.Command) CompileError!ir.Command {
     return switch (command) {
-        .return_run, .return_value, .return_param => command,
+        .return_run, .return_value, .return_macro_argument => command,
         else => .{ .return_run = try self.createCommand(command) },
     };
 }
@@ -986,12 +986,12 @@ pub fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, command
     const returned = try scores.newTemp(self);
     try commands.append(self.gpa, .{ .store_result = .{ .target = .{ .score = returned }, .run = try self.createCommand(call_test) } });
     const pass_on = (try self.onBodyReturn(test_name)).execute.run;
-    const checks = try self.gpa.dupe(ir.Check, &.{.{ .negated = false, .score_test = .{ .matches = .{ .score = returned, .min = 1, .max = 1 } } }});
+    const checks = try self.gpa.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .matches = .{ .score = returned, .min = 1, .max = 1 } } }});
     try commands.append(self.gpa, .{ .execute = .{ .checks = checks, .run = pass_on } });
 }
 
 // `continue` of this loop level.
-pub fn containsContinue(body: []const ast.Stmt) bool {
+pub fn containsContinue(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"continue" => true,
@@ -1044,7 +1044,7 @@ pub const SourcePosition = struct {
 // The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (null: the pack).
 pub const Scope = struct {
     namespace: []const u8 = "ns",
-    imports: []const ast.Import = &.{},
+    imports: []const ast.NamespaceName = &.{},
     output_namespace: ?[]const u8 = null,
 };
 
@@ -1057,7 +1057,7 @@ pub const CurrentMcfun = struct {
 };
 
 // Errors inside an expression point to where it starts. Returns the outer position for `restorePosition`.
-pub fn enterExpression(self: *Compiler, expression: *const ast.Expr) SourcePosition {
+pub fn enterExpression(self: *Compiler, expression: *const ast.Expression) SourcePosition {
     const outer: SourcePosition = .{ .path = self.position.path, .line = self.position.line, .column = self.position.column };
     self.position.line = expression.line;
     self.position.column = expression.column;
