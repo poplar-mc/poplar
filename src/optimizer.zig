@@ -2,41 +2,39 @@ const std = @import("std");
 const ir = @import("ir.zig");
 const datapack_writer = @import("datapack_writer.zig");
 
-const Allocator = std.mem.Allocator;
-
 // The passes run in this order on each function. Each pass is a small rewrite, as in bolt-expressions.
-pub fn optimizeFunction(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
-    const without_identities = try removeIdentities(gpa, commands);
-    const with_known_values = try propagateKnownValues(gpa, without_identities);
-    const without_dead_writes = try removeDeadWrites(gpa, function_name, with_known_values);
-    const with_scaled_gets = try scaleDataGets(gpa, without_dead_writes);
-    const with_inlined_stores = try inlineStores(gpa, function_name, with_scaled_gets);
-    return storeConstants(gpa, function_name, with_inlined_stores);
+pub fn optimizeFunction(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
+    const without_identities = try removeIdentities(arena, commands);
+    const with_known_values = try propagateKnownValues(arena, without_identities);
+    const without_dead_writes = try removeDeadWrites(arena, function_name, with_known_values);
+    const with_scaled_gets = try scaleDataGets(arena, without_dead_writes);
+    const with_inlined_stores = try inlineStores(arena, function_name, with_scaled_gets);
+    return storeConstants(arena, function_name, with_inlined_stores);
 }
 
 // `execute store result storage X float 1 run scoreboard players set T 20` → `data modify storage X set value 20f`,
 // when nothing reads the temp after it. A store into a score becomes `scoreboard players set`.
-fn storeConstants(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+fn storeConstants(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands, 0..) |command, index| {
         if (command == .store_result and command.store_result.run.* == .score_set) {
             const set = command.store_result.run.score_set;
             if (isScopedHere(set.score, function_name) and !isReadLater(commands[index + 1 ..], set.score)) {
-                try result.append(gpa, switch (command.store_result.target) {
+                try result.append(arena, switch (command.store_result.target) {
                     .score => |score| .{ .score_set = .{ .score = score, .value = set.value } },
-                    .data => |path| .{ .data_set = .{ .target = path, .snbt = try std.fmt.allocPrint(gpa, "{d}", .{set.value}) } },
+                    .data => |path| .{ .data_set = .{ .target = path, .snbt = try std.fmt.allocPrint(arena, "{d}", .{set.value}) } },
                 });
                 continue;
             }
         }
-        try result.append(gpa, command);
+        try result.append(arena, command);
     }
-    return result.toOwnedSlice(gpa);
+    return result.toOwnedSlice(arena);
 }
 
 // `add 0`, `remove 0`, `*= 1` and `/= 1` do nothing.
-fn removeIdentities(gpa: Allocator, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+fn removeIdentities(arena: std.mem.Allocator, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands) |command| {
@@ -45,9 +43,9 @@ fn removeIdentities(gpa: Allocator, commands: []const ir.Command) Allocator.Erro
             .score_operation => |operation| (operation.op == .mul or operation.op == .div) and isConstantOne(operation.source),
             else => false,
         };
-        if (!does_nothing) try result.append(gpa, command);
+        if (!does_nothing) try result.append(arena, command);
     }
-    return result.toOwnedSlice(gpa);
+    return result.toOwnedSlice(arena);
 }
 
 // A score value that the optimizer knows: a number, or the value of a macro argument.
@@ -84,9 +82,9 @@ const KnownScores = struct {
         return null;
     }
 
-    fn remember(known: *KnownScores, gpa: Allocator, score: ir.Score, value: KnownValue) Allocator.Error!void {
+    fn remember(known: *KnownScores, arena: std.mem.Allocator, score: ir.Score, value: KnownValue) std.mem.Allocator.Error!void {
         known.forget(score);
-        if (isTracked(score)) try known.entries.append(gpa, .{ .score = score, .value = value });
+        if (isTracked(score)) try known.entries.append(arena, .{ .score = score, .value = value });
     }
 
     fn forget(known: *KnownScores, score: ir.Score) void {
@@ -116,7 +114,7 @@ const KnownScores = struct {
         }
     }
 
-    fn learn(known: *KnownScores, gpa: Allocator, command: ir.Command) Allocator.Error!void {
+    fn learn(known: *KnownScores, arena: std.mem.Allocator, command: ir.Command) std.mem.Allocator.Error!void {
         const learned: ?struct { ir.Score, KnownValue } = switch (command) {
             .score_set => |set| .{ set.score, .{ .number = set.value } },
             .score_set_macro_argument => |set| .{ set.score, .{ .macro_argument = set.macro_argument } },
@@ -127,16 +125,16 @@ const KnownScores = struct {
             else => null,
         };
         known.forgetWrites(command);
-        if (learned) |score_and_value| try known.remember(gpa, score_and_value[0], score_and_value[1]);
+        if (learned) |score_and_value| try known.remember(arena, score_and_value[0], score_and_value[1]);
     }
 };
 
 // Removes a set when the score already has the value, copies a macro argument from a score that holds it
 // (a macro line is parsed again for new arguments), and computes math on known numbers.
-fn propagateKnownValues(gpa: Allocator, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+fn propagateKnownValues(arena: std.mem.Allocator, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
     var known: KnownScores = .{};
-    defer known.entries.deinit(gpa);
+    defer known.entries.deinit(arena);
 
     for (commands) |command| {
         const optimized: ?ir.Command = switch (command) {
@@ -151,11 +149,11 @@ fn propagateKnownValues(gpa: Allocator, commands: []const ir.Command) Allocator.
             else => command,
         };
         if (optimized) |kept| {
-            try known.learn(gpa, kept);
-            try result.append(gpa, kept);
+            try known.learn(arena, kept);
+            try result.append(arena, kept);
         }
     }
-    return result.toOwnedSlice(gpa);
+    return result.toOwnedSlice(arena);
 }
 
 fn isKnown(known: KnownScores, score: ir.Score, value: KnownValue) bool {
@@ -192,7 +190,7 @@ fn foldMath(known: KnownScores, command: ir.Command) ?ir.ScoreValue {
 
 // A write to a temp or a local is removed when nothing reads it before it is set again or the function ends.
 // A write to a global is removed only when it is set again before anything else can read it.
-fn removeDeadWrites(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+fn removeDeadWrites(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands, 0..) |command, index| {
@@ -208,13 +206,13 @@ fn removeDeadWrites(gpa: Allocator, function_name: []const u8, commands: []const
             const is_dead = if (isScopedHere(score, function_name)) !isReadLater(rest, score) else isTracked(score) and isSetBeforeUse(rest, score);
             if (is_dead) continue;
         }
-        try result.append(gpa, command);
+        try result.append(arena, command);
     }
-    return result.toOwnedSlice(gpa);
+    return result.toOwnedSlice(arena);
 }
 
 // `data get X` followed by `*= N` becomes `data get X N`. Only `*=`: a scale such as 0.01 can round wrongly.
-fn scaleDataGets(gpa: Allocator, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+fn scaleDataGets(arena: std.mem.Allocator, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     var index: usize = 0;
@@ -232,15 +230,15 @@ fn scaleDataGets(gpa: Allocator, commands: []const ir.Command) Allocator.Error![
                 }
             }
         }
-        try result.append(gpa, command);
+        try result.append(arena, command);
     }
-    return result.toOwnedSlice(gpa);
+    return result.toOwnedSlice(arena);
 }
 
 // A command that computes a temp, followed by a copy of that temp, becomes one command:
 // `scoreboard players remove T 1` + `execute store result storage X int 1 run scoreboard players get T`
 // → `execute store result storage X int 1 run scoreboard players remove T 1`.
-fn inlineStores(gpa: Allocator, function_name: []const u8, commands: []const ir.Command) Allocator.Error![]const ir.Command {
+fn inlineStores(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     var index: usize = 0;
@@ -248,18 +246,18 @@ fn inlineStores(gpa: Allocator, function_name: []const u8, commands: []const ir.
         const command = commands[index];
         if (index + 1 < commands.len) {
             if (definedTemp(command, function_name)) |temp| {
-                if (try mergeCopy(gpa, command, commands[index + 1], temp)) |merged| {
+                if (try mergeCopy(arena, command, commands[index + 1], temp)) |merged| {
                     if (!isReadLater(commands[index + 2 ..], temp)) {
-                        try result.append(gpa, merged);
+                        try result.append(arena, merged);
                         index += 1;
                         continue;
                     }
                 }
             }
         }
-        try result.append(gpa, command);
+        try result.append(arena, command);
     }
-    return result.toOwnedSlice(gpa);
+    return result.toOwnedSlice(arena);
 }
 
 // The temp that a command writes, when the command's result is the temp's new value.
@@ -278,20 +276,20 @@ fn definedTemp(command: ir.Command, function_name: []const u8) ?ir.Score {
     return if (isScopedHere(score, function_name)) score else null;
 }
 
-fn mergeCopy(gpa: Allocator, definition: ir.Command, copy: ir.Command, temp: ir.Score) Allocator.Error!?ir.Command {
+fn mergeCopy(arena: std.mem.Allocator, definition: ir.Command, copy: ir.Command, temp: ir.Score) std.mem.Allocator.Error!?ir.Command {
     switch (copy) {
         .score_to_data => |store| {
             if (!store.score.eql(temp)) return null;
             const target: ir.StoreResult.Target = .{ .data = store.target };
-            return .{ .store_result = .{ .target = target, .run = try create(gpa, definition) } };
+            return .{ .store_result = .{ .target = target, .run = try create(arena, definition) } };
         },
         .return_run => |run| {
             if (run.* != .score_get or !run.score_get.eql(temp)) return null;
-            return .{ .return_run = try create(gpa, definition) };
+            return .{ .return_run = try create(arena, definition) };
         },
         .score_operation => |operation| {
             if (operation.op != .assign or !operation.source.eql(temp) or operation.target.eql(temp)) return null;
-            return .{ .store_result = .{ .target = .{ .score = operation.target }, .run = try create(gpa, definition) } };
+            return .{ .store_result = .{ .target = .{ .score = operation.target }, .run = try create(arena, definition) } };
         },
         else => return null,
     }
@@ -386,42 +384,42 @@ fn isTracked(score: ir.Score) bool {
 
 // A generated function with one command is put where it is called, and the function is removed.
 // A command that can return is not moved, because the `return` would then leave the caller.
-pub fn inlineSmallFunctions(gpa: Allocator, functions: []const ir.McFunction) Allocator.Error![]const ir.McFunction {
+pub fn inlineSmallFunctions(arena: std.mem.Allocator, functions: []const ir.McFunction) std.mem.Allocator.Error![]ir.McFunction {
     // One pass with the original bodies, so that functions that call each other cannot grow forever.
-    const result = try gpa.dupe(ir.McFunction, functions);
+    const result = try arena.dupe(ir.McFunction, functions);
     for (result) |*function| {
         var commands: std.ArrayList(ir.Command) = .empty;
         for (function.commands) |command| {
-            try commands.append(gpa, try inlineCall(gpa, functions, function.name, command) orelse command);
+            try commands.append(arena, try inlineCall(arena, functions, function.name, command) orelse command);
         }
-        function.commands = try commands.toOwnedSlice(gpa);
+        function.commands = try commands.toOwnedSlice(arena);
     }
-    try inlineTailCalls(gpa, result);
+    try inlineTailCalls(arena, result);
 
     var used: std.ArrayList(ir.McFunction) = .empty;
     for (result) |function| {
-        if (!isGenerated(function.name) or isCalled(result, function.name)) try used.append(gpa, function);
+        if (!isGenerated(function.name) or isCalled(result, function.name)) try used.append(arena, function);
     }
-    for (used.items) |*function| function.commands = try optimizeFunction(gpa, function.name, function.commands);
-    return used.toOwnedSlice(gpa);
+    for (used.items) |*function| function.commands = try optimizeFunction(arena, function.name, function.commands);
+    return used.toOwnedSlice(arena);
 }
 
-fn inlineCall(gpa: Allocator, functions: []const ir.McFunction, caller: []const u8, command: ir.Command) Allocator.Error!?ir.Command {
+fn inlineCall(arena: std.mem.Allocator, functions: []const ir.McFunction, caller: []const u8, command: ir.Command) std.mem.Allocator.Error!?ir.Command {
     switch (command) {
         .function => |name| return smallBody(functions, caller, name),
         // A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the caller.
         .function_with => |call| return if (call.arguments == .compound) smallBody(functions, caller, call.name) else null,
         .execute => |execute| {
-            const run = try inlineCall(gpa, functions, caller, execute.run.*) orelse return null;
+            const run = try inlineCall(arena, functions, caller, execute.run.*) orelse return null;
             if (run == .execute) {
-                const checks = try std.mem.concat(gpa, ir.Check, &.{ execute.checks, run.execute.checks });
+                const checks = try std.mem.concat(arena, ir.Check, &.{ execute.checks, run.execute.checks });
                 return .{ .execute = .{ .checks = checks, .run = run.execute.run } };
             }
-            return .{ .execute = .{ .checks = execute.checks, .run = try create(gpa, run) } };
+            return .{ .execute = .{ .checks = execute.checks, .run = try create(arena, run) } };
         },
         .execute_raw => |execute| {
-            const run = try inlineCall(gpa, functions, caller, execute.run.*) orelse return null;
-            return .{ .execute_raw = .{ .subcommands = execute.subcommands, .run = try create(gpa, run) } };
+            const run = try inlineCall(arena, functions, caller, execute.run.*) orelse return null;
+            return .{ .execute_raw = .{ .subcommands = execute.subcommands, .run = try create(arena, run) } };
         },
         else => return null,
     }
@@ -439,7 +437,7 @@ fn smallBody(functions: []const ir.McFunction, caller: []const u8, name: []const
 
 // A generated function that is called once, as the last command of its caller, is put in its place, even when
 // it can return: leaving the caller there is what happens anyway. Not when something reads the caller's return value.
-fn inlineTailCalls(gpa: Allocator, functions: []ir.McFunction) Allocator.Error!void {
+fn inlineTailCalls(arena: std.mem.Allocator, functions: []ir.McFunction) std.mem.Allocator.Error!void {
     for (functions) |*function| {
         const commands = function.commands;
         if (commands.len == 0) continue;
@@ -454,7 +452,7 @@ fn inlineTailCalls(gpa: Allocator, functions: []ir.McFunction) Allocator.Error!v
         const callee = for (functions) |candidate| {
             if (std.mem.eql(u8, candidate.name, callee_name)) break candidate;
         } else continue;
-        function.commands = try std.mem.concat(gpa, ir.Command, &.{ commands[0 .. commands.len - 1], callee.commands });
+        function.commands = try std.mem.concat(arena, ir.Command, &.{ commands[0 .. commands.len - 1], callee.commands });
     }
 }
 
@@ -498,7 +496,7 @@ fn isGenerated(name: []const u8) bool {
 
 // A generated body gets the macro arguments of its mcfun (`{amount:"$(amount)"}`) only if it, or a body that it calls, has a
 // macro line. The others are called without them, so a value with a `"` in it cannot break the call.
-pub fn dropUnusedArguments(gpa: Allocator, functions: []ir.McFunction) Allocator.Error!void {
+pub fn dropUnusedArguments(arena: std.mem.Allocator, functions: []ir.McFunction) std.mem.Allocator.Error!void {
     var needs: std.StringHashMapUnmanaged(void) = .empty;
     var is_changed = true;
     while (is_changed) {
@@ -506,45 +504,43 @@ pub fn dropUnusedArguments(gpa: Allocator, functions: []ir.McFunction) Allocator
         for (functions) |function| {
             if (!isGenerated(function.name) or needs.contains(function.name)) continue;
             for (function.commands) |command| {
-                if (!try usesArguments(gpa, command, &needs)) continue;
-                try needs.put(gpa, function.name, {});
+                if (!try usesArguments(arena, command, &needs)) continue;
+                try needs.put(arena, function.name, {});
                 is_changed = true;
                 break;
             }
         }
     }
     for (functions) |*function| {
-        const commands = try gpa.alloc(ir.Command, function.commands.len);
-        for (function.commands, commands) |command, *result| result.* = try withoutArguments(gpa, command, &needs);
+        const commands = try arena.alloc(ir.Command, function.commands.len);
+        for (function.commands, commands) |command, *result| result.* = try withoutArguments(arena, command, &needs);
         function.commands = commands;
     }
 }
 
-fn usesArguments(gpa: Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!bool {
+fn usesArguments(arena: std.mem.Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) std.mem.Allocator.Error!bool {
     switch (command) {
         .function_with => |call| if (call.arguments == .compound and isGenerated(call.name)) return needs.contains(call.name),
         // The wrapper and its run are checked apart, so a call inside counts only as itself.
         .execute, .execute_raw, .store_result, .return_run => {
             const run = runOf(command).?;
-            return try hasMacroText(gpa, try withRun(gpa, command, .{ .raw = "" })) or try usesArguments(gpa, run.*, needs);
+            return try hasMacroText(arena, try withRun(arena, command, .{ .raw = "" })) or try usesArguments(arena, run.*, needs);
         },
         else => {},
     }
-    return hasMacroText(gpa, command);
+    return hasMacroText(arena, command);
 }
 
-fn hasMacroText(gpa: Allocator, command: ir.Command) Allocator.Error!bool {
+fn hasMacroText(arena: std.mem.Allocator, command: ir.Command) std.mem.Allocator.Error!bool {
     var text: std.ArrayList(u8) = .empty;
-    datapack_writer.renderCommand(&text, gpa, "", command) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-    };
+    try datapack_writer.renderCommand(&text, arena, "", command);
     return std.mem.indexOf(u8, text.items, "$(") != null;
 }
 
-fn withoutArguments(gpa: Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) Allocator.Error!ir.Command {
+fn withoutArguments(arena: std.mem.Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) std.mem.Allocator.Error!ir.Command {
     switch (command) {
         .function_with => |call| if (call.arguments == .compound and isGenerated(call.name) and !needs.contains(call.name)) return .{ .function = call.name },
-        .execute, .execute_raw, .store_result, .return_run => return withRun(gpa, command, try withoutArguments(gpa, runOf(command).?.*, needs)),
+        .execute, .execute_raw, .store_result, .return_run => return withRun(arena, command, try withoutArguments(arena, runOf(command).?.*, needs)),
         else => {},
     }
     return command;
@@ -560,8 +556,8 @@ fn runOf(command: ir.Command) ?*const ir.Command {
     };
 }
 
-fn withRun(gpa: Allocator, command: ir.Command, run: ir.Command) Allocator.Error!ir.Command {
-    const new_run = try gpa.create(ir.Command);
+fn withRun(arena: std.mem.Allocator, command: ir.Command, run: ir.Command) std.mem.Allocator.Error!ir.Command {
+    const new_run = try arena.create(ir.Command);
     new_run.* = run;
     return switch (command) {
         .execute => |execute| .{ .execute = .{ .checks = execute.checks, .run = new_run } },
@@ -681,16 +677,16 @@ fn isConstantOne(score: ir.Score) bool {
     return constantValue(score) == 1;
 }
 
-fn create(gpa: Allocator, command: ir.Command) Allocator.Error!*const ir.Command {
-    const pointer = try gpa.create(ir.Command);
+fn create(arena: std.mem.Allocator, command: ir.Command) std.mem.Allocator.Error!*const ir.Command {
+    const pointer = try arena.create(ir.Command);
     pointer.* = command;
     return pointer;
 }
 
 test "removes identities and inlines copies of temps" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
     const temp: ir.Score = .{ .holder = "#poplar.f.t0" };
     const other_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
@@ -711,7 +707,7 @@ test "removes identities and inlines copies of temps" {
         .{ .score_operation = .{ .target = entity, .op = .assign, .source = division_temp } },
     };
 
-    const result = try optimizeFunction(gpa, "f", &commands);
+    const result = try optimizeFunction(arena, "f", &commands);
     try std.testing.expectEqual(6, result.len);
     try std.testing.expect(result[0] == .store_result);
     try std.testing.expectEqualStrings("n", result[0].store_result.target.data.path);
@@ -721,9 +717,9 @@ test "removes identities and inlines copies of temps" {
 }
 
 test "uses known values, removes dead writes and scales data gets" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
     const temp: ir.Score = .{ .holder = "#poplar.f.t0" };
     const copy_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
@@ -751,7 +747,7 @@ test "uses known values, removes dead writes and scales data gets" {
         .{ .score_operation = .{ .target = global, .op = .mul, .source = .{ .holder = "#poplar.c100" } } },
     };
 
-    const result = try optimizeFunction(gpa, "f", &commands);
+    const result = try optimizeFunction(arena, "f", &commands);
     try std.testing.expectEqual(8, result.len);
     try std.testing.expect(result[2].store_result.run.* == .score_operation);
     try std.testing.expect(result[4].store_result.run.* == .score_set_macro_argument);

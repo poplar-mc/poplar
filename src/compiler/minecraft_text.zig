@@ -16,11 +16,11 @@ pub fn compileCommand(compiler: *Compiler, command: ast.Command, text_column: us
     var command_text = try buildCommandText(compiler, command.parts, env) orelse return;
     command_text.text = try checkMinecraftText(compiler, command.parts, command_text, text_column, "", "") orelse return;
 
-    if (!command_text.is_macro) return commands.append(compiler.gpa, .{ .raw = command_text.text });
+    if (!command_text.is_macro) return commands.append(compiler.arena, .{ .raw = command_text.text });
 
     const name = try compiler.newGeneratedName("macro");
-    const macro_commands = try compiler.gpa.dupe(ir.Command, &.{.{ .macro = command_text.text }});
-    try compiler.generated.append(compiler.gpa, .{ .name = name, .commands = macro_commands });
+    const macro_commands = try compiler.arena.dupe(ir.Command, &.{.{ .macro = command_text.text }});
+    try compiler.generated.append(compiler.arena, .{ .name = name, .commands = macro_commands });
     try callMacroHelper(compiler, name, command_text, command_text.uses_macro_keys, env, commands);
 }
 
@@ -43,18 +43,18 @@ fn sharedStorage(inserts: []const Compiler.Insert) ?ir.DataStorage {
 
 // A macro call gets its arguments from one place. A helper that also needs the macro arguments of the mcfun,
 // or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro arguments, then each value it uses.
-pub fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Compiler.CommandText, needs_macro_keys: bool, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Compiler.CommandText, needs_macro_keys: bool, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     if (!needs_macro_keys) if (sharedStorage(command_text.inserts)) |storage| {
-        return commands.append(compiler.gpa, .{ .function_with = .{ .name = name, .arguments = .{ .data_storage = storage } } });
+        return commands.append(compiler.arena, .{ .function_with = .{ .name = name, .arguments = .{ .data_storage = storage } } });
     };
 
     // Old keys from an earlier helper do no harm, because a macro line reads only the names it uses.
-    if (needs_macro_keys) try commands.append(compiler.gpa, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = compiler.forwarded_args.? } });
+    if (needs_macro_keys) try commands.append(compiler.arena, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = compiler.forwarded_args.? } });
     compiler.temp_count = 0;
     for (command_text.inserts) |insert| {
         const target: ir.DataPath = .inStorage(.macro, insert.macro_name);
         switch (insert.source) {
-            .data => |source| try commands.append(compiler.gpa, .{ .data_copy = .{ .target = target, .source = source } }),
+            .data => |source| try commands.append(compiler.arena, .{ .data_copy = .{ .target = target, .source = source } }),
             .value => |expression| {
                 const outer_position = compiler.enterExpression(expression);
                 defer compiler.restorePosition(outer_position);
@@ -69,11 +69,11 @@ pub fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Comp
                     try scores.compileInto(compiler, temp, expression, env, commands);
                     break :blk temp;
                 };
-                try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
+                try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = score } });
             },
         }
     }
-    try commands.append(compiler.gpa, .{ .function_with = .{ .name = name, .arguments = .macro_storage } });
+    try commands.append(compiler.arena, .{ .function_with = .{ .name = name, .arguments = .macro_storage } });
 }
 
 pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
@@ -88,10 +88,10 @@ pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environme
 
     const run = try compiler.compileJumpBody(execute.body, env, null);
     const execute_command: ir.Command = .{ .execute_raw = .{ .subcommands = subcommands.text, .run = try compiler.createCommand(run orelse return) } };
-    if (!subcommands.is_macro) return commands.append(compiler.gpa, execute_command);
+    if (!subcommands.is_macro) return commands.append(compiler.arena, execute_command);
 
     const name = try compiler.newGeneratedName("macro");
-    try compiler.generated.append(compiler.gpa, .{ .name = name, .commands = try compiler.gpa.dupe(ir.Command, &.{execute_command}) });
+    try compiler.generated.append(compiler.arena, .{ .name = name, .commands = try compiler.arena.dupe(ir.Command, &.{execute_command}) });
     // The body can forward the macro arguments too, so in an mcfun that uses them they always go along.
     try callMacroHelper(compiler, name, subcommands, compiler.forwarded_args != null, env, commands);
 }
@@ -100,7 +100,7 @@ pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environme
 // text uses the mcfun's macro arguments.
 pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env: *Environment) Compiler.CompileError!?Compiler.CommandText {
     var text: std.ArrayList(u8) = .empty;
-    const text_starts = try compiler.gpa.alloc(usize, parts.len);
+    const text_starts = try compiler.arena.alloc(usize, parts.len);
     var is_macro = false;
     var uses_macro_keys = false;
     var inserts: std.ArrayList(Compiler.Insert) = .empty;
@@ -109,44 +109,44 @@ pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env
         text_start.* = text.items.len;
         switch (part.content) {
             .text => |part_text| {
-                try text.appendSlice(compiler.gpa, part_text);
+                try text.appendSlice(compiler.arena, part_text);
                 if (std.mem.indexOf(u8, part_text, "$(") != null) uses_macro_keys = true;
             },
             .insert => |expression| {
                 const outer_position = compiler.enterExpression(expression);
                 defer compiler.restorePosition(outer_position);
                 if (expression.kind == .macro_key) {
-                    try text.print(compiler.gpa, "$({s})", .{expression.kind.macro_key});
+                    try text.print(compiler.arena, "$({s})", .{expression.kind.macro_key});
                     uses_macro_keys = true;
                     continue;
                 }
                 if (values.containsRuntimeValue(compiler, expression, env)) {
                     const insert = try runtimeInsert(compiler, expression, env, inserts.items) orelse return null;
-                    try text.print(compiler.gpa, "$({s})", .{insert.macro_name});
+                    try text.print(compiler.arena, "$({s})", .{insert.macro_name});
                     is_macro = true;
                     for (inserts.items) |used| {
                         if (std.mem.eql(u8, used.macro_name, insert.macro_name)) break;
-                    } else try inserts.append(compiler.gpa, insert);
+                    } else try inserts.append(compiler.arena, insert);
                     continue;
                 }
                 const value = try values.evaluate(compiler, expression, env) orelse return null;
-                try text.appendSlice(compiler.gpa, try values.valueToText(compiler, value));
+                try text.appendSlice(compiler.arena, try values.valueToText(compiler, value));
             },
         }
     }
 
     return .{
-        .text = try text.toOwnedSlice(compiler.gpa),
+        .text = try text.toOwnedSlice(compiler.arena),
         .text_starts = text_starts,
         .is_macro = is_macro,
         .uses_macro_keys = uses_macro_keys,
-        .inserts = try inserts.toOwnedSlice(compiler.gpa),
+        .inserts = try inserts.toOwnedSlice(compiler.arena),
     };
 }
 
 // Where the value of a runtime insert comes from, and its macro name. The same value again in the line
 // gives the insert that is already there.
-pub fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, used: []const Compiler.Insert) Compiler.CompileError!?Compiler.Insert {
+fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, used: []const Compiler.Insert) Compiler.CompileError!?Compiler.Insert {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
 
@@ -158,7 +158,7 @@ pub fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env
             .data, .entity_data => {
                 const path = try data.dataPathOf(compiler, identifier, env) orelse return null;
                 source = .{ .data = path };
-                base = try macroName(compiler.gpa, path.path);
+                base = try macroName(compiler.arena, path.path);
             },
             .score => base = identifier.name,
             .compile_time => {},
@@ -172,11 +172,11 @@ pub fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env
     // A helper may get the macro arguments and the values in one compound, so each name must be new.
     var name = base;
     var number: usize = 2;
-    while (isUsedMacroName(compiler, name, used)) : (number += 1) name = try std.fmt.allocPrint(compiler.gpa, "{s}_{d}", .{ base, number });
+    while (isUsedMacroName(compiler, name, used)) : (number += 1) name = try std.fmt.allocPrint(compiler.arena, "{s}_{d}", .{ base, number });
     return .{ .macro_name = name, .source = source };
 }
 
-pub fn isSameInsert(a: Compiler.Insert.Source, b: Compiler.Insert.Source) bool {
+fn isSameInsert(a: Compiler.Insert.Source, b: Compiler.Insert.Source) bool {
     switch (a) {
         .data => |path| return b == .data and std.meta.eql(path.holder, b.data.holder) and std.mem.eql(u8, path.path, b.data.path),
         .value => |expression| {
@@ -189,7 +189,7 @@ pub fn isSameInsert(a: Compiler.Insert.Source, b: Compiler.Insert.Source) bool {
     }
 }
 
-pub fn isUsedMacroName(compiler: *const Compiler, name: []const u8, used: []const Compiler.Insert) bool {
+fn isUsedMacroName(compiler: *const Compiler, name: []const u8, used: []const Compiler.Insert) bool {
     for (used) |insert| {
         if (std.mem.eql(u8, insert.macro_name, name)) return true;
     }
@@ -197,7 +197,7 @@ pub fn isUsedMacroName(compiler: *const Compiler, name: []const u8, used: []cons
 }
 
 // Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.
-pub fn sourceOffset(parts: []const ast.CommandPart, text_starts: []const usize, at: usize) usize {
+fn sourceOffset(parts: []const ast.CommandPart, text_starts: []const usize, at: usize) usize {
     var source_offset = at;
     for (parts, text_starts) |part, text_start| {
         if (text_start > at) break;
@@ -210,8 +210,8 @@ pub fn sourceOffset(parts: []const ast.CommandPart, text_starts: []const usize, 
 }
 
 // `stats.inventory[0]` → `stats_inventory_0_`: a name that a macro line can use.
-pub fn macroName(gpa: std.mem.Allocator, path: []const u8) Compiler.CompileError![]const u8 {
-    const name = try gpa.dupe(u8, path);
+fn macroName(arena: std.mem.Allocator, path: []const u8) Compiler.CompileError![]const u8 {
+    const name = try arena.dupe(u8, path);
     for (name) |*ch| {
         if (!std.ascii.isAlphanumeric(ch.*) and ch.* != '_') ch.* = '_';
     }
@@ -221,8 +221,8 @@ pub fn macroName(gpa: std.mem.Allocator, path: []const u8) Compiler.CompileError
 // Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each `self:name` and
 // `ns:name` of a declaration into its id. `column` is where the text starts in the source. Null after an error.
 pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, built: Compiler.CommandText, column: usize, comptime prefix: []const u8, comptime suffix: []const u8) Compiler.CompileError!?[]const u8 {
-    const full_text = try std.fmt.allocPrint(compiler.gpa, prefix ++ "{s}" ++ suffix, .{built.text});
-    const checked = try compiler.command_tree.checkText(compiler.gpa, full_text, compiler.poplar_namespaces);
+    const full_text = try std.fmt.allocPrint(compiler.arena, prefix ++ "{s}" ++ suffix, .{built.text});
+    const checked = try compiler.command_tree.checkText(compiler.arena, full_text, compiler.poplar_namespaces);
     if (checked.failure) |failure| {
         const at = @min(failure.at -| prefix.len, built.text.len);
         try compiler.addErrorAt(column + sourceOffset(parts, built.text_starts, at), "{s}", .{failure.message});
@@ -230,7 +230,7 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
     }
     if (checked.ids.len == 0) return built.text;
 
-    const ids = try compiler.gpa.dupe(CommandTree.Id, checked.ids);
+    const ids = try compiler.arena.dupe(CommandTree.Id, checked.ids);
     std.mem.sort(CommandTree.Id, ids, {}, idBefore);
     var resolved: std.ArrayList(u8) = .empty;
     var copied: usize = 0;
@@ -247,7 +247,7 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
         // A storage or bossbar id is not a Poplar declaration: `self:` only gives it the namespace.
         if (!text_id.names_declaration) {
             if (!std.mem.eql(u8, written, "self")) continue;
-            try resolved.print(compiler.gpa, "{s}{s}", .{ built.text[copied..start], compiler.scope.output_namespace orelse compiler.pack_namespace });
+            try resolved.print(compiler.arena, "{s}{s}", .{ built.text[copied..start], compiler.scope.output_namespace orelse compiler.pack_namespace });
             copied = colon;
             continue;
         }
@@ -263,10 +263,10 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
             try compiler.addErrorAt(column + sourceOffset(parts, built.text_starts, start), "{s}", .{try unknownIdMessage(compiler, written, namespace, name)});
             return null;
         };
-        try resolved.print(compiler.gpa, "{s}{s}", .{ built.text[copied..start], id });
+        try resolved.print(compiler.arena, "{s}{s}", .{ built.text[copied..start], id });
         copied = end;
     }
-    try resolved.appendSlice(compiler.gpa, built.text[copied..]);
+    try resolved.appendSlice(compiler.arena, built.text[copied..]);
     return resolved.items;
 }
 
@@ -287,7 +287,7 @@ fn checkBareName(compiler: *Compiler, parts: []const ast.CommandPart, built: Com
     try compiler.addErrorAt(column + sourceOffset(parts, built.text_starts, start), "'{s}' is in this pack, but with no namespace it means 'minecraft:{s}'. Write 'self:{s}'", .{ name, name, source_name });
 }
 
-pub fn idBefore(_: void, a: CommandTree.Id, b: CommandTree.Id) bool {
+fn idBefore(_: void, a: CommandTree.Id, b: CommandTree.Id) bool {
     return a.at < b.at;
 }
 
@@ -295,13 +295,13 @@ pub fn isNamespaceChar(ch: u8) bool {
     return std.ascii.isLower(ch) or std.ascii.isDigit(ch) or ch == '_' or ch == '.' or ch == '-';
 }
 
-pub fn isIdChar(ch: u8) bool {
+fn isIdChar(ch: u8) bool {
     return std.ascii.isAlphanumeric(ch) or std.mem.indexOfScalar(u8, "_-./", ch) != null;
 }
 
 // The namespace whose Poplar names an id in Minecraft text uses: `self:`, or a namespace of the pack that the file
 // imports. Null for any other id, such as `minecraft:stone`, which is left as it is.
-pub fn sourceNamespaceOf(compiler: *Compiler, written: []const u8) Compiler.CompileError!?[]const u8 {
+fn sourceNamespaceOf(compiler: *Compiler, written: []const u8) Compiler.CompileError!?[]const u8 {
     if (std.mem.eql(u8, written, "self")) return compiler.scope.namespace;
     if (!compiler.namespace_imports.contains(written)) return null;
     if (std.mem.eql(u8, written, compiler.scope.namespace) or declarations.isImported(compiler, written)) return written;
@@ -309,43 +309,43 @@ pub fn sourceNamespaceOf(compiler: *Compiler, written: []const u8) Compiler.Comp
 }
 
 // `combat:healPlayer` → `combat:heal_player`, `std:clamp` → `<pack>:std/clamp`, `combat:isSitting` → `combat:is_sitting`.
-pub fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError!?[]const u8 {
+fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError!?[]const u8 {
     const output = declarations.outputNamespace(compiler, namespace) orelse compiler.pack_namespace;
     const name_key = try declarations.qualifiedKey(compiler, namespace, name);
-    if (compiler.data_file_names.get(name_key)) |path| return try std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ output, path });
+    if (compiler.data_file_names.get(name_key)) |path| return try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ output, path });
     if (!compiler.mcfuns.contains(name_key)) return null;
-    return try std.fmt.allocPrint(compiler.gpa, "{s}:{f}", .{ output, datapack_writer.functionPath(try declarations.outputPath(compiler, namespace, name)) });
+    return try std.fmt.allocPrint(compiler.arena, "{s}:{f}", .{ output, datapack_writer.functionPath(try declarations.outputPath(compiler, namespace, name)) });
 }
 
 // The source names of the data files and mcfuns of a namespace.
-pub fn declaredNames(compiler: *Compiler, namespace: []const u8) Compiler.CompileError![]const []const u8 {
+fn declaredNames(compiler: *Compiler, namespace: []const u8) Compiler.CompileError![]const []const u8 {
     const key_prefix = try declarations.qualifiedKey(compiler, namespace, "");
     var names: std.ArrayList([]const u8) = .empty;
     for ([_][]const []const u8{ compiler.data_file_names.keys(), compiler.mcfuns.keys() }) |keys| {
         for (keys) |declared| {
-            if (std.mem.startsWith(u8, declared, key_prefix)) try names.append(compiler.gpa, declared[key_prefix.len..]);
+            if (std.mem.startsWith(u8, declared, key_prefix)) try names.append(compiler.arena, declared[key_prefix.len..]);
         }
     }
     return names.items;
 }
 
 // The source name whose file is `file_name`: `healPlayer` for `heal_player`.
-pub fn declarationWithFileName(compiler: *Compiler, namespace: []const u8, file_name: []const u8) Compiler.CompileError!?[]const u8 {
+fn declarationWithFileName(compiler: *Compiler, namespace: []const u8, file_name: []const u8) Compiler.CompileError!?[]const u8 {
     for (try declaredNames(compiler, namespace)) |declared| {
         const declared_file = compiler.data_file_names.get(try declarations.qualifiedKey(compiler, namespace, declared)) orelse
-            try std.fmt.allocPrint(compiler.gpa, "{f}", .{datapack_writer.functionPath(declared)});
+            try std.fmt.allocPrint(compiler.arena, "{f}", .{datapack_writer.functionPath(declared)});
         if (std.mem.eql(u8, declared_file, file_name)) return declared;
     }
     return null;
 }
 
-pub fn unknownIdMessage(compiler: *Compiler, written: []const u8, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
+fn unknownIdMessage(compiler: *Compiler, written: []const u8, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
     // `self:heal_player` is the file name of `healPlayer`: point to the name in the source.
     if (try declarationWithFileName(compiler, namespace, name)) |declared| {
-        return std.fmt.allocPrint(compiler.gpa, "'{s}:{s}' is a file name. Use the name from the source: '{s}:{s}'", .{ written, name, written, declared });
+        return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is a file name. Use the name from the source: '{s}:{s}'", .{ written, name, written, declared });
     }
     const names = try declaredNames(compiler, namespace);
-    return std.fmt.allocPrint(compiler.gpa, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, declarations.Suggestion{ .closest = CommandTree.closestId(names, name) } });
+    return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, declarations.Suggestion{ .closest = CommandTree.closestId(names, name) } });
 }
 
 test "a bare name from this pack is an error where it can only be a function or a data file" {

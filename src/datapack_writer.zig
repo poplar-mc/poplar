@@ -4,14 +4,14 @@ const ir = @import("ir.zig");
 
 pub fn writeDatapack(
     io: std.Io,
-    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     out_dir: std.Io.Dir,
     config: Config,
     program: ir.Program,
 ) !void {
     const min = config.min_format;
     const max = config.max_format;
-    const pack_mcmeta = try std.fmt.allocPrint(gpa,
+    const pack_mcmeta = try std.fmt.allocPrint(arena,
         \\{{
         \\    "pack": {{
         \\        "description": {s},
@@ -24,18 +24,18 @@ pub fn writeDatapack(
     try out_dir.writeFile(io, .{ .sub_path = "pack.mcmeta", .data = pack_mcmeta });
 
     for (program.functions) |function| {
-        try writeFunction(io, gpa, out_dir, config.namespace, function);
+        try writeFunction(io, arena, out_dir, config.namespace, function);
     }
 
     if (program.load) |load| {
-        try writeFunction(io, gpa, out_dir, config.namespace, load);
-        try writeFunctionTag(io, gpa, out_dir, "load", config.namespace, &.{load.name});
+        try writeFunction(io, arena, out_dir, config.namespace, load);
+        try writeFunctionTag(io, arena, out_dir, "load", config.namespace, &.{load.name});
     }
 
-    if (program.tick.len > 0) try writeFunctionTag(io, gpa, out_dir, "tick", config.namespace, program.tick);
+    if (program.tick.len > 0) try writeFunctionTag(io, arena, out_dir, "tick", config.namespace, program.tick);
 
     for (program.data_files) |data_file| {
-        const path = try std.fmt.allocPrint(gpa, "data/{s}/{s}/{s}.json", .{ data_file.namespace, data_file.folder, data_file.path });
+        const path = try std.fmt.allocPrint(arena, "data/{s}/{s}/{s}.json", .{ data_file.namespace, data_file.folder, data_file.path });
         try out_dir.createDirPath(io, std.fs.path.dirname(path).?);
         try out_dir.writeFile(io, .{ .sub_path = path, .data = data_file.json });
     }
@@ -44,7 +44,7 @@ pub fn writeDatapack(
 // Writes a `minecraft:<tag_name>` function tag with the functions in order.
 fn writeFunctionTag(
     io: std.Io,
-    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     out_dir: std.Io.Dir,
     comptime tag_name: []const u8,
     namespace: []const u8,
@@ -55,10 +55,10 @@ fn writeFunctionTag(
 
     var values: std.ArrayList(u8) = .empty;
     for (function_names, 0..) |name, index| {
-        if (index > 0) try values.appendSlice(gpa, ", ");
-        try values.print(gpa, "\"{f}\"", .{functionId(namespace, name)});
+        if (index > 0) try values.appendSlice(arena, ", ");
+        try values.print(arena, "\"{f}\"", .{functionId(namespace, name)});
     }
-    const tag = try std.fmt.allocPrint(gpa,
+    const tag = try std.fmt.allocPrint(arena,
         \\{{
         \\    "values": [{s}]
         \\}}
@@ -68,19 +68,19 @@ fn writeFunctionTag(
 }
 
 // Writes a zip of the pack folder with no compression, so `pack.mcmeta` is at the root of the zip.
-pub fn writeZip(io: std.Io, gpa: std.mem.Allocator, pack_dir: std.Io.Dir, out_dir: std.Io.Dir, zip_name: []const u8) !void {
+pub fn writeZip(io: std.Io, arena: std.mem.Allocator, pack_dir: std.Io.Dir, out_dir: std.Io.Dir, zip_name: []const u8) !void {
     var bytes: std.ArrayList(u8) = .empty;
     var central_directory: std.ArrayList(u8) = .empty;
     var file_count: u16 = 0;
 
-    var walker = try pack_dir.walk(gpa);
+    var walker = try pack_dir.walk(arena);
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
 
-        const name = try gpa.dupe(u8, entry.path);
+        const name = try arena.dupe(u8, entry.path);
         std.mem.replaceScalar(u8, name, '\\', '/');
-        const data = try entry.dir.readFileAlloc(io, entry.basename, gpa, .unlimited);
+        const data = try entry.dir.readFileAlloc(io, entry.basename, arena, .unlimited);
         const header: ZipEntryHeader = .{
             .crc = std.hash.Crc32.hash(data),
             .size = @intCast(data.len),
@@ -88,36 +88,36 @@ pub fn writeZip(io: std.Io, gpa: std.mem.Allocator, pack_dir: std.Io.Dir, out_di
         };
         const local_header_offset: u32 = @intCast(bytes.items.len);
 
-        try appendInt(&bytes, gpa, u32, 0x04034b50);
-        try header.append(&bytes, gpa);
-        try appendInt(&bytes, gpa, u16, 0); // extra field length
-        try bytes.appendSlice(gpa, name);
-        try bytes.appendSlice(gpa, data);
+        try appendInt(&bytes, arena, u32, 0x04034b50);
+        try header.append(&bytes, arena);
+        try appendInt(&bytes, arena, u16, 0); // extra field length
+        try bytes.appendSlice(arena, name);
+        try bytes.appendSlice(arena, data);
 
-        try appendInt(&central_directory, gpa, u32, 0x02014b50);
-        try appendInt(&central_directory, gpa, u16, zip_version);
-        try header.append(&central_directory, gpa);
-        try appendInt(&central_directory, gpa, u16, 0); // extra field length
-        try appendInt(&central_directory, gpa, u16, 0); // comment length
-        try appendInt(&central_directory, gpa, u16, 0); // disk number
-        try appendInt(&central_directory, gpa, u16, 0); // internal attributes
-        try appendInt(&central_directory, gpa, u32, 0); // external attributes
-        try appendInt(&central_directory, gpa, u32, local_header_offset);
-        try central_directory.appendSlice(gpa, name);
+        try appendInt(&central_directory, arena, u32, 0x02014b50);
+        try appendInt(&central_directory, arena, u16, zip_version);
+        try header.append(&central_directory, arena);
+        try appendInt(&central_directory, arena, u16, 0); // extra field length
+        try appendInt(&central_directory, arena, u16, 0); // comment length
+        try appendInt(&central_directory, arena, u16, 0); // disk number
+        try appendInt(&central_directory, arena, u16, 0); // internal attributes
+        try appendInt(&central_directory, arena, u32, 0); // external attributes
+        try appendInt(&central_directory, arena, u32, local_header_offset);
+        try central_directory.appendSlice(arena, name);
         file_count += 1;
     }
 
     const central_directory_offset: u32 = @intCast(bytes.items.len);
-    try bytes.appendSlice(gpa, central_directory.items);
+    try bytes.appendSlice(arena, central_directory.items);
 
-    try appendInt(&bytes, gpa, u32, 0x06054b50);
-    try appendInt(&bytes, gpa, u16, 0); // disk number
-    try appendInt(&bytes, gpa, u16, 0); // disk of the central directory
-    try appendInt(&bytes, gpa, u16, file_count);
-    try appendInt(&bytes, gpa, u16, file_count);
-    try appendInt(&bytes, gpa, u32, @intCast(central_directory.items.len));
-    try appendInt(&bytes, gpa, u32, central_directory_offset);
-    try appendInt(&bytes, gpa, u16, 0); // comment length
+    try appendInt(&bytes, arena, u32, 0x06054b50);
+    try appendInt(&bytes, arena, u16, 0); // disk number
+    try appendInt(&bytes, arena, u16, 0); // disk of the central directory
+    try appendInt(&bytes, arena, u16, file_count);
+    try appendInt(&bytes, arena, u16, file_count);
+    try appendInt(&bytes, arena, u32, @intCast(central_directory.items.len));
+    try appendInt(&bytes, arena, u32, central_directory_offset);
+    try appendInt(&bytes, arena, u16, 0); // comment length
 
     try out_dir.writeFile(io, .{ .sub_path = zip_name, .data = bytes.items });
 }
@@ -131,186 +131,186 @@ const ZipEntryHeader = struct {
     size: u32,
     name_length: u16,
 
-    fn append(header: ZipEntryHeader, bytes: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
-        try appendInt(bytes, gpa, u16, zip_version);
-        try appendInt(bytes, gpa, u16, 0); // flags
-        try appendInt(bytes, gpa, u16, 0); // method: stored
-        try appendInt(bytes, gpa, u16, 0); // time
-        try appendInt(bytes, gpa, u16, (1 << 5) | 1); // date: 1980-01-01
-        try appendInt(bytes, gpa, u32, header.crc);
-        try appendInt(bytes, gpa, u32, header.size); // compressed size
-        try appendInt(bytes, gpa, u32, header.size);
-        try appendInt(bytes, gpa, u16, header.name_length);
+    fn append(header: ZipEntryHeader, bytes: *std.ArrayList(u8), arena: std.mem.Allocator) !void {
+        try appendInt(bytes, arena, u16, zip_version);
+        try appendInt(bytes, arena, u16, 0); // flags
+        try appendInt(bytes, arena, u16, 0); // method: stored
+        try appendInt(bytes, arena, u16, 0); // time
+        try appendInt(bytes, arena, u16, (1 << 5) | 1); // date: 1980-01-01
+        try appendInt(bytes, arena, u32, header.crc);
+        try appendInt(bytes, arena, u32, header.size); // compressed size
+        try appendInt(bytes, arena, u32, header.size);
+        try appendInt(bytes, arena, u16, header.name_length);
     }
 };
 
-fn appendInt(bytes: *std.ArrayList(u8), gpa: std.mem.Allocator, comptime T: type, value: T) !void {
+fn appendInt(bytes: *std.ArrayList(u8), arena: std.mem.Allocator, comptime T: type, value: T) !void {
     var buffer: [@sizeOf(T)]u8 = undefined;
     std.mem.writeInt(T, &buffer, value, .little);
-    try bytes.appendSlice(gpa, &buffer);
+    try bytes.appendSlice(arena, &buffer);
 }
 
 fn writeFunction(
     io: std.Io,
-    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     out_dir: std.Io.Dir,
     namespace: []const u8,
     function: ir.McFunction,
 ) !void {
     const function_namespace, const function_path = splitFunctionName(namespace, function.name);
-    const path = try std.fmt.allocPrint(gpa, "data/{s}/function/{f}.mcfunction", .{ function_namespace, functionPath(function_path) });
+    const path = try std.fmt.allocPrint(arena, "data/{s}/function/{f}.mcfunction", .{ function_namespace, functionPath(function_path) });
     try out_dir.createDirPath(io, std.fs.path.dirname(path).?);
 
-    const text = try renderFunction(gpa, namespace, function);
+    const text = try renderFunction(arena, namespace, function);
     try out_dir.writeFile(io, .{ .sub_path = path, .data = text });
 }
 
-pub fn renderFunction(gpa: std.mem.Allocator, namespace: []const u8, function: ir.McFunction) ![]const u8 {
+pub fn renderFunction(arena: std.mem.Allocator, namespace: []const u8, function: ir.McFunction) ![]const u8 {
     var text: std.ArrayList(u8) = .empty;
 
     for (function.commands) |command| {
         var line: std.ArrayList(u8) = .empty;
-        try renderCommand(&line, gpa, namespace, command);
+        try renderCommand(&line, arena, namespace, command);
 
         // A line that uses a macro argument must start with `$`.
-        if (std.mem.indexOf(u8, line.items, "$(") != null) try text.append(gpa, '$');
-        try text.appendSlice(gpa, line.items);
-        try text.append(gpa, '\n');
+        if (std.mem.indexOf(u8, line.items, "$(") != null) try text.append(arena, '$');
+        try text.appendSlice(arena, line.items);
+        try text.append(arena, '\n');
     }
 
-    return text.toOwnedSlice(gpa);
+    return text.toOwnedSlice(arena);
 }
 
-pub fn renderCommand(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, command: ir.Command) !void {
+pub fn renderCommand(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespace: []const u8, command: ir.Command) std.mem.Allocator.Error!void {
     switch (command) {
-        .raw => |command_text| try text.appendSlice(gpa, command_text),
-        .function => |name| try text.print(gpa, "function {f}", .{functionId(namespace, name)}),
-        .add_objective => |objective| try text.print(gpa, "scoreboard objectives add {f} dummy", .{objectiveText(objective.namespace orelse namespace, objective.name)}),
-        .score_set => |set| try text.print(gpa, "scoreboard players set {f} {d}", .{ scoreText(namespace, set.score), set.value }),
+        .raw => |command_text| try text.appendSlice(arena, command_text),
+        .function => |name| try text.print(arena, "function {f}", .{functionId(namespace, name)}),
+        .add_objective => |objective| try text.print(arena, "scoreboard objectives add {f} dummy", .{objectiveText(objective.namespace orelse namespace, objective.name)}),
+        .score_set => |set| try text.print(arena, "scoreboard players set {f} {d}", .{ scoreText(namespace, set.score), set.value }),
         .score_set_if_unset => |set| {
             const score = scoreText(namespace, set.score);
-            try text.print(gpa, "execute unless score {f} matches -2147483648.. run scoreboard players set {f} {d}", .{ score, score, set.value });
+            try text.print(arena, "execute unless score {f} matches -2147483648.. run scoreboard players set {f} {d}", .{ score, score, set.value });
         },
-        .score_add => |add| try text.print(gpa, "scoreboard players add {f} {d}", .{ scoreText(namespace, add.score), add.value }),
-        .score_remove => |remove| try text.print(gpa, "scoreboard players remove {f} {d}", .{ scoreText(namespace, remove.score), remove.value }),
-        .score_operation => |operation| try text.print(gpa, "scoreboard players operation {f} {s} {f}", .{
+        .score_add => |add| try text.print(arena, "scoreboard players add {f} {d}", .{ scoreText(namespace, add.score), add.value }),
+        .score_remove => |remove| try text.print(arena, "scoreboard players remove {f} {d}", .{ scoreText(namespace, remove.score), remove.value }),
+        .score_operation => |operation| try text.print(arena, "scoreboard players operation {f} {s} {f}", .{
             scoreText(namespace, operation.target),
             operatorText(operation.op),
             scoreText(namespace, operation.source),
         }),
-        .score_set_macro_argument => |set| try text.print(gpa, "scoreboard players set {f} $({s})", .{ scoreText(namespace, set.score), set.macro_argument }),
-        .data_set => |data| try text.print(gpa, "data modify {f} set value {s}", .{ dataPathText(namespace, data.target), data.snbt }),
+        .score_set_macro_argument => |set| try text.print(arena, "scoreboard players set {f} $({s})", .{ scoreText(namespace, set.score), set.macro_argument }),
+        .data_set => |data| try text.print(arena, "data modify {f} set value {s}", .{ dataPathText(namespace, data.target), data.snbt }),
         .data_set_if_unset => |data| {
             const target = dataPathText(namespace, data.target);
-            try text.print(gpa, "execute unless data {f} run data modify {f} set value {s}", .{ target, target, data.snbt });
+            try text.print(arena, "execute unless data {f} run data modify {f} set value {s}", .{ target, target, data.snbt });
         },
         .data_add => |add| {
-            try text.print(gpa, "data modify {f} ", .{dataPathText(namespace, add.list)});
+            try text.print(arena, "data modify {f} ", .{dataPathText(namespace, add.list)});
             switch (add.position) {
-                .append => try text.appendSlice(gpa, "append"),
-                .prepend => try text.appendSlice(gpa, "prepend"),
-                .insert => |index| try text.print(gpa, "insert {d}", .{index}),
+                .append => try text.appendSlice(arena, "append"),
+                .prepend => try text.appendSlice(arena, "prepend"),
+                .insert => |index| try text.print(arena, "insert {d}", .{index}),
             }
             switch (add.source) {
-                .snbt => |snbt| try text.print(gpa, " value {s}", .{snbt}),
-                .from => |source| try text.print(gpa, " from {f}", .{dataPathText(namespace, source)}),
+                .snbt => |snbt| try text.print(arena, " value {s}", .{snbt}),
+                .from => |source| try text.print(arena, " from {f}", .{dataPathText(namespace, source)}),
             }
         },
-        .data_remove => |path| try text.print(gpa, "data remove {f}", .{dataPathText(namespace, path)}),
-        .data_copy => |copy| try text.print(gpa, "data modify {f} set from {f}", .{
+        .data_remove => |path| try text.print(arena, "data remove {f}", .{dataPathText(namespace, path)}),
+        .data_copy => |copy| try text.print(arena, "data modify {f} set from {f}", .{
             dataPathText(namespace, copy.target),
             dataPathText(namespace, copy.source),
         }),
         .data_set_string => |set| {
-            try text.print(gpa, "data modify {f} set string {f}", .{ dataPathText(namespace, set.target), dataPathText(namespace, set.source) });
-            if (set.start) |start| try text.print(gpa, " {d}", .{start});
-            if (set.end) |end| try text.print(gpa, " {d}", .{end});
+            try text.print(arena, "data modify {f} set string {f}", .{ dataPathText(namespace, set.target), dataPathText(namespace, set.source) });
+            if (set.start) |start| try text.print(arena, " {d}", .{start});
+            if (set.end) |end| try text.print(arena, " {d}", .{end});
         },
-        .score_to_data => |copy| try text.print(gpa, "execute store result {f} int 1 run scoreboard players get {f}", .{
+        .score_to_data => |copy| try text.print(arena, "execute store result {f} int 1 run scoreboard players get {f}", .{
             dataPathText(namespace, copy.target),
             scoreText(namespace, copy.score),
         }),
         .data_to_score => |copy| {
-            try text.print(gpa, "execute store result score {f} run data get {f}", .{
+            try text.print(arena, "execute store result score {f} run data get {f}", .{
                 scoreText(namespace, copy.score),
                 dataPathText(namespace, copy.source),
             });
-            if (copy.scale != 1) try text.print(gpa, " {d}", .{copy.scale});
+            if (copy.scale != 1) try text.print(arena, " {d}", .{copy.scale});
         },
         .function_with => |call| {
-            try text.print(gpa, "function {f}", .{functionId(namespace, call.name)});
+            try text.print(arena, "function {f}", .{functionId(namespace, call.name)});
             switch (call.arguments) {
-                .compound => |compound| try text.print(gpa, " {s}", .{compound}),
-                .data_storage => |storage| try text.print(gpa, " with storage {s}:{s}", .{ storage.namespace orelse namespace, if (storage.kind == .std) "std" else "data" }),
-                .args_storage => try text.print(gpa, " with storage {s}:poplar args", .{namespace}),
-                .macro_storage => try text.print(gpa, " with storage {s}:poplar macro", .{namespace}),
-                .data_path => |path| try text.print(gpa, " with {f}", .{dataPathText(namespace, path)}),
-                .raw => |raw_text| try text.print(gpa, " with {s}", .{raw_text}),
+                .compound => |compound| try text.print(arena, " {s}", .{compound}),
+                .data_storage => |storage| try text.print(arena, " with storage {s}:{s}", .{ storage.namespace orelse namespace, if (storage.kind == .std) "std" else "data" }),
+                .args_storage => try text.print(arena, " with storage {s}:poplar args", .{namespace}),
+                .macro_storage => try text.print(arena, " with storage {s}:poplar macro", .{namespace}),
+                .data_path => |path| try text.print(arena, " with {f}", .{dataPathText(namespace, path)}),
+                .raw => |raw_text| try text.print(arena, " with {s}", .{raw_text}),
             }
         },
-        .macro => |macro_text| try text.appendSlice(gpa, macro_text),
-        .frame_push => try text.print(gpa, "data modify storage {s}:poplar stack append value {{}}", .{namespace}),
-        .frame_pop => try text.print(gpa, "data remove storage {s}:poplar stack[-1]", .{namespace}),
-        .stack_clear => try text.print(gpa, "data modify storage {s}:poplar stack set value []", .{namespace}),
+        .macro => |macro_text| try text.appendSlice(arena, macro_text),
+        .frame_push => try text.print(arena, "data modify storage {s}:poplar stack append value {{}}", .{namespace}),
+        .frame_pop => try text.print(arena, "data remove storage {s}:poplar stack[-1]", .{namespace}),
+        .stack_clear => try text.print(arena, "data modify storage {s}:poplar stack set value []", .{namespace}),
         .execute => |execute| {
-            try text.appendSlice(gpa, "execute");
-            for (execute.checks) |check| try renderCheck(text, gpa, namespace, check);
-            try renderRun(text, gpa, namespace, execute.run.*);
+            try text.appendSlice(arena, "execute");
+            for (execute.checks) |check| try renderCheck(text, arena, namespace, check);
+            try renderRun(text, arena, namespace, execute.run.*);
         },
         .execute_raw => |execute| {
-            try text.print(gpa, "execute {s}", .{execute.subcommands});
-            try renderRun(text, gpa, namespace, execute.run.*);
+            try text.print(arena, "execute {s}", .{execute.subcommands});
+            try renderRun(text, arena, namespace, execute.run.*);
         },
         .return_run => |run| {
-            try text.appendSlice(gpa, "return run ");
-            try renderCommand(text, gpa, namespace, run.*);
+            try text.appendSlice(arena, "return run ");
+            try renderCommand(text, arena, namespace, run.*);
         },
-        .return_value => |value| try text.print(gpa, "return {d}", .{value}),
-        .return_macro_argument => |macro_argument| try text.print(gpa, "return $({s})", .{macro_argument}),
+        .return_value => |value| try text.print(arena, "return {d}", .{value}),
+        .return_macro_argument => |macro_argument| try text.print(arena, "return $({s})", .{macro_argument}),
         .store_result => |store| {
             switch (store.target) {
-                .score => |score| try text.print(gpa, "execute store result score {f} run ", .{scoreText(namespace, score)}),
-                .data => |path| try text.print(gpa, "execute store result {f} int 1 run ", .{dataPathText(namespace, path)}),
+                .score => |score| try text.print(arena, "execute store result score {f} run ", .{scoreText(namespace, score)}),
+                .data => |path| try text.print(arena, "execute store result {f} int 1 run ", .{dataPathText(namespace, path)}),
             }
-            try renderCommand(text, gpa, namespace, store.run.*);
+            try renderCommand(text, arena, namespace, store.run.*);
         },
-        .score_get => |score| try text.print(gpa, "scoreboard players get {f}", .{scoreText(namespace, score)}),
-        .data_get => |path| try text.print(gpa, "data get {f}", .{dataPathText(namespace, path)}),
+        .score_get => |score| try text.print(arena, "scoreboard players get {f}", .{scoreText(namespace, score)}),
+        .data_get => |path| try text.print(arena, "data get {f}", .{dataPathText(namespace, path)}),
     }
 }
 
 // `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become one.
-fn renderRun(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, run: ir.Command) std.mem.Allocator.Error!void {
+fn renderRun(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespace: []const u8, run: ir.Command) std.mem.Allocator.Error!void {
     const start = text.items.len;
-    try text.appendSlice(gpa, " run ");
-    try renderCommand(text, gpa, namespace, run);
+    try text.appendSlice(arena, " run ");
+    try renderCommand(text, arena, namespace, run);
 
     const nested = " run execute ";
-    if (std.mem.startsWith(u8, text.items[start..], nested)) try text.replaceRange(gpa, start, nested.len, " ");
+    if (std.mem.startsWith(u8, text.items[start..], nested)) try text.replaceRange(arena, start, nested.len, " ");
 }
 
-fn renderCheck(text: *std.ArrayList(u8), gpa: std.mem.Allocator, namespace: []const u8, check: ir.Check) !void {
-    try text.appendSlice(gpa, if (check.negated) " unless " else " if ");
+fn renderCheck(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespace: []const u8, check: ir.Check) std.mem.Allocator.Error!void {
+    try text.appendSlice(arena, if (check.negated) " unless " else " if ");
     switch (check.condition) {
-        .data_test => |path| return text.print(gpa, "data {f}", .{dataPathText(namespace, path)}),
-        .function_returns => |name| return text.print(gpa, "function {f}", .{functionId(namespace, name)}),
-        .raw => |raw| return text.appendSlice(gpa, raw),
+        .data_test => |path| return text.print(arena, "data {f}", .{dataPathText(namespace, path)}),
+        .function_returns => |name| return text.print(arena, "function {f}", .{functionId(namespace, name)}),
+        .raw => |raw| return text.appendSlice(arena, raw),
         else => {},
     }
-    try text.appendSlice(gpa, "score ");
+    try text.appendSlice(arena, "score ");
 
     switch (check.condition) {
         .matches => |matches| {
-            try text.print(gpa, "{f} matches ", .{scoreText(namespace, matches.score)});
+            try text.print(arena, "{f} matches ", .{scoreText(namespace, matches.score)});
             if (matches.min != null and matches.min == matches.max) {
-                try text.print(gpa, "{d}", .{matches.min.?});
+                try text.print(arena, "{d}", .{matches.min.?});
             } else {
-                if (matches.min) |min| try text.print(gpa, "{d}", .{min});
-                try text.appendSlice(gpa, "..");
-                if (matches.max) |max| try text.print(gpa, "{d}", .{max});
+                if (matches.min) |min| try text.print(arena, "{d}", .{min});
+                try text.appendSlice(arena, "..");
+                if (matches.max) |max| try text.print(arena, "{d}", .{max});
             }
         },
-        .compare => |compare| try text.print(gpa, "{f} {s} {f}", .{
+        .compare => |compare| try text.print(arena, "{f} {s} {f}", .{
             scoreText(namespace, compare.left),
             compareText(compare.op),
             scoreText(namespace, compare.right),

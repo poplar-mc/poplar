@@ -15,7 +15,7 @@ const values = @import("values.zig");
 
 // `combat:heal`: how declarations are keyed in the compiler.
 pub fn qualifiedKey(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
-    return std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ namespace, name });
+    return std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ namespace, name });
 }
 
 // Where the files of a namespace go. Null is the pack namespace, which std is written into.
@@ -27,14 +27,14 @@ pub fn outputNamespace(compiler: *const Compiler, namespace: []const u8) ?[]cons
 // The path of an mcfun in its output namespace: `heal`, and `std/clamp` for std, which shares the pack namespace.
 pub fn outputPath(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
     if (!std.mem.eql(u8, namespace, Compiler.std_namespace)) return name;
-    return std.fmt.allocPrint(compiler.gpa, "std/{s}", .{name});
+    return std.fmt.allocPrint(compiler.arena, "std/{s}", .{name});
 }
 
 // The IR name of an mcfun: `combat:heal`, `heal` in the pack namespace, `std/clamp` for std.
 pub fn functionName(compiler: *Compiler, namespace: []const u8, name: []const u8) Compiler.CompileError![]const u8 {
     const path = try outputPath(compiler, namespace, name);
     const output = outputNamespace(compiler, namespace) orelse return path;
-    return std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ output, path });
+    return std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ output, path });
 }
 
 // The namespace that a name refers to: its own `magic:`, which the file must import, or the current one.
@@ -62,56 +62,53 @@ pub fn isValidNamespace(name: []const u8) bool {
 
 pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!void {
     const folder = data_folders.folders.get(data_file.type_word) orelse
-        try data_folders.tagFolder(compiler.gpa, data_file.type_word, &compiler.command_tree.registries.map) orelse
+        try data_folders.tagFolder(compiler.arena, data_file.type_word, &compiler.command_tree.registries.map) orelse
         return compiler.addError("unknown data file type '{s}'{f}", .{ data_file.type_word, Suggestion{ .closest = CommandTree.closestId(data_folders.folders.keys(), data_file.type_word) } });
 
-    var namespace = compiler.scope.output_namespace orelse compiler.pack_namespace;
-    var file_path: []const u8 = undefined;
-    switch (data_file.name) {
-        .identifier => |name| {
-            file_path = try std.fmt.allocPrint(compiler.gpa, "{f}", .{datapack_writer.functionPath(name)});
-            if (!Config.isValidResourceName(file_path)) {
+    const own_namespace = compiler.scope.output_namespace orelse compiler.pack_namespace;
+    const namespace: []const u8, const file_path: []const u8 = switch (data_file.name) {
+        .identifier => |name| blk: {
+            const path = try std.fmt.allocPrint(compiler.arena, "{f}", .{datapack_writer.functionPath(name)});
+            if (!Config.isValidResourceName(path)) {
                 return compiler.addError("data file name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{name});
             }
+            break :blk .{ own_namespace, path };
         },
-        .id => |id| {
-            if (std.mem.indexOfScalar(u8, id, ':')) |colon| {
-                namespace = id[0..colon];
-                file_path = id[colon + 1 ..];
-            } else {
-                file_path = id;
-            }
-            var segments = std.mem.splitScalar(u8, file_path, '/');
+        .id => |id| blk: {
+            const colon = std.mem.indexOfScalar(u8, id, ':');
+            const id_namespace = if (colon) |index| id[0..index] else own_namespace;
+            const path = if (colon) |index| id[index + 1 ..] else id;
+            var segments = std.mem.splitScalar(u8, path, '/');
             const is_valid = while (segments.next()) |segment| {
                 if (!Config.isValidResourceName(segment)) break false;
-            } else Config.isValidResourceName(namespace);
+            } else Config.isValidResourceName(id_namespace);
             if (!is_valid) return compiler.addError("data file id '{s}' must only use a-z, 0-9, '_', '.', '-' and '/', with one ':' after the namespace", .{id});
+            break :blk .{ id_namespace, path };
         },
-    }
+    };
 
     const is_hook_tag = std.mem.eql(u8, folder, "tags/function") and std.mem.eql(u8, namespace, "minecraft") and
         (std.mem.eql(u8, file_path, "load") or std.mem.eql(u8, file_path, "tick"));
     if (is_hook_tag) return compiler.addError("Poplar writes the minecraft:{s} function tag. Use 'mcfun {s}'", .{ file_path, file_path });
 
-    const full_path = try std.fmt.allocPrint(compiler.gpa, "data/{s}/{s}/{s}.json", .{ namespace, folder, file_path });
-    const location = try std.fmt.allocPrint(compiler.gpa, "{s}:{d}", .{ compiler.position.path, data_file.line });
-    const path_entry = try compiler.data_file_paths.getOrPut(compiler.gpa, full_path);
+    const full_path = try std.fmt.allocPrint(compiler.arena, "data/{s}/{s}/{s}.json", .{ namespace, folder, file_path });
+    const location = try std.fmt.allocPrint(compiler.arena, "{s}:{d}", .{ compiler.position.path, data_file.line });
+    const path_entry = try compiler.data_file_paths.getOrPut(compiler.arena, full_path);
     if (path_entry.found_existing) return compiler.addError("{s} '{s}:{s}' is already declared at {s}", .{ data_file.type_word, namespace, file_path, path_entry.value_ptr.* });
     path_entry.value_ptr.* = location;
 
     // A data file in the namespace of its file can be named in Minecraft text: `self:isSitting`.
-    const is_own = std.mem.eql(u8, namespace, compiler.scope.output_namespace orelse compiler.pack_namespace);
-    if (is_own) {
+    if (std.mem.eql(u8, namespace, own_namespace)) {
         const name = switch (data_file.name) {
             .identifier => |identifier| identifier,
             .id => file_path,
         };
-        try compiler.data_file_names.put(compiler.gpa, try qualifiedKey(compiler, compiler.scope.namespace, name), file_path);
+        try compiler.data_file_names.put(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, name), file_path);
     }
 
     if (data_file.name == .identifier) {
-        const id = try std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ namespace, file_path });
-        const entry = try compiler.named_data_files.getOrPut(compiler.gpa, try qualifiedKey(compiler, compiler.scope.namespace, data_file.name.identifier));
+        const id = try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ namespace, file_path });
+        const entry = try compiler.named_data_files.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, data_file.name.identifier));
         if (entry.found_existing) return compiler.addError("'{s}' is already the name of another data file", .{data_file.name.identifier});
         entry.value_ptr.* = .{ .type_word = data_file.type_word, .id = id, .path = compiler.position.path, .line = data_file.line };
     }
@@ -122,19 +119,19 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
         return compiler.addError("invalid JSON in {s} '{s}'", .{ data_file.type_word, file_path });
     }
 
-    try compiler.data_files.append(compiler.gpa, .{
+    try compiler.data_files.append(compiler.arena, .{
         .namespace = namespace,
         .folder = folder,
         .path = file_path,
-        .json = try std.fmt.allocPrint(compiler.gpa, "{s}\n", .{data_file.json}),
+        .json = try std.fmt.allocPrint(compiler.arena, "{s}\n", .{data_file.json}),
     });
 }
 
 pub const JsonPosition = struct { line: usize, column: usize };
 
 // Where the JSON body stops being valid, as a line and column in the source file.
-pub fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?JsonPosition {
-    var scanner: std.json.Scanner = .initCompleteInput(compiler.gpa, data_file.json);
+fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?JsonPosition {
+    var scanner: std.json.Scanner = .initCompleteInput(compiler.arena, data_file.json);
     defer scanner.deinit();
     var diagnostics: std.json.Diagnostics = .{};
     scanner.enableDiagnostics(&diagnostics);
@@ -188,7 +185,7 @@ pub fn addGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!v
     const value = try values.evaluate(compiler, decl.value, &env) orelse return;
     const initial_value = try scores.toScoreValue(compiler, value) orelse return;
 
-    const entry = try compiler.globals.getOrPut(compiler.gpa, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
+    const entry = try compiler.globals.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
         return compiler.addError("score '#{s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.line });
@@ -203,7 +200,7 @@ pub fn addGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!v
     };
 }
 
-pub fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!void {
+fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!void {
     if (Compiler.pathRoot(decl.target.name).len != decl.target.name.len) {
         return compiler.addError("'var' declares a whole variable. Set '${s}' in an mcfun", .{decl.target.name});
     }
@@ -212,7 +209,7 @@ pub fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileErr
     if (value == .null) return compiler.addError("a data variable cannot start as null", .{});
     const initial_snbt = try values.valueToSnbt(compiler, value);
 
-    const entry = try compiler.data_globals.getOrPut(compiler.gpa, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
+    const entry = try compiler.data_globals.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
         return compiler.addError("data '${s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.line });
@@ -249,7 +246,7 @@ pub fn findMcfun(compiler: *Compiler, identifier: ast.Identifier) Compiler.Compi
 pub fn outputNamespaces(compiler: *Compiler) Compiler.CompileError![]const []const u8 {
     var namespaces: std.StringArrayHashMapUnmanaged(void) = .empty;
     for (compiler.mcfuns.values()) |declaration| {
-        if (outputNamespace(compiler, declaration.namespace)) |namespace| try namespaces.put(compiler.gpa, namespace, {});
+        if (outputNamespace(compiler, declaration.namespace)) |namespace| try namespaces.put(compiler.arena, namespace, {});
     }
     return namespaces.keys();
 }

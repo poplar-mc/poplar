@@ -27,7 +27,6 @@ pub const Command = union(enum) {
     raw: []const u8,
     // The Writer adds the namespace to this mcfun name.
     function: []const u8,
-    // Null is Poplar's objective `poplar.<ns>`.
     add_objective: Objective,
     score_set: ScoreValue,
     score_set_macro_argument: ScoreMacroArgument,
@@ -73,10 +72,10 @@ pub const StoreResult = struct {
     run: *const Command,
 };
 
-// `data` is the `<ns>:data` storage of `#` variables, where a key is a variable name.
+// `data` is the `<ns>:data` storage of `$` variables, where a key is a variable name.
 // `args` is `<ns>:poplar args`, the `with` compound of the mcfun that is called next.
 // `frame` is the top frame of `<ns>:poplar stack`, where a key is the name of a saved temp.
-// `macro` is `<ns>:poplar macro`: the macro arguments and `#` keys for one macro helper. An empty key is the whole compound.
+// `macro` is `<ns>:poplar macro`: the macro arguments and the inserted values for one macro helper. An empty key is the whole compound.
 // `poplar` is the root of `<ns>:poplar`, where the string helpers keep their scratch value.
 // `std` is `<pack>:std`, the `$` variables of the standard library, apart from the pack's own `<pack>:data`.
 pub const Storage = enum { data, args, frame, macro, poplar, std };
@@ -154,12 +153,12 @@ pub const ScoreMacroArgument = struct {
     macro_argument: []const u8,
 };
 
-// Calls an mcfun with macro arguments.
 pub const DataStorage = struct {
     kind: Storage = .data,
     namespace: ?[]const u8 = null,
 };
 
+// Calls an mcfun with macro arguments.
 pub const FunctionWith = struct {
     pub const Arguments = union(enum) {
         compound: []const u8,
@@ -177,13 +176,13 @@ pub const FunctionWith = struct {
     arguments: Arguments,
 };
 
-// A holder is a fake player (`$hp`, `#poplar.t0`) or a selector (`@s`).
-// A null objective is Poplar's objective `poplar.<ns>`. Otherwise it is `<ns>.<objective>`.
+// A null name is Poplar's objective `poplar.<ns>`. Otherwise it is `<ns>.<name>`.
 pub const Objective = struct {
     namespace: ?[]const u8 = null,
     name: ?[]const u8 = null,
 };
 
+// A holder is a fake player (`#hp`, `#poplar.t0`) or a selector (`@s`).
 pub const Score = struct {
     holder: []const u8,
     objective: ?[]const u8 = null,
@@ -265,8 +264,8 @@ pub fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 // The generated functions of an mcfun go in `poplar/<folder>/`, and its temps are `#poplar.<folder>.t<n>`. The folder
 // is the mcfun's path with `.` for `/` (`std/clamp` → `std.clamp`), because it is also in data keys, which cannot have `/`.
-pub fn generatedFolder(gpa: std.mem.Allocator, mcfun_path: []const u8) std.mem.Allocator.Error![]const u8 {
-    const folder = try gpa.dupe(u8, mcfun_path);
+pub fn generatedFolder(arena: std.mem.Allocator, mcfun_path: []const u8) std.mem.Allocator.Error![]const u8 {
+    const folder = try arena.dupe(u8, mcfun_path);
     std.mem.replaceScalar(u8, folder, '/', '.');
     return folder;
 }

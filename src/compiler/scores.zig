@@ -4,7 +4,6 @@ const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
 const Environment = @import("../Environment.zig");
 const ir = @import("../ir.zig");
-const Token = @import("../Token.zig");
 const datapack_writer = @import("../datapack_writer.zig");
 const calls = @import("calls.zig");
 const data = @import("data.zig");
@@ -24,10 +23,10 @@ pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expre
 }
 
 // `#n = 3 + #n` is the same as `#n = #n + 3`, which is computed in `#n` with no temp.
-pub fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) Compiler.CompileError!?*const ast.Expression {
+fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) Compiler.CompileError!?*const ast.Expression {
     if (expression.kind != .infix) return null;
     const infix = expression.kind.infix;
-    if (infix.op != .plus and infix.op != .star) return null;
+    if (infix.op != .add and infix.op != .multiply) return null;
     if (infix.right.kind != .identifier or !referencesScore(infix.right, target) or referencesScore(infix.left, target)) return null;
     return try compiler.createExpression(.{ .line = expression.line, .column = expression.column, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
 }
@@ -38,15 +37,15 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
     if (!values.containsRuntimeValue(compiler, expression, env)) {
         const value = try values.evaluate(compiler, expression, env) orelse return;
         const number = try toScoreValue(compiler, value) orelse return;
-        return commands.append(compiler.gpa, .{ .score_set = .{ .score = target, .value = number } });
+        return commands.append(compiler.arena, .{ .score_set = .{ .score = target, .value = number } });
     }
 
     switch (expression.kind) {
-        .macro_key => |name| return commands.append(compiler.gpa, .{ .score_set_macro_argument = .{ .score = target, .macro_argument = name } }),
+        .macro_key => |name| return commands.append(compiler.arena, .{ .score_set_macro_argument = .{ .score = target, .macro_argument = name } }),
         .identifier => |identifier| {
             if (identifier.kind == .data or identifier.kind == .entity_data) {
                 const source = try data.dataPathOf(compiler, identifier, env) orelse return;
-                return commands.append(compiler.gpa, .{ .data_to_score = .{ .source = source, .score = target } });
+                return commands.append(compiler.arena, .{ .data_to_score = .{ .source = source, .score = target } });
             }
 
             const source = try resolveScore(compiler, identifier, env) orelse return;
@@ -55,15 +54,15 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
             try appendOperation(compiler, commands, target, .assign, source);
         },
         .prefix => |prefix| {
-            if (prefix.op != .minus) {
-                return compiler.addError("operator '{s}' cannot be used with scores", .{values.operatorText(prefix.op)});
+            if (prefix.op != .negate) {
+                return compiler.addError("operator '{s}' cannot be used with scores", .{values.prefixOperatorText(prefix.op)});
             }
             try compileInto(compiler, target, prefix.operand, env, commands);
             try appendOperation(compiler, commands, target, .mul, try constantScore(compiler, -1));
         },
         .infix => |infix| {
             const op = scoreOperator(infix.op) orelse {
-                return compiler.addError("operator '{s}' on scores needs 'if' (not supported yet)", .{values.operatorText(infix.op)});
+                return compiler.addError("operator '{s}' on scores needs 'if' (not supported yet)", .{values.infixOperatorText(infix.op)});
             };
             try compileInto(compiler, target, infix.left, env, commands);
             try applyOperand(compiler, target, op, infix.right, env, commands);
@@ -80,14 +79,14 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
             compiler.temp_count = live_count;
             const store: ir.Command = .{ .store_result = .{ .target = .{ .score = target }, .run = try compiler.createCommand(run) } };
 
-            if (!try calls.canReach(compiler, found.key, compiler.mcfun.key)) return commands.append(compiler.gpa, store);
+            if (!try calls.canReach(compiler, found.key, compiler.mcfun.key)) return commands.append(compiler.arena, store);
             try calls.appendWithSavedValues(compiler, store, target, live_count, commands);
         },
         else => try compiler.addError("this expression cannot be used with scores", .{}),
     }
 }
 
-pub fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
+fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     const outer_position = compiler.enterExpression(operand);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, operand, env)) {
@@ -97,7 +96,7 @@ pub fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, oper
         if ((op == .add or op == .sub) and number != std.math.minInt(i32)) {
             const score_value: ir.ScoreValue = .{ .score = target, .value = if (number < 0) -number else number };
             const is_add = (op == .add) == (number >= 0);
-            return commands.append(compiler.gpa, if (is_add) .{ .score_add = score_value } else .{ .score_remove = score_value });
+            return commands.append(compiler.arena, if (is_add) .{ .score_add = score_value } else .{ .score_remove = score_value });
         }
 
         if ((op == .div or op == .mod) and number == 0) return compiler.addError("division by zero", .{});
@@ -115,8 +114,8 @@ pub fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, oper
     try appendOperation(compiler, commands, target, op, temp);
 }
 
-pub fn appendOperation(compiler: *Compiler, commands: *std.ArrayList(ir.Command), target: ir.Score, op: ir.Operator, source: ir.Score) Compiler.CompileError!void {
-    try commands.append(compiler.gpa, .{ .score_operation = .{ .target = target, .op = op, .source = source } });
+fn appendOperation(compiler: *Compiler, commands: *std.ArrayList(ir.Command), target: ir.Score, op: ir.Operator, source: ir.Score) Compiler.CompileError!void {
+    try commands.append(compiler.arena, .{ .score_operation = .{ .target = target, .op = op, .source = source } });
 }
 
 // Resolves a score that is read. An entity score must name one entity.
@@ -146,7 +145,7 @@ pub fn resolveScore(compiler: *Compiler, identifier: ast.Identifier, env: *const
 
 pub fn checkSingleEntity(compiler: *Compiler, identifier: ast.Identifier) Compiler.CompileError!bool {
     const selector = identifier.selector orelse return true;
-    if (try compiler.command_tree.checkSelector(compiler.gpa, selector)) |failure| {
+    if (try compiler.command_tree.checkSelector(compiler.arena, selector)) |failure| {
         try compiler.addError("{s}", .{failure.message});
         return false;
     }
@@ -157,7 +156,7 @@ pub fn checkSingleEntity(compiler: *Compiler, identifier: ast.Identifier) Compil
     return false;
 }
 
-pub fn isSingleEntitySelector(selector: []const u8) bool {
+fn isSingleEntitySelector(selector: []const u8) bool {
     if (std.mem.indexOfScalar(u8, "sprn", selector[1]) != null) return true;
 
     const limit_start = std.mem.indexOf(u8, selector, "limit=1") orelse return false;
@@ -191,8 +190,8 @@ pub fn globalScore(global: Compiler.GlobalScore) ir.Score {
 }
 
 pub fn constantScore(compiler: *Compiler, value: i32) Compiler.CompileError!ir.Score {
-    try compiler.constants.put(compiler.gpa, value, {});
-    return .{ .holder = try std.fmt.allocPrint(compiler.gpa, "#poplar.c{d}", .{value}) };
+    try compiler.constants.put(compiler.arena, value, {});
+    return .{ .holder = try std.fmt.allocPrint(compiler.arena, "#poplar.c{d}", .{value}) };
 }
 
 pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
@@ -202,21 +201,21 @@ pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
 
 // Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.
 pub fn tempScore(compiler: *Compiler, index: usize) Compiler.CompileError!ir.Score {
-    return .{ .holder = try std.fmt.allocPrint(compiler.gpa, "#poplar.{s}.t{d}", .{ compiler.mcfun.folder, index }), .namespace = compiler.scope.output_namespace };
+    return .{ .holder = try std.fmt.allocPrint(compiler.arena, "#poplar.{s}.t{d}", .{ compiler.mcfun.folder, index }), .namespace = compiler.scope.output_namespace };
 }
 
-pub fn scoreOperator(op: Token.Tag) ?ir.Operator {
+fn scoreOperator(op: ast.Infix.Operator) ?ir.Operator {
     return switch (op) {
-        .plus => .add,
-        .minus => .sub,
-        .star => .mul,
-        .slash => .div,
-        .percent => .mod,
+        .add => .add,
+        .subtract => .sub,
+        .multiply => .mul,
+        .divide => .div,
+        .modulo => .mod,
         else => null,
     };
 }
 
-pub fn referencesScore(expression: *const ast.Expression, target: ast.Identifier) bool {
+fn referencesScore(expression: *const ast.Expression, target: ast.Identifier) bool {
     return switch (expression.kind) {
         .identifier => |identifier| identifier.kind == .score and
             std.mem.eql(u8, identifier.name, target.name) and
@@ -229,7 +228,7 @@ pub fn referencesScore(expression: *const ast.Expression, target: ast.Identifier
 
 // The target can only be computed in place if it is read before it is first written,
 // which is true when it appears only as the leftmost operand.
-pub fn isSafeInPlace(expression: *const ast.Expression, target: ast.Identifier) bool {
+fn isSafeInPlace(expression: *const ast.Expression, target: ast.Identifier) bool {
     return switch (expression.kind) {
         .infix => |infix| isSafeInPlace(infix.left, target) and !referencesScore(infix.right, target),
         .prefix => |prefix| isSafeInPlace(prefix.operand, target),

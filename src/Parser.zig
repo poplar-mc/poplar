@@ -25,7 +25,7 @@ const Precedence = enum {
     call,
 };
 
-gpa: std.mem.Allocator,
+arena: std.mem.Allocator,
 lexer: Lexer,
 current: Token = undefined,
 peek: Token = undefined,
@@ -33,16 +33,11 @@ errors: std.ArrayList(Error) = .empty,
 // What the end of the input is called in a message. An insert has its own.
 end_of_input: []const u8 = "end of file",
 
-pub fn init(gpa: std.mem.Allocator, lexer: Lexer) ParseError!Parser {
-    var p = Parser{
-        .gpa = gpa,
-        .lexer = lexer,
-    };
-
-    try p.nextToken();
-    try p.nextToken();
-
-    return p;
+pub fn init(arena: std.mem.Allocator, lexer: Lexer) ParseError!Parser {
+    var parser: Parser = .{ .arena = arena, .lexer = lexer };
+    try parser.nextToken();
+    try parser.nextToken();
+    return parser;
 }
 
 pub fn parseProgram(self: *Parser) ParseError!ast.Program {
@@ -62,7 +57,7 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
             try self.skipToDeclaration();
         } else if (self.currentIs(.import)) {
             if (try self.parseImport()) |import| {
-                try imports.append(self.gpa, import);
+                try imports.append(self.arena, import);
             } else {
                 try self.skipToDeclaration();
             }
@@ -70,18 +65,18 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
             const line = self.current.line;
             const column = self.current.column;
             if (try self.parseVarStatement()) |kind| {
-                try globals.append(self.gpa, .{ .decl = kind.var_decl, .line = line, .column = column });
+                try globals.append(self.arena, .{ .decl = kind.var_decl, .line = line, .column = column });
             } else {
                 try self.skipToDeclaration();
             }
         } else if (self.currentIs(.identifier)) {
             if (try self.parseDataFile()) |data_file| {
-                try data_files.append(self.gpa, data_file);
+                try data_files.append(self.arena, data_file);
             } else {
                 try self.skipToDeclaration();
             }
         } else if (try self.parseMcfun()) |mcfun| {
-            try mcfuns.append(self.gpa, mcfun);
+            try mcfuns.append(self.arena, mcfun);
         } else {
             try self.skipToDeclaration();
         }
@@ -90,10 +85,10 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
 
     return .{
         .namespace = namespace,
-        .imports = try imports.toOwnedSlice(self.gpa),
-        .mcfuns = try mcfuns.toOwnedSlice(self.gpa),
-        .globals = try globals.toOwnedSlice(self.gpa),
-        .data_files = try data_files.toOwnedSlice(self.gpa),
+        .imports = try imports.toOwnedSlice(self.arena),
+        .mcfuns = try mcfuns.toOwnedSlice(self.arena),
+        .globals = try globals.toOwnedSlice(self.arena),
+        .data_files = try data_files.toOwnedSlice(self.arena),
     };
 }
 
@@ -124,11 +119,11 @@ fn parseNamespaceStatement(self: *Parser) ParseError!?ast.NamespaceName {
 // `bs.math`: identifiers joined by `.`, starting at the current token.
 fn parseNamespaceName(self: *Parser) ParseError!?[]const u8 {
     var name: std.ArrayList(u8) = .empty;
-    try name.appendSlice(self.gpa, self.current.literal);
+    try name.appendSlice(self.arena, self.current.literal);
     while (self.peekIs(.dot)) {
         try self.nextToken();
         if (!try self.expectPeek(.identifier)) return null;
-        try name.print(self.gpa, ".{s}", .{self.current.literal});
+        try name.print(self.arena, ".{s}", .{self.current.literal});
     }
     return name.items;
 }
@@ -209,14 +204,14 @@ fn parseBlock(self: *Parser) ParseError!?[]const ast.Statement {
         }
 
         if (try self.parseStatement()) |statement| {
-            try statements.append(self.gpa, statement);
+            try statements.append(self.arena, statement);
         } else {
             try self.skipStatement();
         }
         try self.nextToken();
     }
 
-    return try statements.toOwnedSlice(self.gpa);
+    return try statements.toOwnedSlice(self.arena);
 }
 
 // Skips the rest of a broken statement, so one mistake gives one error.
@@ -312,21 +307,21 @@ fn parseCommandParts(self: *Parser, text: []const u8, text_column: usize) ParseE
             return null;
         };
 
-        if (open > pos) try parts.append(self.gpa, .{ .offset = pos, .content = .{ .text = text[pos..open] } });
+        if (open > pos) try parts.append(self.arena, .{ .offset = pos, .content = .{ .text = text[pos..open] } });
         const expression = try self.parseInsert(text[open + 2 .. close], text_column + open + 2) orelse return null;
-        try parts.append(self.gpa, .{ .offset = open, .content = .{ .insert = expression } });
+        try parts.append(self.arena, .{ .offset = open, .content = .{ .insert = expression } });
         pos = close + 2;
     }
 
-    if (pos < text.len) try parts.append(self.gpa, .{ .offset = pos, .content = .{ .text = text[pos..] } });
-    return try parts.toOwnedSlice(self.gpa);
+    if (pos < text.len) try parts.append(self.arena, .{ .offset = pos, .content = .{ .text = text[pos..] } });
+    return try parts.toOwnedSlice(self.arena);
 }
 
 fn parseInsert(self: *Parser, source: []const u8, column: usize) ParseError!?*ast.Expression {
     var lexer = Lexer.init(source);
     lexer.line = self.current.line;
     lexer.first_line_column = column - 1;
-    var insert_parser = try Parser.init(self.gpa, lexer);
+    var insert_parser = try Parser.init(self.arena, lexer);
     insert_parser.end_of_input = "the end of '{{...}}'";
     const expression = try insert_parser.parseExpression(.lowest);
 
@@ -410,7 +405,7 @@ fn parseIfStatement(self: *Parser) ParseError!?ast.Statement.Kind {
         if (self.peekIs(.@"if")) {
             try self.nextToken();
             const else_if = try self.parseStatement() orelse return null;
-            else_body = try self.gpa.dupe(ast.Statement, &.{else_if});
+            else_body = try self.arena.dupe(ast.Statement, &.{else_if});
         } else {
             if (!try self.expectPeek(.left_brace)) return null;
             else_body = try self.parseBlock() orelse return null;
@@ -504,7 +499,7 @@ fn parsePrefix(self: *Parser) ParseError!?*ast.Expression {
         .false => .{ .boolean = false },
         .null => .null,
         .bang, .minus => blk: {
-            const op = self.current.tag;
+            const op: ast.Prefix.Operator = if (self.currentIs(.minus)) .negate else .not;
             try self.nextToken();
             const operand = try self.parseExpression(.prefix) orelse return null;
             break :blk .{ .prefix = .{ .op = op, .operand = operand } };
@@ -558,7 +553,7 @@ fn decodeString(self: *Parser, literal: []const u8) ParseError!?[]const u8 {
     var index: usize = 0;
     while (index < literal.len) : (index += 1) {
         if (literal[index] != '\\') {
-            try decoded.append(self.gpa, literal[index]);
+            try decoded.append(self.arena, literal[index]);
             continue;
         }
 
@@ -568,9 +563,9 @@ fn decodeString(self: *Parser, literal: []const u8) ParseError!?[]const u8 {
             try self.addError("unknown escape '\\{c}' in string. Only \\\" and \\\\ are allowed", .{escaped});
             return null;
         }
-        try decoded.append(self.gpa, escaped);
+        try decoded.append(self.arena, escaped);
     }
-    return try decoded.toOwnedSlice(self.gpa);
+    return try decoded.toOwnedSlice(self.arena);
 }
 
 fn parseGroupedExpression(self: *Parser) ParseError!?*ast.Expression {
@@ -585,7 +580,7 @@ fn parseGroupedExpression(self: *Parser) ParseError!?*ast.Expression {
 fn parseInfix(self: *Parser, left: *ast.Expression) ParseError!?*ast.Expression {
     if (self.currentIs(.left_paren)) return self.parseCallExpression(left);
 
-    const op = self.current.tag;
+    const op = infixOperator(self.current.tag);
     const precedence = self.currentPrecedence();
     try self.nextToken();
 
@@ -599,12 +594,12 @@ fn parseListLiteral(self: *Parser) ParseError!?[]const *ast.Expression {
     var elements: std.ArrayList(*ast.Expression) = .empty;
     while (!self.peekIs(.right_bracket)) {
         try self.nextToken();
-        try elements.append(self.gpa, try self.parseExpression(.lowest) orelse return null);
+        try elements.append(self.arena, try self.parseExpression(.lowest) orelse return null);
         if (!self.peekIs(.comma)) break;
         try self.nextToken();
     }
     if (!try self.expectPeek(.right_bracket)) return null;
-    return try elements.toOwnedSlice(self.gpa);
+    return try elements.toOwnedSlice(self.arena);
 }
 
 // `{hp: 20, "custom name": "x"}`
@@ -622,12 +617,12 @@ fn parseCompoundLiteral(self: *Parser) ParseError!?[]const ast.Entry {
         };
         if (!try self.expectPeek(.colon)) return null;
         try self.nextToken();
-        try entries.append(self.gpa, .{ .key = key, .value = try self.parseExpression(.lowest) orelse return null });
+        try entries.append(self.arena, .{ .key = key, .value = try self.parseExpression(.lowest) orelse return null });
         if (!self.peekIs(.comma)) break;
         try self.nextToken();
     }
     if (!try self.expectPeek(.right_brace)) return null;
-    return try entries.toOwnedSlice(self.gpa);
+    return try entries.toOwnedSlice(self.arena);
 }
 
 fn parseCallExpression(self: *Parser, callee: *ast.Expression) ParseError!?*ast.Expression {
@@ -637,12 +632,12 @@ fn parseCallExpression(self: *Parser, callee: *ast.Expression) ParseError!?*ast.
         try self.nextToken();
     } else {
         try self.nextToken();
-        try args.append(self.gpa, try self.parseExpression(.lowest) orelse return null);
+        try args.append(self.arena, try self.parseExpression(.lowest) orelse return null);
 
         while (self.peekIs(.comma)) {
             try self.nextToken();
             try self.nextToken();
-            try args.append(self.gpa, try self.parseExpression(.lowest) orelse return null);
+            try args.append(self.arena, try self.parseExpression(.lowest) orelse return null);
         }
 
         if (!try self.expectPeek(.right_paren)) return null;
@@ -660,15 +655,15 @@ fn parseCallExpression(self: *Parser, callee: *ast.Expression) ParseError!?*ast.
 
     return try self.createExpression(callee.line, callee.column, .{ .call = .{
         .callee = callee,
-        .args = try args.toOwnedSlice(self.gpa),
+        .args = try args.toOwnedSlice(self.arena),
         .with = with,
     } });
 }
 
 fn createExpression(self: *Parser, line: usize, column: usize, kind: ast.Expression.Kind) ParseError!*ast.Expression {
-    const ptr = try self.gpa.create(ast.Expression);
-    ptr.* = .{ .line = line, .column = column, .kind = kind };
-    return ptr;
+    const expression = try self.arena.create(ast.Expression);
+    expression.* = .{ .line = line, .column = column, .kind = kind };
+    return expression;
 }
 
 // Illegal and unclosed tokens are reported here and skipped, so they do not cause more errors later.
@@ -679,11 +674,11 @@ fn nextToken(self: *Parser) ParseError!void {
     while (self.peek.tag == .illegal or self.peek.tag == .unclosed) {
         const literal = self.peek.literal;
         const message = if (self.peek.tag == .illegal)
-            try std.fmt.allocPrint(self.gpa, "unexpected character '{s}'", .{literal})
+            try std.fmt.allocPrint(self.arena, "unexpected character '{s}'", .{literal})
         else if (literal[0] == '"')
             "unterminated string"
         else
-            try std.fmt.allocPrint(self.gpa, "missing '{s}'", .{literal});
+            try std.fmt.allocPrint(self.arena, "missing '{s}'", .{literal});
         try self.appendError(.{ .line = self.peek.line, .column = self.peek.column, .message = message });
         self.peek = self.lexer.nextToken();
     }
@@ -714,7 +709,7 @@ fn parseQualifiedName(self: *Parser) ParseError!?ast.Identifier {
     return .{ .name = self.current.literal, .kind = .compile_time, .namespace = namespace };
 }
 
-fn currentIdentifier(self: *Parser) ?ast.Identifier {
+fn currentIdentifier(self: *const Parser) ?ast.Identifier {
     const kind: ast.Identifier.Kind = switch (self.current.tag) {
         .identifier => .compile_time,
         .score_identifier => .score,
@@ -734,11 +729,11 @@ fn splitNamespace(literal: []const u8) struct { []const u8, ?[]const u8 } {
     return .{ literal[colon + 1 ..], literal[0..colon] };
 }
 
-fn currentIs(self: *Parser, tag: Token.Tag) bool {
+fn currentIs(self: *const Parser, tag: Token.Tag) bool {
     return self.current.tag == tag;
 }
 
-fn peekIs(self: *Parser, tag: Token.Tag) bool {
+fn peekIs(self: *const Parser, tag: Token.Tag) bool {
     return self.peek.tag == tag;
 }
 
@@ -773,12 +768,32 @@ fn expectedText(tag: Token.Tag) []const u8 {
     };
 }
 
-fn currentPrecedence(self: *Parser) Precedence {
+fn currentPrecedence(self: *const Parser) Precedence {
     return precedenceOf(self.current.tag);
 }
 
-fn peekPrecedence(self: *Parser) Precedence {
+fn peekPrecedence(self: *const Parser) Precedence {
     return precedenceOf(self.peek.tag);
+}
+
+// Only the tokens that `precedenceOf` gives a precedence reach this. A `(` is a call.
+fn infixOperator(tag: Token.Tag) ast.Infix.Operator {
+    return switch (tag) {
+        .plus => .add,
+        .minus => .subtract,
+        .star => .multiply,
+        .slash => .divide,
+        .percent => .modulo,
+        .eql_eql => .equal,
+        .bang_eql => .not_equal,
+        .less => .less,
+        .less_eql => .less_equal,
+        .greater => .greater,
+        .greater_eql => .greater_equal,
+        .@"and" => .@"and",
+        .@"or" => .@"or",
+        else => unreachable,
+    };
 }
 
 fn precedenceOf(tag: Token.Tag) Precedence {
@@ -795,7 +810,7 @@ fn precedenceOf(tag: Token.Tag) Precedence {
 }
 
 fn addError(self: *Parser, comptime format: []const u8, args: anytype) ParseError!void {
-    const message = try std.fmt.allocPrint(self.gpa, format, args);
+    const message = try std.fmt.allocPrint(self.arena, format, args);
     try self.appendError(.{ .line = self.current.line, .column = self.current.column, .message = message });
 }
 
@@ -804,12 +819,12 @@ fn appendError(self: *Parser, err: Error) ParseError!void {
     if (self.errors.getLastOrNull()) |last| {
         if (last.line == err.line) return;
     }
-    try self.errors.append(self.gpa, err);
+    try self.errors.append(self.arena, err);
 }
 
 fn describe(self: *const Parser, token: Token) ParseError![]const u8 {
     if (token.tag == .eof) return self.end_of_input;
-    return std.fmt.allocPrint(self.gpa, "'{s}'", .{token.literal});
+    return std.fmt.allocPrint(self.arena, "'{s}'", .{token.literal});
 }
 
 const TestResult = struct {
@@ -917,11 +932,11 @@ test "parse operator precedence" {
     const program = try parseValidForTest(arena.allocator(), "mcfun f() { 1 + 2 * 3; }");
 
     const sum = firstStatement(program).kind.expression.kind.infix;
-    try std.testing.expectEqual(.plus, sum.op);
+    try std.testing.expectEqual(.add, sum.op);
     try std.testing.expectEqual(1, sum.left.kind.number);
 
     const product = sum.right.kind.infix;
-    try std.testing.expectEqual(.star, product.op);
+    try std.testing.expectEqual(.multiply, product.op);
     try std.testing.expectEqual(2, product.left.kind.number);
     try std.testing.expectEqual(3, product.right.kind.number);
 }
@@ -933,11 +948,11 @@ test "parse grouped and prefix expressions" {
     const program = try parseValidForTest(arena.allocator(), "mcfun f() { -(1 + 2) * 3; }");
 
     const product = firstStatement(program).kind.expression.kind.infix;
-    try std.testing.expectEqual(.star, product.op);
+    try std.testing.expectEqual(.multiply, product.op);
 
     const negation = product.left.kind.prefix;
-    try std.testing.expectEqual(.minus, negation.op);
-    try std.testing.expectEqual(.plus, negation.operand.kind.infix.op);
+    try std.testing.expectEqual(.negate, negation.op);
+    try std.testing.expectEqual(.add, negation.operand.kind.infix.op);
 }
 
 test "parse call with args" {
@@ -950,7 +965,7 @@ test "parse call with args" {
     try std.testing.expectEqualStrings("add", call.callee.kind.identifier.name);
     try std.testing.expectEqual(3, call.args.len);
     try std.testing.expectEqual(1, call.args[0].kind.number);
-    try std.testing.expectEqual(.plus, call.args[1].kind.infix.op);
+    try std.testing.expectEqual(.add, call.args[1].kind.infix.op);
     try std.testing.expectEqualStrings("three", call.args[2].kind.string);
 }
 
@@ -969,7 +984,7 @@ test "parse if else" {
     try std.testing.expectEqual(1, if_statement.then_body.len);
 
     const else_if = if_statement.else_body.?[0].kind.@"if";
-    try std.testing.expectEqual(.eql_eql, else_if.condition.kind.infix.op);
+    try std.testing.expectEqual(.equal, else_if.condition.kind.infix.op);
     try std.testing.expectEqual(1, else_if.else_body.?.len);
 }
 

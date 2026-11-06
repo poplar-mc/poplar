@@ -36,7 +36,7 @@ const WorldCopy = struct {
     // Set after an error, so that it is printed one time.
     failed: bool = false,
 
-    fn update(copy: *WorldCopy, ctx: zli.CommandContext, gpa: std.mem.Allocator, project_path: []const u8, pack_path: []const u8) !void {
+    fn update(copy: *WorldCopy, ctx: zli.CommandContext, arena: std.mem.Allocator, project_path: []const u8, pack_path: []const u8) !void {
         if (copy.failed) return;
         const io = ctx.io;
         var datapacks = try std.Io.Dir.cwd().openDir(io, copy.datapacks_path, .{});
@@ -62,7 +62,7 @@ const WorldCopy = struct {
         var target = try datapacks.createDirPathOpen(io, name, .{});
         defer target.close(io);
 
-        var walker = try source.walk(gpa);
+        var walker = try source.walk(arena);
         defer walker.deinit();
         while (try walker.next(io)) |entry| switch (entry.kind) {
             .directory => try target.createDirPath(io, entry.path),

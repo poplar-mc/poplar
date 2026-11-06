@@ -142,7 +142,7 @@ pub const Operand = union(enum) {
     score: ir.Score,
 };
 
-gpa: std.mem.Allocator,
+arena: std.mem.Allocator,
 command_tree: *const CommandTree,
 mcfuns: std.StringArrayHashMapUnmanaged(McfunDeclaration) = .empty,
 globals: std.StringArrayHashMapUnmanaged(GlobalScore) = .empty,
@@ -169,7 +169,6 @@ uses_stack: bool = false,
 forwarded_args: ?[]const u8 = null,
 // The `$(name)` keys that the current mcfun uses.
 macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
-// Names the construct that `return` cannot be used in, while its body is compiled.
 // The test function of the innermost `while`, for `break` and `continue`.
 current_loop: ?[]const u8 = null,
 // True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
@@ -200,8 +199,8 @@ file_namespaces: std.StringHashMapUnmanaged([]const u8) = .empty,
 // The data files with an identifier name, for the language server.
 named_data_files: std.StringArrayHashMapUnmanaged(NamedDataFile) = .empty,
 
-pub fn init(gpa: std.mem.Allocator, command_tree: *const CommandTree) Compiler {
-    return .{ .gpa = gpa, .command_tree = command_tree };
+pub fn init(arena: std.mem.Allocator, command_tree: *const CommandTree) Compiler {
+    return .{ .arena = arena, .command_tree = command_tree };
 }
 
 // `mcfun load` and `mcfun tick` of each namespace are run by the game. A program without a `namespace` line
@@ -209,7 +208,7 @@ pub fn init(gpa: std.mem.Allocator, command_tree: *const CommandTree) Compiler {
 pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origin: Origin) CompileError!void {
     self.position.path = path;
     self.scope = self.scopeOf(if (program.namespace) |namespace| namespace.name else self.pack_namespace, program.imports);
-    try self.file_namespaces.put(self.gpa, path, self.scope.namespace);
+    try self.file_namespaces.put(self.arena, path, self.scope.namespace);
     if (program.namespace) |namespace| {
         self.position.line = namespace.line;
         self.position.column = namespace.column;
@@ -217,7 +216,7 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
         if (origin == .project and std.mem.eql(u8, namespace.name, std_namespace)) return self.addError("the namespace 'std' belongs to the standard library", .{});
     }
 
-    const imports = try self.namespace_imports.getOrPut(self.gpa, self.scope.namespace);
+    const imports = try self.namespace_imports.getOrPut(self.arena, self.scope.namespace);
     if (!imports.found_existing) imports.value_ptr.* = .empty;
     for (program.imports) |import| {
         self.position.line = import.line;
@@ -226,13 +225,13 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
             try self.addError("a file does not import its own namespace '{s}'", .{import.name});
             continue;
         }
-        try imports.value_ptr.put(self.gpa, import.name, {});
+        try imports.value_ptr.put(self.arena, import.name, {});
     }
 
     for (program.mcfuns) |*mcfun| {
         if (origin == .project) {
-            if (std.mem.eql(u8, mcfun.name, "load")) try self.load_namespaces.put(self.gpa, self.scope.namespace, {});
-            if (std.mem.eql(u8, mcfun.name, "tick")) try self.tick_namespaces.put(self.gpa, self.scope.namespace, {});
+            if (std.mem.eql(u8, mcfun.name, "load")) try self.load_namespaces.put(self.arena, self.scope.namespace, {});
+            if (std.mem.eql(u8, mcfun.name, "tick")) try self.tick_namespaces.put(self.arena, self.scope.namespace, {});
         }
 
         if (calls.isBuiltin(mcfun.name)) {
@@ -241,7 +240,7 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
             continue;
         }
 
-        const entry = try self.mcfuns.getOrPut(self.gpa, try declarations.qualifiedKey(self, self.scope.namespace, mcfun.name));
+        const entry = try self.mcfuns.getOrPut(self.arena, try declarations.qualifiedKey(self, self.scope.namespace, mcfun.name));
 
         const declaration: McfunDeclaration = .{
             .path = path,
@@ -281,7 +280,7 @@ pub const NamedDataFile = struct {
 };
 
 pub fn compile(self: *Compiler) CompileError!ir.Program {
-    self.poplar_namespaces = try std.mem.concat(self.gpa, []const u8, &.{ &.{"self"}, self.namespace_imports.keys() });
+    self.poplar_namespaces = try std.mem.concat(self.arena, []const u8, &.{ &.{"self"}, self.namespace_imports.keys() });
     var mc_functions: std.ArrayList(ir.McFunction) = .empty;
     try calls.buildCallGraph(self);
     const used = try load.reachableFromProject(self);
@@ -298,12 +297,12 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
         self.scope = self.scopeOf(declaration.namespace, declaration.imports);
 
         // The file name is the snake_case of the name (`playerDied` → `player_died`), so both must be valid and unique.
-        const path = try std.fmt.allocPrint(self.gpa, "{f}", .{datapack_writer.functionPath(mcfun.name)});
+        const path = try std.fmt.allocPrint(self.arena, "{f}", .{datapack_writer.functionPath(mcfun.name)});
         if (!Config.isValidResourceName(path)) {
             try self.addError("mcfun name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{mcfun.name});
             continue;
         }
-        const path_entry = try paths.getOrPut(self.gpa, try declarations.functionName(self, declaration.namespace, path));
+        const path_entry = try paths.getOrPut(self.arena, try declarations.functionName(self, declaration.namespace, path));
         if (path_entry.found_existing) {
             try self.addError("mcfun '{s}' and '{s}' have the same file name '{s}.mcfunction'", .{ path_entry.value_ptr.*, mcfun.name, path });
             continue;
@@ -311,7 +310,7 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
         path_entry.value_ptr.* = mcfun.name;
 
         var macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-        try collectMacroKeys(self.gpa, mcfun.body, &macro_keys);
+        try collectMacroKeys(self.arena, mcfun.body, &macro_keys);
         self.macro_keys = macro_keys;
         const is_hook = declaration.origin == .project and (std.mem.eql(u8, mcfun.name, "load") or std.mem.eql(u8, mcfun.name, "tick"));
         if (is_hook and macro_keys.count() > 0) {
@@ -320,7 +319,7 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
         }
 
         self.mcfun = .{
-            .folder = try ir.generatedFolder(self.gpa, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
+            .folder = try ir.generatedFolder(self.arena, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
             .name = declaration.ir_name,
             .key = mcfun_key,
         };
@@ -332,40 +331,40 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
         var env: Environment = .{};
         var forwarded: std.ArrayList(u8) = .empty;
         for (macro_keys.keys(), 0..) |key, index| {
-            try forwarded.appendSlice(self.gpa, if (index == 0) "{" else ",");
-            try forwarded.print(self.gpa, "{s}:\"$({s})\"", .{ key, key });
+            try forwarded.appendSlice(self.arena, if (index == 0) "{" else ",");
+            try forwarded.print(self.arena, "{s}:\"$({s})\"", .{ key, key });
         }
-        if (macro_keys.count() > 0) try forwarded.append(self.gpa, '}');
-        self.forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.gpa) else null;
+        if (macro_keys.count() > 0) try forwarded.append(self.arena, '}');
+        self.forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.arena) else null;
 
         var commands: std.ArrayList(ir.Command) = .empty;
         try self.compileBlock(mcfun.body, &env, &commands);
-        if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.gpa, self.current_cleanup);
+        if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.arena, self.current_cleanup);
 
-        try mc_functions.append(self.gpa, .{
+        try mc_functions.append(self.arena, .{
             .name = declaration.ir_name,
-            .commands = try commands.toOwnedSlice(self.gpa),
+            .commands = try commands.toOwnedSlice(self.arena),
         });
     }
 
-    try mc_functions.appendSlice(self.gpa, self.generated.items);
-    try optimizer.dropUnusedArguments(self.gpa, mc_functions.items);
+    try mc_functions.appendSlice(self.arena, self.generated.items);
+    try optimizer.dropUnusedArguments(self.arena, mc_functions.items);
 
-    for (mc_functions.items) |*function| function.commands = try optimizer.optimizeFunction(self.gpa, function.name, function.commands);
-    const optimized = try optimizer.inlineSmallFunctions(self.gpa, mc_functions.items);
+    for (mc_functions.items) |*function| function.commands = try optimizer.optimizeFunction(self.arena, function.name, function.commands);
+    const optimized = try optimizer.inlineSmallFunctions(self.arena, mc_functions.items);
     try load.removeUnusedConstants(self, optimized);
 
     // Only the tick tag calls these, so they come after the inline pass, which removes functions that nothing calls.
-    var functions: std.ArrayList(ir.McFunction) = .fromOwnedSlice(@constCast(optimized));
+    var functions: std.ArrayList(ir.McFunction) = .fromOwnedSlice(optimized);
     const ticks = try load.hookNames(self, self.tick_namespaces, "tick");
     try load.appendEventFunctions(self, &functions, ticks);
 
     const needs_load = self.globals.count() + self.data_globals.count() > 0 or self.load_namespaces.count() > 0 or self.uses_stack or self.events.items.len > 0;
-    const program_functions = try functions.toOwnedSlice(self.gpa);
+    const program_functions = try functions.toOwnedSlice(self.arena);
     return .{
         .functions = program_functions,
         .load = if (needs_load) try load.buildLoadFunction(self, program_functions) else null,
-        .tick = if (self.events.items.len > 0) try self.gpa.dupe([]const u8, &.{"poplar/tick"}) else ticks,
+        .tick = if (self.events.items.len > 0) try self.arena.dupe([]const u8, &.{"poplar/tick"}) else ticks,
         .data_files = self.data_files.items,
     };
 }
@@ -374,7 +373,7 @@ pub fn scopeOf(self: *const Compiler, namespace: []const u8, imports: []const as
     return .{ .namespace = namespace, .imports = imports, .output_namespace = declarations.outputNamespace(self, namespace) };
 }
 
-pub fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const outer_live_count = self.live_locals.items.len;
     defer self.live_locals.shrinkRetainingCapacity(outer_live_count);
 
@@ -383,7 +382,7 @@ pub fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environm
 
         if (isJump(statement.kind) and index + 1 < body.len) {
             const next = body[index + 1];
-            return self.errors.append(self.gpa, .{
+            return self.errors.append(self.arena, .{
                 .path = self.position.path,
                 .line = next.line,
                 .column = next.column,
@@ -393,7 +392,7 @@ pub fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environm
     }
 }
 
-pub fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const outer_line = self.position.line;
     const outer_column = self.position.column;
     self.position.line = statement.line;
@@ -418,11 +417,11 @@ pub fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environ
         .@"return" => |value| try self.compileReturn(value, env, commands),
         .@"break" => {
             if (self.current_loop == null) return self.addError("'break' must be inside a 'while' (not in 'execute (...)')", .{});
-            try commands.append(self.gpa, .{ .return_value = 0 });
+            try commands.append(self.arena, .{ .return_value = 0 });
         },
         .@"continue" => {
             const loop = self.current_loop orelse return self.addError("'continue' must be inside a 'while' (not in 'execute (...)')", .{});
-            try commands.append(self.gpa, .{ .return_run = try self.createCommand(calls.generatedCall(self, loop)) });
+            try commands.append(self.arena, .{ .return_run = try self.createCommand(calls.generatedCall(self, loop)) });
         },
         .@"while" => |loop| try self.compileWhile(loop, env, commands),
         .@"if" => |if_statement| try self.compileIf(if_statement, env, commands),
@@ -449,25 +448,25 @@ pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Envir
     var body_commands: std.ArrayList(ir.Command) = .empty;
     try self.compileBlock(body, &branch_env, &body_commands);
     const name = try self.newGeneratedName("execute");
-    try self.generated.append(self.gpa, .{ .name = name, .commands = try body_commands.toOwnedSlice(self.gpa) });
+    try self.generated.append(self.arena, .{ .name = name, .commands = try body_commands.toOwnedSlice(self.arena) });
 
     self.return_through_body = outer_through_body;
     return try self.onBodyReturn(name);
 }
 
 // `execute if function <body> run ...`: when the body returned, return from this function too.
-pub fn onBodyReturn(self: *Compiler, body_name: []const u8) CompileError!ir.Command {
+fn onBodyReturn(self: *Compiler, body_name: []const u8) CompileError!ir.Command {
     const pass_on: ir.Command = if (self.return_through_body) .{ .return_value = 1 } else .{ .return_run = try self.createCommand(.{ .score_get = try self.resultScore() }) };
-    const checks = try self.gpa.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .function_returns = body_name } }});
+    const checks = try self.arena.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .function_returns = body_name } }});
     return .{ .execute = .{ .checks = checks, .run = try self.createCommand(pass_on) } };
 }
 
 // The value of a `return` inside a `while` or `execute (...)` body, on its way out.
-pub fn resultScore(self: *Compiler) CompileError!ir.Score {
-    return .{ .holder = try std.fmt.allocPrint(self.gpa, "#poplar.{s}.result", .{self.mcfun.folder}), .namespace = self.scope.output_namespace };
+fn resultScore(self: *Compiler) CompileError!ir.Score {
+    return .{ .holder = try std.fmt.allocPrint(self.arena, "#poplar.{s}.result", .{self.mcfun.folder}), .namespace = self.scope.output_namespace };
 }
 
-pub fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     switch (var_decl.target.kind) {
         .compile_time => {},
         .score => return self.declareLocal(.score, var_decl, env, commands),
@@ -479,14 +478,14 @@ pub fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment,
     }
 
     const value = try values.evaluate(self, var_decl.value, env) orelse return;
-    if (!try env.declare(self.gpa, var_decl.target.name, value)) {
+    if (!try env.declare(self.arena, var_decl.target.name, value)) {
         try self.addError("'{s}' is already declared", .{var_decl.target.name});
     }
 }
 
 // `var #i = 10;` in `mcfun countdown` is the fake player `#i_countdown` in `<ns>`. `var $names = [];` is
 // `names_countdown` in `<ns>:data`. The value is set here, on every call.
-pub fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const name = var_decl.target.name;
     const sigil: u8 = if (kind == .score) '#' else '$';
     if (kind == .data and pathRoot(name).len != name.len) {
@@ -494,14 +493,14 @@ pub fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast
     }
     const global_key = try declarations.qualifiedKey(self, self.scope.namespace, name);
     const is_global = if (kind == .score) self.globals.contains(global_key) else self.data_globals.contains(global_key);
-    const key = try std.fmt.allocPrint(self.gpa, "{c}{s}", .{ sigil, name });
+    const key = try std.fmt.allocPrint(self.arena, "{c}{s}", .{ sigil, name });
     if (is_global or env.get(key) != null) return self.addError("'{s}' is already declared", .{key});
 
-    const generated_base = try std.fmt.allocPrint(self.gpa, "{s}_{s}", .{ name, self.mcfun.folder });
-    const generated_name = if (kind == .score) try std.fmt.allocPrint(self.gpa, "#{s}", .{generated_base}) else generated_base;
+    const generated_base = try std.fmt.allocPrint(self.arena, "{s}_{s}", .{ name, self.mcfun.folder });
+    const generated_name = if (kind == .score) try std.fmt.allocPrint(self.arena, "#{s}", .{generated_base}) else generated_base;
 
     const origin: LocalOrigin = .{ .name = name, .owner = self.mcfun.folder };
-    const name_entry = try self.local_names.getOrPut(self.gpa, try std.fmt.allocPrint(self.gpa, "{c}{s}", .{ sigil, generated_base }));
+    const name_entry = try self.local_names.getOrPut(self.arena, try std.fmt.allocPrint(self.arena, "{c}{s}", .{ sigil, generated_base }));
     if (name_entry.found_existing and !sameOrigin(name_entry.value_ptr.*, origin)) {
         const other = name_entry.value_ptr.*;
         return self.addError("'{c}{s}' in '{s}' and '{c}{s}' in '{s}' both become '{s}'. Rename one", .{ sigil, other.name, other.owner, sigil, name, self.mcfun.folder, generated_name });
@@ -517,11 +516,11 @@ pub fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast
         .data => try data.compileDataAssign(self, data.dataLocal(self, generated_name), var_decl.value, env, commands),
     }
 
-    _ = try env.declare(self.gpa, key, .{ .local = local });
-    try self.live_locals.append(self.gpa, local);
+    _ = try env.declare(self.arena, key, .{ .local = local });
+    try self.live_locals.append(self.arena, local);
     for (self.locals.items) |existing| {
         if (existing.line == self.position.line and existing.column == self.position.column and std.mem.eql(u8, existing.path, self.position.path)) break;
-    } else try self.locals.append(self.gpa, .{
+    } else try self.locals.append(self.arena, .{
         .name = name,
         .local = local,
         .path = self.position.path,
@@ -533,101 +532,101 @@ pub fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast
 // `data remove` for each data local declared anywhere in the body. A failed `set from` keeps the old value, so
 // without this a local could hold a value from an earlier call. `data remove` on a missing key fails without effect.
 // A score local needs nothing: every score write (`set`, `operation`, `store result`) overwrites it, and a failure writes 0.
-pub fn localCleanup(self: *Compiler, body: []const ast.Statement) CompileError![]const ir.Command {
+fn localCleanup(self: *Compiler, body: []const ast.Statement) CompileError![]const ir.Command {
     var names: std.StringArrayHashMapUnmanaged(void) = .empty;
-    try collectDataLocalNames(self.gpa, body, &names);
+    try collectDataLocalNames(self.arena, body, &names);
 
     var cleanup: std.ArrayList(ir.Command) = .empty;
     for (names.keys()) |name| {
-        const generated_name = try std.fmt.allocPrint(self.gpa, "{s}_{s}", .{ name, self.mcfun.folder });
-        try cleanup.append(self.gpa, .{ .data_remove = data.dataLocal(self, generated_name) });
+        const generated_name = try std.fmt.allocPrint(self.arena, "{s}_{s}", .{ name, self.mcfun.folder });
+        try cleanup.append(self.arena, .{ .data_remove = data.dataLocal(self, generated_name) });
     }
-    return cleanup.toOwnedSlice(self.gpa);
+    return cleanup.toOwnedSlice(self.arena);
 }
 
-pub fn collectDataLocalNames(gpa: std.mem.Allocator, body: []const ast.Statement, names: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+fn collectDataLocalNames(arena: std.mem.Allocator, body: []const ast.Statement, names: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (body) |statement| switch (statement.kind) {
-        .var_decl => |var_decl| if (var_decl.target.kind == .data) try names.put(gpa, var_decl.target.name, {}),
+        .var_decl => |var_decl| if (var_decl.target.kind == .data) try names.put(arena, var_decl.target.name, {}),
         .@"if" => |if_statement| {
-            try collectDataLocalNames(gpa, if_statement.then_body, names);
-            if (if_statement.else_body) |else_body| try collectDataLocalNames(gpa, else_body, names);
+            try collectDataLocalNames(arena, if_statement.then_body, names);
+            if (if_statement.else_body) |else_body| try collectDataLocalNames(arena, else_body, names);
         },
-        .@"while" => |loop| try collectDataLocalNames(gpa, loop.body, names),
-        .@"for" => |loop| try collectDataLocalNames(gpa, loop.body, names),
-        .execute => |execute| try collectDataLocalNames(gpa, execute.body, names),
+        .@"while" => |loop| try collectDataLocalNames(arena, loop.body, names),
+        .@"for" => |loop| try collectDataLocalNames(arena, loop.body, names),
+        .execute => |execute| try collectDataLocalNames(arena, execute.body, names),
         else => {},
     };
 }
 
 // The `$(name)` keys that a body uses, in expressions and in Minecraft text.
-pub fn collectMacroKeys(gpa: std.mem.Allocator, body: []const ast.Statement, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+pub fn collectMacroKeys(arena: std.mem.Allocator, body: []const ast.Statement, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (body) |statement| switch (statement.kind) {
-        .var_decl => |var_decl| try collectExpressionMacroKeys(gpa, var_decl.value, keys),
-        .assign => |assign| try collectExpressionMacroKeys(gpa, assign.value, keys),
-        .@"return" => |value| if (value) |expression| try collectExpressionMacroKeys(gpa, expression, keys),
+        .var_decl => |var_decl| try collectExpressionMacroKeys(arena, var_decl.value, keys),
+        .assign => |assign| try collectExpressionMacroKeys(arena, assign.value, keys),
+        .@"return" => |value| if (value) |expression| try collectExpressionMacroKeys(arena, expression, keys),
         .@"break", .@"continue" => {},
         .@"if" => |if_statement| {
-            try collectExpressionMacroKeys(gpa, if_statement.condition, keys);
-            try collectMacroKeys(gpa, if_statement.then_body, keys);
-            if (if_statement.else_body) |else_body| try collectMacroKeys(gpa, else_body, keys);
+            try collectExpressionMacroKeys(arena, if_statement.condition, keys);
+            try collectMacroKeys(arena, if_statement.then_body, keys);
+            if (if_statement.else_body) |else_body| try collectMacroKeys(arena, else_body, keys);
         },
         .@"while" => |loop| {
-            try collectExpressionMacroKeys(gpa, loop.condition, keys);
-            try collectMacroKeys(gpa, loop.body, keys);
+            try collectExpressionMacroKeys(arena, loop.condition, keys);
+            try collectMacroKeys(arena, loop.body, keys);
         },
         .@"for" => |loop| {
-            try collectExpressionMacroKeys(gpa, loop.start, keys);
-            try collectExpressionMacroKeys(gpa, loop.end, keys);
-            try collectMacroKeys(gpa, loop.body, keys);
+            try collectExpressionMacroKeys(arena, loop.start, keys);
+            try collectExpressionMacroKeys(arena, loop.end, keys);
+            try collectMacroKeys(arena, loop.body, keys);
         },
-        .command => |command| try collectPartsMacroKeys(gpa, command.parts, keys),
+        .command => |command| try collectPartsMacroKeys(arena, command.parts, keys),
         .execute => |execute| {
-            try collectPartsMacroKeys(gpa, execute.subcommands, keys);
-            try collectMacroKeys(gpa, execute.body, keys);
+            try collectPartsMacroKeys(arena, execute.subcommands, keys);
+            try collectMacroKeys(arena, execute.body, keys);
         },
-        .expression => |expression| try collectExpressionMacroKeys(gpa, expression, keys),
+        .expression => |expression| try collectExpressionMacroKeys(arena, expression, keys),
     };
 }
 
-fn collectExpressionMacroKeys(gpa: std.mem.Allocator, expression: *const ast.Expression, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+fn collectExpressionMacroKeys(arena: std.mem.Allocator, expression: *const ast.Expression, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     switch (expression.kind) {
-        .macro_key => |name| try keys.put(gpa, name, {}),
-        .prefix => |prefix| try collectExpressionMacroKeys(gpa, prefix.operand, keys),
+        .macro_key => |name| try keys.put(arena, name, {}),
+        .prefix => |prefix| try collectExpressionMacroKeys(arena, prefix.operand, keys),
         .infix => |infix| {
-            try collectExpressionMacroKeys(gpa, infix.left, keys);
-            try collectExpressionMacroKeys(gpa, infix.right, keys);
+            try collectExpressionMacroKeys(arena, infix.left, keys);
+            try collectExpressionMacroKeys(arena, infix.right, keys);
         },
         .call => |call| {
-            for (call.args) |arg| try collectExpressionMacroKeys(gpa, arg, keys);
+            for (call.args) |arg| try collectExpressionMacroKeys(arena, arg, keys);
             if (call.with) |with| switch (with) {
-                .value => |value| try collectExpressionMacroKeys(gpa, value, keys),
-                .raw => |text| try collectTextMacroKeys(gpa, text, keys),
+                .value => |value| try collectExpressionMacroKeys(arena, value, keys),
+                .raw => |text| try collectTextMacroKeys(arena, text, keys),
             };
         },
-        .list => |elements| for (elements) |element| try collectExpressionMacroKeys(gpa, element, keys),
-        .compound => |entries| for (entries) |entry| try collectExpressionMacroKeys(gpa, entry.value, keys),
-        .minecraft_check => |parts| try collectPartsMacroKeys(gpa, parts, keys),
+        .list => |elements| for (elements) |element| try collectExpressionMacroKeys(arena, element, keys),
+        .compound => |entries| for (entries) |entry| try collectExpressionMacroKeys(arena, entry.value, keys),
+        .minecraft_check => |parts| try collectPartsMacroKeys(arena, parts, keys),
         .identifier, .number, .typed_number, .string, .boolean, .null, .selector => {},
     }
 }
 
-fn collectPartsMacroKeys(gpa: std.mem.Allocator, parts: []const ast.CommandPart, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+fn collectPartsMacroKeys(arena: std.mem.Allocator, parts: []const ast.CommandPart, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     for (parts) |part| switch (part.content) {
-        .text => |text| try collectTextMacroKeys(gpa, text, keys),
-        .insert => |expression| try collectExpressionMacroKeys(gpa, expression, keys),
+        .text => |text| try collectTextMacroKeys(arena, text, keys),
+        .insert => |expression| try collectExpressionMacroKeys(arena, expression, keys),
     };
 }
 
-fn collectTextMacroKeys(gpa: std.mem.Allocator, text: []const u8, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
+fn collectTextMacroKeys(arena: std.mem.Allocator, text: []const u8, keys: *std.StringArrayHashMapUnmanaged(void)) CompileError!void {
     var rest = text;
     while (std.mem.indexOf(u8, rest, "$(")) |start| {
         const end = std.mem.indexOfScalarPos(u8, rest, start, ')') orelse return;
-        try keys.put(gpa, rest[start + 2 .. end], {});
+        try keys.put(arena, rest[start + 2 .. end], {});
         rest = rest[end + 1 ..];
     }
 }
 
-pub fn sameOrigin(a: LocalOrigin, b: LocalOrigin) bool {
+fn sameOrigin(a: LocalOrigin, b: LocalOrigin) bool {
     return std.mem.eql(u8, a.name, b.name) and std.mem.eql(u8, a.owner, b.owner);
 }
 
@@ -637,7 +636,7 @@ pub fn pathRoot(path: []const u8) []const u8 {
     return path[0..end];
 }
 
-pub fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     switch (assign.target.kind) {
         .compile_time => {},
         .score => return scores.compileScoreAssign(self, assign.target, assign.value, env, commands),
@@ -671,7 +670,7 @@ pub fn localOf(env: *const Environment, sigil: u8, name: []const u8) ?Environmen
     return if (value == .local) value.local else null;
 }
 
-pub fn ifContainsReturn(if_statement: ast.If) bool {
+fn ifContainsReturn(if_statement: ast.If) bool {
     const else_body = if_statement.else_body orelse &.{};
     return containsReturn(if_statement.then_body) or containsReturn(else_body);
 }
@@ -691,17 +690,17 @@ pub fn containsReturn(body: []const ast.Statement) bool {
     return false;
 }
 
-pub fn isJump(kind: ast.Statement.Kind) bool {
+fn isJump(kind: ast.Statement.Kind) bool {
     return kind == .@"return" or kind == .@"break" or kind == .@"continue";
 }
 
-// `return`, `break` or `continue` of this loop level. A `break` in an inner `while` belongs to that loop.
-pub fn ifContainsJump(if_statement: ast.If) bool {
+fn ifContainsJump(if_statement: ast.If) bool {
     const else_body = if_statement.else_body orelse &.{};
     return containsJump(if_statement.then_body) or containsJump(else_body);
 }
 
-pub fn containsJump(body: []const ast.Statement) bool {
+// `return`, `break` or `continue` of this loop level. A `break` in an inner `while` belongs to that loop.
+fn containsJump(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"return", .@"break", .@"continue" => true,
@@ -717,7 +716,7 @@ pub fn containsJump(body: []const ast.Statement) bool {
 }
 
 // True if the body can leave this loop level with `break` or `return`.
-pub fn containsExit(body: []const ast.Statement) bool {
+fn containsExit(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"return", .@"break" => true,
@@ -734,7 +733,7 @@ pub fn containsExit(body: []const ast.Statement) bool {
 
 // True if the then body and every `else if` and `else` body end with `return`, `break` or `continue`.
 // The final `else` is optional.
-pub fn branchesEndWithJump(if_statement: ast.If) bool {
+fn branchesEndWithJump(if_statement: ast.If) bool {
     if (!endsWithJump(if_statement.then_body)) return false;
 
     const else_body = if_statement.else_body orelse return true;
@@ -742,7 +741,7 @@ pub fn branchesEndWithJump(if_statement: ast.If) bool {
     return endsWithJump(else_body);
 }
 
-pub fn endsWithJump(body: []const ast.Statement) bool {
+fn endsWithJump(body: []const ast.Statement) bool {
     if (body.len == 0) return false;
 
     return switch (body[body.len - 1].kind) {
@@ -752,7 +751,7 @@ pub fn endsWithJump(body: []const ast.Statement) bool {
     };
 }
 
-pub fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     self.temp_count = 0;
     var setup: std.ArrayList(ir.Command) = .empty;
     const condition = try conditions.lowerCondition(self, if_statement.condition, env, false, &setup) orelse return;
@@ -774,8 +773,8 @@ pub fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, comma
 
             if (if_statement.else_body == null and clauses.len == 1) {
                 const run = try self.compileBodyAsCommand(if_statement.then_body, env, "if") orelse return;
-                try commands.appendSlice(self.gpa, setup.items);
-                try commands.append(self.gpa, .{ .execute = .{ .checks = clauses[0], .run = try self.createCommand(run) } });
+                try commands.appendSlice(self.arena, setup.items);
+                try commands.append(self.arena, .{ .execute = .{ .checks = clauses[0], .run = try self.createCommand(run) } });
                 return;
             }
 
@@ -783,14 +782,14 @@ pub fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, comma
             var wrapper: std.ArrayList(ir.Command) = .empty;
             try self.appendBranches(if_statement, env, &wrapper, condition, setup.items, false);
 
-            try self.generated.append(self.gpa, .{ .name = wrapper_name, .commands = try wrapper.toOwnedSlice(self.gpa) });
-            try commands.append(self.gpa, calls.generatedCall(self, wrapper_name));
+            try self.generated.append(self.arena, .{ .name = wrapper_name, .commands = try wrapper.toOwnedSlice(self.arena) });
+            try commands.append(self.arena, calls.generatedCall(self, wrapper_name));
         },
     }
 }
 
 // Each branch returns from the wrapper, so later branches and the else body run only if no earlier branch ran.
-pub fn appendBranches(
+fn appendBranches(
     self: *Compiler,
     if_statement: ast.If,
     env: *Environment,
@@ -799,7 +798,7 @@ pub fn appendBranches(
     setup: []const ir.Command,
     after_runtime_branch: bool,
 ) CompileError!void {
-    try wrapper.appendSlice(self.gpa, setup);
+    try wrapper.appendSlice(self.arena, setup);
 
     switch (condition) {
         .constant => |is_true| if (is_true) {
@@ -812,7 +811,7 @@ pub fn appendBranches(
             const run_pointer = try self.createCommand(run);
 
             for (clauses) |checks| {
-                try wrapper.append(self.gpa, .{ .execute = .{ .checks = checks, .run = run_pointer } });
+                try wrapper.append(self.arena, .{ .execute = .{ .checks = checks, .run = run_pointer } });
             }
         },
     }
@@ -836,7 +835,7 @@ pub fn appendBranches(
 }
 
 // `kind` names a generated function for a body with more than one command: `if` or `execute`.
-pub fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *Environment, kind: []const u8) CompileError!?ir.Command {
+fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *Environment, kind: []const u8) CompileError!?ir.Command {
     var branch_env: Environment = .{ .outer = env, .runtime_branch = true };
     var body_commands: std.ArrayList(ir.Command) = .empty;
     try self.compileBlock(body, &branch_env, &body_commands);
@@ -846,7 +845,7 @@ pub fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *
         1 => return body_commands.items[0],
         else => {
             const name = try self.newGeneratedName(kind);
-            try self.generated.append(self.gpa, .{ .name = name, .commands = try body_commands.toOwnedSlice(self.gpa) });
+            try self.generated.append(self.arena, .{ .name = name, .commands = try body_commands.toOwnedSlice(self.arena) });
             return calls.generatedCall(self, name);
         },
     }
@@ -854,59 +853,59 @@ pub fn compileBodyAsCommand(self: *Compiler, body: []const ast.Statement, env: *
 
 pub fn newGeneratedName(self: *Compiler, kind: []const u8) CompileError![]const u8 {
     defer self.generated_count += 1;
-    const path = try std.fmt.allocPrint(self.gpa, "poplar/{s}/{s}_{d}", .{ self.mcfun.folder, kind, self.generated_count });
+    const path = try std.fmt.allocPrint(self.arena, "poplar/{s}/{s}_{d}", .{ self.mcfun.folder, kind, self.generated_count });
     const namespace = self.scope.output_namespace orelse return path;
-    return std.fmt.allocPrint(self.gpa, "{s}:{s}", .{ namespace, path });
+    return std.fmt.allocPrint(self.arena, "{s}:{s}", .{ namespace, path });
 }
 
 pub fn createExpression(self: *Compiler, expression: ast.Expression) CompileError!*const ast.Expression {
-    const pointer = try self.gpa.create(ast.Expression);
+    const pointer = try self.arena.create(ast.Expression);
     pointer.* = expression;
     return pointer;
 }
 
 pub fn createCommand(self: *Compiler, command: ir.Command) CompileError!*const ir.Command {
-    const pointer = try self.gpa.create(ir.Command);
+    const pointer = try self.arena.create(ir.Command);
     pointer.* = command;
     return pointer;
 }
 
-pub fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     if (self.return_through_body) {
         const result = try self.resultScore();
         self.temp_count = 0;
         if (value) |expression| {
             try scores.compileInto(self, result, expression, env, commands);
         } else {
-            try commands.append(self.gpa, .{ .score_set = .{ .score = result, .value = 0 } });
+            try commands.append(self.arena, .{ .score_set = .{ .score = result, .value = 0 } });
         }
-        try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_value = 1 });
+        try commands.appendSlice(self.arena, self.current_cleanup);
+        return commands.append(self.arena, .{ .return_value = 1 });
     }
 
     const expression = value orelse {
-        try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_value = 0 });
+        try commands.appendSlice(self.arena, self.current_cleanup);
+        return commands.append(self.arena, .{ .return_value = 0 });
     };
 
     if (!values.containsRuntimeValue(self, expression, env)) {
         const result = try values.evaluate(self, expression, env) orelse return;
         const number = try scores.toScoreValue(self, result) orelse return;
-        try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_value = number });
+        try commands.appendSlice(self.arena, self.current_cleanup);
+        return commands.append(self.arena, .{ .return_value = number });
     }
 
     self.temp_count = 0;
     if (expression.kind == .macro_key) {
-        try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_macro_argument = expression.kind.macro_key });
+        try commands.appendSlice(self.arena, self.current_cleanup);
+        return commands.append(self.arena, .{ .return_macro_argument = expression.kind.macro_key });
     }
     // The value can read a local, so it is computed before the locals are removed.
     if (self.current_cleanup.len > 0) {
         const temp = try scores.newTemp(self);
         try scores.compileInto(self, temp, expression, env, commands);
-        try commands.appendSlice(self.gpa, self.current_cleanup);
-        return commands.append(self.gpa, .{ .return_run = try self.createCommand(.{ .score_get = temp }) });
+        try commands.appendSlice(self.arena, self.current_cleanup);
+        return commands.append(self.arena, .{ .return_run = try self.createCommand(.{ .score_get = temp }) });
     }
     const read: ir.Command = blk: {
         if (expression.kind == .identifier) {
@@ -922,11 +921,11 @@ pub fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Envir
         try scores.compileInto(self, temp, expression, env, commands);
         break :blk .{ .score_get = temp };
     };
-    try commands.append(self.gpa, .{ .return_run = try self.createCommand(read) });
+    try commands.append(self.arena, .{ .return_run = try self.createCommand(read) });
 }
 
 // Wraps a command in `return run`, unless it already returns.
-pub fn returnRun(self: *Compiler, command: ir.Command) CompileError!ir.Command {
+fn returnRun(self: *Compiler, command: ir.Command) CompileError!ir.Command {
     return switch (command) {
         .return_run, .return_value, .return_macro_argument => command,
         else => .{ .return_run = try self.createCommand(command) },
@@ -934,9 +933,9 @@ pub fn returnRun(self: *Compiler, command: ir.Command) CompileError!ir.Command {
 }
 
 // A loop is two functions: `while_<n>` tests the condition and runs `while_<n>_body`, which runs `while_<n>` again.
-pub fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const test_name = try self.newGeneratedName("while");
-    const body_name = try std.fmt.allocPrint(self.gpa, "{s}_body", .{test_name});
+    const body_name = try std.fmt.allocPrint(self.arena, "{s}_body", .{test_name});
 
     self.temp_count = 0;
     var test_commands: std.ArrayList(ir.Command) = .empty;
@@ -958,9 +957,9 @@ pub fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, command
     const call_body = calls.generatedCall(self, body_name);
     const run_body = try self.createCommand(if (clauses.len > 1 or can_return) .{ .return_run = try self.createCommand(call_body) } else call_body);
     for (clauses) |checks| {
-        try test_commands.append(self.gpa, if (checks.len == 0) run_body.* else .{ .execute = .{ .checks = checks, .run = run_body } });
+        try test_commands.append(self.arena, if (checks.len == 0) run_body.* else .{ .execute = .{ .checks = checks, .run = run_body } });
     }
-    if (reads_test_result) try test_commands.append(self.gpa, .{ .return_value = 0 });
+    if (reads_test_result) try test_commands.append(self.arena, .{ .return_value = 0 });
 
     const outer_loop = self.current_loop;
     const outer_through_body = self.return_through_body;
@@ -971,27 +970,27 @@ pub fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, command
     var body_commands: std.ArrayList(ir.Command) = .empty;
     try self.compileBlock(loop.body, &body_env, &body_commands);
     const call_test = calls.generatedCall(self, test_name);
-    try body_commands.append(self.gpa, if (can_return) .{ .return_run = try self.createCommand(call_test) } else call_test);
+    try body_commands.append(self.arena, if (can_return) .{ .return_run = try self.createCommand(call_test) } else call_test);
 
     self.current_loop = outer_loop;
     self.return_through_body = outer_through_body;
 
-    try self.generated.append(self.gpa, .{ .name = test_name, .commands = try test_commands.toOwnedSlice(self.gpa) });
-    try self.generated.append(self.gpa, .{ .name = body_name, .commands = try body_commands.toOwnedSlice(self.gpa) });
+    try self.generated.append(self.arena, .{ .name = test_name, .commands = try test_commands.toOwnedSlice(self.arena) });
+    try self.generated.append(self.arena, .{ .name = body_name, .commands = try body_commands.toOwnedSlice(self.arena) });
 
-    if (!can_return) return commands.append(self.gpa, call_test);
-    if (self.forwarded_args == null) return commands.append(self.gpa, try self.onBodyReturn(test_name));
+    if (!can_return) return commands.append(self.arena, call_test);
+    if (self.forwarded_args == null) return commands.append(self.arena, try self.onBodyReturn(test_name));
 
     // `if function` cannot pass the macro arguments, so the result of the loop goes through a temp.
     const returned = try scores.newTemp(self);
-    try commands.append(self.gpa, .{ .store_result = .{ .target = .{ .score = returned }, .run = try self.createCommand(call_test) } });
+    try commands.append(self.arena, .{ .store_result = .{ .target = .{ .score = returned }, .run = try self.createCommand(call_test) } });
     const pass_on = (try self.onBodyReturn(test_name)).execute.run;
-    const checks = try self.gpa.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .matches = .{ .score = returned, .min = 1, .max = 1 } } }});
-    try commands.append(self.gpa, .{ .execute = .{ .checks = checks, .run = pass_on } });
+    const checks = try self.arena.dupe(ir.Check, &.{.{ .negated = false, .condition = .{ .matches = .{ .score = returned, .min = 1, .max = 1 } } }});
+    try commands.append(self.arena, .{ .execute = .{ .checks = checks, .run = pass_on } });
 }
 
 // `continue` of this loop level.
-pub fn containsContinue(body: []const ast.Statement) bool {
+fn containsContinue(body: []const ast.Statement) bool {
     for (body) |statement| {
         const found = switch (statement.kind) {
             .@"continue" => true,
@@ -1004,13 +1003,13 @@ pub fn containsContinue(body: []const ast.Statement) bool {
     return false;
 }
 
-pub fn compileFor(self: *Compiler, loop: ast.For, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
+fn compileFor(self: *Compiler, loop: ast.For, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
     const start, const end = try self.evaluateRange(loop, env) orelse return;
 
     var i = start;
     while (i < end) : (i += 1) {
         var loop_env: Environment = .{ .outer = env };
-        if (!try loop_env.declare(self.gpa, loop.capture, .{ .number = i })) {
+        if (!try loop_env.declare(self.arena, loop.capture, .{ .number = i })) {
             return self.addError("'{s}' is already declared", .{loop.capture});
         }
 
@@ -1020,7 +1019,7 @@ pub fn compileFor(self: *Compiler, loop: ast.For, env: *Environment, commands: *
     }
 }
 
-pub fn evaluateRange(self: *Compiler, loop: ast.For, env: *Environment) CompileError!?struct { i64, i64 } {
+fn evaluateRange(self: *Compiler, loop: ast.For, env: *Environment) CompileError!?struct { i64, i64 } {
     const start = try values.evaluate(self, loop.start, env) orelse return null;
     const end = try values.evaluate(self, loop.end, env) orelse return null;
 
@@ -1071,8 +1070,8 @@ pub fn restorePosition(self: *Compiler, position: SourcePosition) void {
 }
 
 pub fn addError(self: *Compiler, comptime format: []const u8, args: anytype) CompileError!void {
-    const message = try std.fmt.allocPrint(self.gpa, format, args);
-    try self.errors.append(self.gpa, .{
+    const message = try std.fmt.allocPrint(self.arena, format, args);
+    try self.errors.append(self.arena, .{
         .path = self.position.path,
         .line = self.position.line,
         .column = self.position.column,
@@ -1081,8 +1080,8 @@ pub fn addError(self: *Compiler, comptime format: []const u8, args: anytype) Com
 }
 
 pub fn addErrorAt(self: *Compiler, column: usize, comptime format: []const u8, args: anytype) CompileError!void {
-    const message = try std.fmt.allocPrint(self.gpa, format, args);
-    try self.errors.append(self.gpa, .{
+    const message = try std.fmt.allocPrint(self.arena, format, args);
+    try self.errors.append(self.arena, .{
         .path = self.position.path,
         .line = self.position.line,
         .column = column,

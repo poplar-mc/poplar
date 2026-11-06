@@ -53,7 +53,7 @@ pub fn fail(ctx: zli.CommandContext) noreturn {
 
 // What `main` passes to every command.
 pub const Shared = struct {
-    // The folder of the standard library, which `import "std";` loads.
+    // The folder of the standard library, which `import std;` loads.
     std_path: []const u8,
     color: bool,
     environ_map: *const std.process.Environ.Map,

@@ -58,14 +58,12 @@ pub const Id = struct {
 };
 
 // `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
-pub fn checkText(self: *const CommandTree, gpa: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
-    var walk: Walk = .{ .gpa = gpa, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
-    const matched = walk.matchChildren(&self.root, 0);
-    if (walk.out_of_memory) return error.OutOfMemory;
-    if (matched) return .{ .ids = walk.ids.items };
+pub fn checkText(self: *const CommandTree, arena: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
+    var walk: Walk = .{ .arena = arena, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
+    if (try walk.matchChildren(&self.root, 0)) return .{ .ids = walk.ids.items };
 
     const failure = walk.furthest orelse return .{ .failure = .{ .message = "invalid command", .at = 0 } };
-    return .{ .failure = .{ .message = try failure.describe(gpa, text, &self.registries), .at = failure.at } };
+    return .{ .failure = .{ .message = try failure.describe(arena, text, &self.registries), .at = failure.at } };
 }
 
 const Walk = struct {
@@ -78,21 +76,21 @@ const Walk = struct {
         // The registry when the id is not in it.
         unknown_in: ?[]const u8 = null,
 
-        fn describe(problem: Problem, gpa: std.mem.Allocator, text: []const u8, registries: *const Registries) std.mem.Allocator.Error![]const u8 {
+        fn describe(problem: Problem, arena: std.mem.Allocator, text: []const u8, registries: *const Registries) std.mem.Allocator.Error![]const u8 {
             if (problem.message) |message| return message;
             const found = text[problem.at..readBalanced(text, problem.at)];
             if (problem.unknown_in) |registry| {
                 const id = registryId(found).?;
-                const closest = closestId(registries.map.get(registry).?, id) orelse return std.fmt.allocPrint(gpa, "unknown {s} '{s}'", .{ registry, id });
-                return std.fmt.allocPrint(gpa, "unknown {s} '{s}'. Did you mean '{s}'?", .{ registry, id, closest });
+                const closest = closestId(registries.map.get(registry).?, id) orelse return std.fmt.allocPrint(arena, "unknown {s} '{s}'", .{ registry, id });
+                return std.fmt.allocPrint(arena, "unknown {s} '{s}'. Did you mean '{s}'?", .{ registry, id, closest });
             }
-            if (problem.out_of_range) return std.fmt.allocPrint(gpa, "{s} '{s}' is out of range", .{ problem.expected, found });
-            if (found.len == 0) return std.fmt.allocPrint(gpa, "expected {s}, found end of command", .{problem.expected});
-            return std.fmt.allocPrint(gpa, "expected {s}, found '{s}'", .{ problem.expected, found });
+            if (problem.out_of_range) return std.fmt.allocPrint(arena, "{s} '{s}' is out of range", .{ problem.expected, found });
+            if (found.len == 0) return std.fmt.allocPrint(arena, "expected {s}, found end of command", .{problem.expected});
+            return std.fmt.allocPrint(arena, "expected {s}, found '{s}'", .{ problem.expected, found });
         }
     };
 
-    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     root: *const Node,
     registries: *const Registries,
     text: []const u8,
@@ -100,9 +98,8 @@ const Walk = struct {
     furthest: ?Problem = null,
     // Only filled on the path that matches, because each argument adds its ids after the rest matched.
     ids: std.ArrayList(Id) = .empty,
-    out_of_memory: bool = false,
 
-    fn matchChildren(walk: *Walk, node: *const Node, pos: usize) bool {
+    fn matchChildren(walk: *Walk, node: *const Node, pos: usize) std.mem.Allocator.Error!bool {
         const children = node.children orelse return false;
         var has_literal = false;
 
@@ -113,14 +110,14 @@ const Walk = struct {
             const end = pos + name.len;
             if (!std.mem.startsWith(u8, walk.text[pos..], name)) continue;
             if (end < walk.text.len and walk.text[end] != ' ') continue;
-            if (walk.matchAfter(child, end)) return true;
+            if (try walk.matchAfter(child, end)) return true;
         }
 
         for (children.map.values()) |*child| {
             if (child.type != .argument) continue;
-            const end = walk.readArgument(child, pos) orelse continue;
-            if (walk.matchAfter(child, end)) {
-                walk.addIdStarts(child.parser.?, child.properties orelse .{}, pos, end);
+            const end = try walk.readArgument(child, pos) orelse continue;
+            if (try walk.matchAfter(child, end)) {
+                try walk.addIdStarts(child.parser.?, child.properties orelse .{}, pos, end);
                 return true;
             }
         }
@@ -129,7 +126,7 @@ const Walk = struct {
         return false;
     }
 
-    fn matchAfter(walk: *Walk, node: *const Node, end: usize) bool {
+    fn matchAfter(walk: *Walk, node: *const Node, end: usize) std.mem.Allocator.Error!bool {
         if (end == walk.text.len) {
             if (node.executable) return true;
             walk.fail(.{ .at = end, .expected = "more arguments" });
@@ -148,15 +145,14 @@ const Walk = struct {
         return walk.matchChildren(next, end + 1);
     }
 
-    // `execute ... run` has no children, no redirect and is not executable. It continues from the root.
     // `self:heal` or `#magic:swords` in an id argument, and `type=#magic:undead` in a selector.
-    fn addIdStarts(walk: *Walk, parser: []const u8, properties: Properties, start: usize, end: usize) void {
+    fn addIdStarts(walk: *Walk, parser: []const u8, properties: Properties, start: usize, end: usize) std.mem.Allocator.Error!void {
         const word = walk.text[start..end];
         if (isIdParser(parser, properties)) {
             const offset: usize = if (std.mem.startsWith(u8, word, "#")) 1 else 0;
             const names_declaration = !eql(parser, "minecraft:resource_location");
             const has_vanilla_ids = if (registryOf(parser, properties)) |registry| walk.registries.map.contains(registry) else false;
-            walk.addIdStart(start + offset, names_declaration, names_declaration and !has_vanilla_ids);
+            try walk.addIdStart(start + offset, names_declaration, names_declaration and !has_vanilla_ids);
         } else if (isEntityParser(parser) and std.mem.startsWith(u8, word, "@")) {
             var quote: ?u8 = null;
             for (word, 0..) |ch, index| {
@@ -170,17 +166,16 @@ const Walk = struct {
                 while (value < word.len and (word[value] == '!' or word[value] == '#')) value += 1;
                 const key_start = if (std.mem.lastIndexOfAny(u8, word[0..index], "[,")) |separator| separator + 1 else 0;
                 const key = std.mem.trim(u8, word[key_start..index], " ");
-                walk.addIdStart(start + value, true, eql(key, "predicate"));
+                try walk.addIdStart(start + value, true, eql(key, "predicate"));
             }
         }
     }
 
-    fn addIdStart(walk: *Walk, at: usize, names_declaration: bool, can_be_pack_name: bool) void {
-        walk.ids.append(walk.gpa, .{ .at = at, .names_declaration = names_declaration, .can_be_pack_name = can_be_pack_name }) catch {
-            walk.out_of_memory = true;
-        };
+    fn addIdStart(walk: *Walk, at: usize, names_declaration: bool, can_be_pack_name: bool) std.mem.Allocator.Error!void {
+        try walk.ids.append(walk.arena, .{ .at = at, .names_declaration = names_declaration, .can_be_pack_name = can_be_pack_name });
     }
 
+    // `execute ... run` has no children, no redirect and is not executable. It continues from the root.
     fn continuation(walk: *Walk, node: *const Node) ?*const Node {
         if (node.redirect) |path| {
             var target = walk.root;
@@ -199,7 +194,7 @@ const Walk = struct {
         walk.furthest = problem;
     }
 
-    fn readArgument(walk: *Walk, node: *const Node, pos: usize) ?usize {
+    fn readArgument(walk: *Walk, node: *const Node, pos: usize) std.mem.Allocator.Error!?usize {
         const parser = node.parser.?;
         const text = walk.text;
         const end = readBalanced(text, pos);
@@ -230,10 +225,7 @@ const Walk = struct {
             }
         } else if (isEntityParser(parser)) {
             if (isEntity(word)) {
-                const failure = selectorFailure(walk.gpa, walk.registries, word) catch {
-                    walk.out_of_memory = true;
-                    return null;
-                } orelse return end;
+                const failure = try selectorFailure(walk.arena, walk.registries, word) orelse return end;
                 walk.fail(.{ .at = pos + failure.at, .expected = "", .message = failure.message });
                 return null;
             }
@@ -321,7 +313,6 @@ fn parseNumber(parser: []const u8, word: []const u8) ?f64 {
     return @floatFromInt(int);
 }
 
-// Minecraft checks a macro argument when the macro runs, so any argument kind accepts it here.
 // The registry that an argument names: `minecraft:resource` with `registry: minecraft:mob_effect` → `mob_effect`.
 fn registryOf(parser: []const u8, properties: Properties) ?[]const u8 {
     if (eql(parser, "minecraft:item_stack") or eql(parser, "minecraft:item_predicate")) return "item";
@@ -377,6 +368,7 @@ fn editDistance(a: []const u8, b: []const u8) ?usize {
     return previous[b.len];
 }
 
+// Minecraft checks a macro argument when the macro runs, so any argument kind accepts it here.
 fn isMacroWord(word: []const u8) bool {
     return std.mem.indexOf(u8, word, "$(") != null;
 }
@@ -396,12 +388,12 @@ fn isCoordinate(word: []const u8) bool {
 // The options of a selector, as the game knows them.
 const selector_options = [_][]const u8{ "advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit", "name", "nbt", "predicate", "scores", "sort", "tag", "team", "type", "x", "x_rotation", "y", "y_rotation", "z" };
 
-pub fn checkSelector(self: *const CommandTree, gpa: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
-    return selectorFailure(gpa, &self.registries, selector);
+pub fn checkSelector(self: *const CommandTree, arena: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
+    return selectorFailure(arena, &self.registries, selector);
 }
 
 // What the game rejects inside `@e[...]`, where it would refuse the whole function. `at` is an offset in `selector`.
-fn selectorFailure(gpa: std.mem.Allocator, registries: *const Registries, selector: []const u8) std.mem.Allocator.Error!?Failure {
+fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, selector: []const u8) std.mem.Allocator.Error!?Failure {
     if (selector.len < 4 or selector[0] != '@' or selector[2] != '[') return null;
     const close = selector.len - 1;
 
@@ -417,9 +409,9 @@ fn selectorFailure(gpa: std.mem.Allocator, registries: *const Registries, select
         if (!known) {
             // Option names are short, so only a near match is worth suggesting.
             if (closestId(&selector_options, key)) |closest| {
-                if (editDistance(key, closest).? <= 2) return .{ .message = try std.fmt.allocPrint(gpa, "unknown selector option '{s}'. Did you mean '{s}'?", .{ key, closest }), .at = pos };
+                if (editDistance(key, closest).? <= 2) return .{ .message = try std.fmt.allocPrint(arena, "unknown selector option '{s}'. Did you mean '{s}'?", .{ key, closest }), .at = pos };
             }
-            return .{ .message = try std.fmt.allocPrint(gpa, "unknown selector option '{s}'", .{key}), .at = pos };
+            return .{ .message = try std.fmt.allocPrint(arena, "unknown selector option '{s}'", .{key}), .at = pos };
         }
 
         var value_start = separator + 1;
@@ -429,7 +421,7 @@ fn selectorFailure(gpa: std.mem.Allocator, registries: *const Registries, select
 
         // The game reads a quoted `name`, and quotes inside the NBT of `nbt`. Every other option refuses them.
         if ((value[0] == '"' or value[0] == '\'') and !eql(key, "name") and !eql(key, "nbt")) {
-            return .{ .message = try std.fmt.allocPrint(gpa, "selector option '{s}' cannot have quotes: write {s}={s}", .{ key, key, std.mem.trim(u8, value, "\"'") }), .at = value_start };
+            return .{ .message = try std.fmt.allocPrint(arena, "selector option '{s}' cannot have quotes: write {s}={s}", .{ key, key, std.mem.trim(u8, value, "\"'") }), .at = value_start };
         }
         if (!eql(key, "type")) continue;
         const id = registryId(value) orelse continue;
@@ -437,8 +429,8 @@ fn selectorFailure(gpa: std.mem.Allocator, registries: *const Registries, select
         for (ids) |known_id| {
             if (eql(known_id, id)) break;
         } else {
-            const closest = closestId(ids, id) orelse return .{ .message = try std.fmt.allocPrint(gpa, "unknown entity_type '{s}'", .{id}), .at = value_start };
-            return .{ .message = try std.fmt.allocPrint(gpa, "unknown entity_type '{s}'. Did you mean '{s}'?", .{ id, closest }), .at = value_start };
+            const closest = closestId(ids, id) orelse return .{ .message = try std.fmt.allocPrint(arena, "unknown entity_type '{s}'", .{id}), .at = value_start };
+            return .{ .message = try std.fmt.allocPrint(arena, "unknown entity_type '{s}'. Did you mean '{s}'?", .{ id, closest }), .at = value_start };
         }
     }
     return null;

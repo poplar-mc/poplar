@@ -19,13 +19,9 @@ condition_paren_depth: usize = 0,
 first_line_column: usize = 0,
 
 pub fn init(input: []const u8) Lexer {
-    var l = Lexer{
-        .input = input,
-    };
-
-    l.readChar();
-
-    return l;
+    var lexer: Lexer = .{ .input = input };
+    lexer.readChar();
+    return lexer;
 }
 
 fn readChar(self: *Lexer) void {
@@ -187,7 +183,7 @@ fn newToken(self: *const Lexer, tag: Token.Tag, literal: []const u8) Token {
 }
 
 // Division cannot follow these tokens, so a `/` here starts a command.
-fn startsStatement(self: *Lexer) bool {
+fn startsStatement(self: *const Lexer) bool {
     const previous = self.previous_tag orelse return true;
     return previous == .semicolon or previous == .left_brace or previous == .right_brace;
 }
@@ -229,7 +225,7 @@ fn readMacroKey(self: *Lexer) Token {
 }
 
 // `entity` or `block` right after `with`.
-fn startsWithSource(self: *Lexer) bool {
+fn startsWithSource(self: *const Lexer) bool {
     if (self.previous_tag != .with) return false;
     var end = self.pos;
     while (end < self.input.len and isLetter(self.input[end])) end += 1;
@@ -316,7 +312,7 @@ const condition_words = std.StaticStringMap(void).initComptime(.{
 
 // A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a space and
 // something that is not an operator. So `block == 1` and `(block)` still read `block` as a name.
-fn startsConditionCheck(self: *Lexer) bool {
+fn startsConditionCheck(self: *const Lexer) bool {
     if (self.condition_paren_depth == 0) return false;
     const previous = self.previous_tag orelse return false;
     if (previous != .left_paren and previous != .@"and" and previous != .@"or" and previous != .bang) return false;
@@ -358,7 +354,7 @@ fn readConditionText(self: *Lexer) []const u8 {
     return std.mem.trimEnd(u8, self.input[start..self.pos], " ");
 }
 
-fn isWordAhead(self: *Lexer, word: []const u8) bool {
+fn isWordAhead(self: *const Lexer, word: []const u8) bool {
     const start = self.pos + 1;
     const end = start + word.len;
     if (end > self.input.len or !std.mem.eql(u8, self.input[start..end], word)) return false;
@@ -496,11 +492,11 @@ fn skipWhitespaceAndComments(self: *Lexer) void {
     }
 }
 
-fn peekChar(self: *Lexer) u8 {
+fn peekChar(self: *const Lexer) u8 {
     return self.peekCharAt(1);
 }
 
-fn peekCharAt(self: *Lexer, distance: usize) u8 {
+fn peekCharAt(self: *const Lexer, distance: usize) u8 {
     const index = self.pos + distance;
     if (index >= self.input.len) return '\x00';
 
@@ -508,25 +504,25 @@ fn peekCharAt(self: *Lexer, distance: usize) u8 {
 }
 
 test "reads a Minecraft check in a condition up to 'and'" {
-    var l = Lexer.init("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)");
-    try std.testing.expectEqual(.@"if", l.nextToken().tag);
-    try std.testing.expectEqual(.left_paren, l.nextToken().tag);
-    const check = l.nextToken();
+    var lexer = Lexer.init("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)");
+    try std.testing.expectEqual(.@"if", lexer.nextToken().tag);
+    try std.testing.expectEqual(.left_paren, lexer.nextToken().tag);
+    const check = lexer.nextToken();
     try std.testing.expectEqual(.condition_text, check.tag);
     try std.testing.expectEqualStrings("block ~ ~-1 ~ stone[a=b]", check.literal);
-    try std.testing.expectEqual(.@"and", l.nextToken().tag);
-    for (0..8) |_| _ = l.nextToken();
-    try std.testing.expectEqual(.identifier, l.nextToken().tag);
+    try std.testing.expectEqual(.@"and", lexer.nextToken().tag);
+    for (0..8) |_| _ = lexer.nextToken();
+    try std.testing.expectEqual(.identifier, lexer.nextToken().tag);
 }
 
 test "reads a data file body over many lines" {
-    var l = Lexer.init("predicate p {\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}\nmcfun");
-    try std.testing.expectEqual(.identifier, l.nextToken().tag);
-    try std.testing.expectEqual(.identifier, l.nextToken().tag);
-    const body = l.nextToken();
+    var lexer = Lexer.init("predicate p {\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}\nmcfun");
+    try std.testing.expectEqual(.identifier, lexer.nextToken().tag);
+    try std.testing.expectEqual(.identifier, lexer.nextToken().tag);
+    const body = lexer.nextToken();
     try std.testing.expectEqual(.json_body, body.tag);
     try std.testing.expectEqualStrings("{\n  \"a\": \"}\\\"{\",\n  \"b\": [1, {}]\n}", body.literal);
-    const after = l.nextToken();
+    const after = lexer.nextToken();
     try std.testing.expectEqual(.mcfun, after.tag);
     try std.testing.expectEqual(5, after.line);
 
@@ -537,57 +533,57 @@ test "reads a data file body over many lines" {
 }
 
 test "skips comments" {
-    var l = Lexer.init("// first\nvar // second\n");
+    var lexer = Lexer.init("// first\nvar // second\n");
 
-    const tok = l.nextToken();
+    const tok = lexer.nextToken();
     try std.testing.expectEqual(.@"var", tok.tag);
-    try std.testing.expectEqual(.eof, l.nextToken().tag);
+    try std.testing.expectEqual(.eof, lexer.nextToken().tag);
 }
 
 test "reads commands and keeps division" {
-    var l = Lexer.init("x = a / b; /give @s stone{a:[I;1]} 1;");
+    var lexer = Lexer.init("x = a / b; /give @s stone{a:[I;1]} 1;");
 
-    for (0..3) |_| _ = l.nextToken();
-    try std.testing.expectEqual(.slash, l.nextToken().tag);
-    _ = l.nextToken();
-    try std.testing.expectEqual(.semicolon, l.nextToken().tag);
+    for (0..3) |_| _ = lexer.nextToken();
+    try std.testing.expectEqual(.slash, lexer.nextToken().tag);
+    _ = lexer.nextToken();
+    try std.testing.expectEqual(.semicolon, lexer.nextToken().tag);
 
-    const command = l.nextToken();
+    const command = lexer.nextToken();
     try std.testing.expectEqual(.command, command.tag);
     try std.testing.expectEqualStrings("give @s stone{a:[I;1]} 1", command.literal);
-    try std.testing.expectEqual(.semicolon, l.nextToken().tag);
+    try std.testing.expectEqual(.semicolon, lexer.nextToken().tag);
 }
 
 test "reads illegal characters as tokens" {
-    var l = Lexer.init("a \\ \"open");
+    var lexer = Lexer.init("a \\ \"open");
 
-    _ = l.nextToken();
-    try std.testing.expectEqualStrings("\\", l.nextToken().literal);
-    try std.testing.expectEqual(.unclosed, l.nextToken().tag);
-    try std.testing.expectEqual(.eof, l.nextToken().tag);
+    _ = lexer.nextToken();
+    try std.testing.expectEqualStrings("\\", lexer.nextToken().literal);
+    try std.testing.expectEqual(.unclosed, lexer.nextToken().tag);
+    try std.testing.expectEqual(.eof, lexer.nextToken().tag);
 }
 
 test "a string ends at the end of its line" {
-    var l = Lexer.init("\"a\nb");
+    var lexer = Lexer.init("\"a\nb");
 
-    try std.testing.expectEqual(.unclosed, l.nextToken().tag);
-    const next = l.nextToken();
+    try std.testing.expectEqual(.unclosed, lexer.nextToken().tag);
+    const next = lexer.nextToken();
     try std.testing.expectEqualStrings("b", next.literal);
     try std.testing.expectEqual(2, next.line);
 }
 
 test "reads entity data paths after a selector" {
-    var l = Lexer.init("@s.$Inventory[{Slot:0b}].count * 2; @p.$\"a.b\"");
+    var lexer = Lexer.init("@s.$Inventory[{Slot:0b}].count * 2; @p.$\"a.b\"");
 
-    try std.testing.expectEqual(.selector, l.nextToken().tag);
-    const path = l.nextToken();
+    try std.testing.expectEqual(.selector, lexer.nextToken().tag);
+    const path = lexer.nextToken();
     try std.testing.expectEqual(.entity_data, path.tag);
     try std.testing.expectEqualStrings("Inventory[{Slot:0b}].count", path.literal);
-    try std.testing.expectEqual(.star, l.nextToken().tag);
-    _ = l.nextToken();
-    _ = l.nextToken();
-    _ = l.nextToken();
-    try std.testing.expectEqualStrings("\"a.b\"", l.nextToken().literal);
+    try std.testing.expectEqual(.star, lexer.nextToken().tag);
+    _ = lexer.nextToken();
+    _ = lexer.nextToken();
+    _ = lexer.nextToken();
+    try std.testing.expectEqualStrings("\"a.b\"", lexer.nextToken().literal);
 
     var data = Lexer.init("$stats.inventory[0].count + $a..");
     try std.testing.expectEqualStrings("stats.inventory[0].count", data.nextToken().literal);

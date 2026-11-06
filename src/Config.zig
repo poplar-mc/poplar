@@ -42,7 +42,7 @@ fn mcmetaVersion(arena: std.mem.Allocator) !McmetaVersion {
     return std.json.parseFromSliceLeaky(McmetaVersion, arena, mcmeta_version_json, .{ .ignore_unknown_fields = true });
 }
 
-pub fn latestFormat(arena: std.mem.Allocator) !PackFormat {
+fn latestFormat(arena: std.mem.Allocator) !PackFormat {
     const version = try mcmetaVersion(arena);
     return .{ .major = version.data_pack_version, .minor = version.data_pack_version_minor };
 }

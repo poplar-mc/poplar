@@ -44,10 +44,10 @@ pub fn get(self: *const Environment, name: []const u8) ?Value {
 }
 
 // Returns false if the name is already visible, so names cannot be shadowed.
-pub fn declare(self: *Environment, gpa: std.mem.Allocator, name: []const u8, value: Value) std.mem.Allocator.Error!bool {
+pub fn declare(self: *Environment, arena: std.mem.Allocator, name: []const u8, value: Value) std.mem.Allocator.Error!bool {
     if (self.get(name) != null) return false;
 
-    try self.store.put(gpa, name, value);
+    try self.store.put(arena, name, value);
     return true;
 }
 

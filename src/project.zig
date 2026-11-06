@@ -49,7 +49,7 @@ pub const Diagnostic = struct {
 };
 
 pub const Options = struct {
-    // The folder of the standard library, which `import "std";` loads.
+    // The folder of the standard library, which `import std;` loads.
     std_path: []const u8,
     mode: Mode,
     // Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
@@ -348,7 +348,7 @@ fn writeNewFile(io: std.Io, dir: std.Io.Dir, path: []const u8, data: []const u8)
 }
 
 // `My Pack` → `my_pack`. A namespace may only use a-z, 0-9, `_`, `.` and `-`.
-pub fn namespaceFromName(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
+fn namespaceFromName(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
     const namespace = try arena.alloc(u8, name.len);
     for (name, namespace) |ch, *out| {
         const lower = std.ascii.toLower(ch);

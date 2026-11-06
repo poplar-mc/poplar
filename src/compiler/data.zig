@@ -19,7 +19,7 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
     if (!values.containsRuntimeValue(compiler, expression, env)) {
         const value = try values.evaluate(compiler, expression, env) orelse return;
         if (value == .null) return compiler.addError("data cannot be set to null", .{});
-        return commands.append(compiler.gpa, .{ .data_set = .{ .target = target, .snbt = try values.valueToSnbt(compiler, value) } });
+        return commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = try values.valueToSnbt(compiler, value) } });
     }
 
     if (expression.kind == .call and isStringCall(expression.kind.call)) return compileStringInto(compiler, target, expression.kind.call, env, commands);
@@ -27,7 +27,7 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
 
     // A macro argument is text in the command, so Minecraft reads its type, as in a hand-written datapack.
     if (expression.kind == .macro_key) {
-        return commands.append(compiler.gpa, .{ .data_set = .{ .target = target, .snbt = try std.fmt.allocPrint(compiler.gpa, "$({s})", .{expression.kind.macro_key}) } });
+        return commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = try std.fmt.allocPrint(compiler.arena, "$({s})", .{expression.kind.macro_key}) } });
     }
 
     if (expression.kind == .identifier) {
@@ -35,12 +35,12 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
         switch (identifier.kind) {
             .score => {
                 const score = try scores.scoreSource(compiler, identifier, env) orelse return;
-                return commands.append(compiler.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
+                return commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = score } });
             },
             .data, .entity_data => {
                 const source = try dataPathOf(compiler, identifier, env) orelse return;
                 if (std.meta.eql(source.holder, target.holder) and std.mem.eql(u8, source.path, target.path)) return;
-                return commands.append(compiler.gpa, .{ .data_copy = .{ .target = target, .source = source } });
+                return commands.append(compiler.arena, .{ .data_copy = .{ .target = target, .source = source } });
             },
             .compile_time => {},
         }
@@ -49,7 +49,7 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
     compiler.temp_count = 0;
     const temp = try scores.newTemp(compiler);
     try scores.compileInto(compiler, temp, expression, env, commands);
-    try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = target, .score = temp } });
+    try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = temp } });
 }
 
 // A runtime value inside a literal, and where it goes: `[1]` in `pos[1]`, `.hp` in `stats.hp`.
@@ -63,37 +63,37 @@ pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression
     var parts: std.ArrayList(LiteralPart) = .empty;
     const template = try literalTemplate(compiler, expression, "", env, &parts) orelse return;
 
-    try commands.append(compiler.gpa, .{ .data_set = .{ .target = target, .snbt = try values.valueToSnbt(compiler, template) } });
+    try commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = try values.valueToSnbt(compiler, template) } });
     for (parts.items) |part| {
-        const part_target = target.withPath(try std.mem.concat(compiler.gpa, u8, &.{ target.path, part.path }));
+        const part_target = target.withPath(try std.mem.concat(compiler.arena, u8, &.{ target.path, part.path }));
         try compileDataAssign(compiler, part_target, part.value, env, commands);
     }
 }
 
 // The literal as a value, with `0` in the place of each runtime part.
-pub fn literalTemplate(compiler: *Compiler, expression: *const ast.Expression, path: []const u8, env: *Environment, parts: *std.ArrayList(LiteralPart)) Compiler.CompileError!?Compiler.Value {
+fn literalTemplate(compiler: *Compiler, expression: *const ast.Expression, path: []const u8, env: *Environment, parts: *std.ArrayList(LiteralPart)) Compiler.CompileError!?Compiler.Value {
     if (!values.containsRuntimeValue(compiler, expression, env)) return try values.evaluate(compiler, expression, env);
 
     switch (expression.kind) {
         .list => |elements| {
-            const template = try compiler.gpa.alloc(Compiler.Value, elements.len);
+            const template = try compiler.arena.alloc(Compiler.Value, elements.len);
             for (elements, template, 0..) |element, *value, index| {
-                const element_path = try std.fmt.allocPrint(compiler.gpa, "{s}[{d}]", .{ path, index });
+                const element_path = try std.fmt.allocPrint(compiler.arena, "{s}[{d}]", .{ path, index });
                 value.* = try literalTemplate(compiler, element, element_path, env, parts) orelse return null;
             }
             return .{ .list = template };
         },
         .compound => |entries| {
-            const template = try compiler.gpa.alloc(Compiler.Value.Entry, entries.len);
+            const template = try compiler.arena.alloc(Compiler.Value.Entry, entries.len);
             for (entries, template) |entry, *value| {
-                const entry_path = try std.fmt.allocPrint(compiler.gpa, "{s}.{s}", .{ path, try values.snbtKey(compiler, entry.key) });
+                const entry_path = try std.fmt.allocPrint(compiler.arena, "{s}.{s}", .{ path, try values.snbtKey(compiler, entry.key) });
                 const entry_value = try literalTemplate(compiler, entry.value, entry_path, env, parts) orelse return null;
                 value.* = .{ .key = entry.key, .value = entry_value };
             }
             return .{ .compound = template };
         },
         else => {
-            try parts.append(compiler.gpa, .{ .path = path, .value = expression });
+            try parts.append(compiler.arena, .{ .path = path, .value = expression });
             return .{ .number = 0 };
         },
     }
@@ -103,7 +103,7 @@ pub fn isDataIdentifier(expression: *const ast.Expression) bool {
     return expression.kind == .identifier and (expression.kind.identifier.kind == .data or expression.kind.identifier.kind == .entity_data);
 }
 
-// A `#` variable in `<ns>:data`, or the NBT path of one entity.
+// A `$` variable in `<ns>:data`, or the NBT path of one entity.
 pub fn dataPathOf(compiler: *Compiler, identifier: ast.Identifier, env: *const Environment) Compiler.CompileError!?ir.DataPath {
     if (identifier.kind == .entity_data) return entityDataPath(compiler, identifier);
     return dataPath(compiler, identifier, env);
@@ -119,7 +119,7 @@ pub fn dataPath(compiler: *Compiler, identifier: ast.Identifier, env: *const Env
     const name = identifier.name;
     const root = Compiler.pathRoot(name);
     if (identifier.namespace == null) {
-        if (Compiler.localOf(env, '$', root)) |local| return dataLocal(compiler, try std.mem.concat(compiler.gpa, u8, &.{ local.generated_name, name[root.len..] }));
+        if (Compiler.localOf(env, '$', root)) |local| return dataLocal(compiler, try std.mem.concat(compiler.arena, u8, &.{ local.generated_name, name[root.len..] }));
     }
     const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
     const global = compiler.data_globals.get(try declarations.qualifiedKey(compiler, namespace, root)) orelse {
@@ -153,16 +153,16 @@ pub fn textComponent(compiler: *Compiler, argument: *const ast.Expression, env: 
                 const score = try scores.resolveScore(compiler, identifier, env) orelse return null;
                 // A local score is in Poplar's objective `poplar.<ns>`, a global one in `<ns>.<name>`.
                 const score_namespace = score.namespace orelse compiler.pack_namespace;
-                const objective = if (score.objective) |name| try std.fmt.allocPrint(compiler.gpa, "{s}.{s}", .{ score_namespace, name }) else try std.fmt.allocPrint(compiler.gpa, "poplar.{s}", .{score_namespace});
-                const holder: Compiler.Value = .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
-                return .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{.{ .key = "score", .value = holder }}) };
+                const objective = if (score.objective) |name| try std.fmt.allocPrint(compiler.arena, "{s}.{s}", .{ score_namespace, name }) else try std.fmt.allocPrint(compiler.arena, "poplar.{s}", .{score_namespace});
+                const holder: Compiler.Value = .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
+                return .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{.{ .key = "score", .value = holder }}) };
             },
             .data => {
                 const path = try dataPath(compiler, identifier, env) orelse return null;
-                const storage = try std.fmt.allocPrint(compiler.gpa, "{s}:{s}", .{ path.namespace orelse compiler.pack_namespace, if (path.holder.storage == .std) "std" else "data" });
-                return .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path.path } } }) };
+                const storage = try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ path.namespace orelse compiler.pack_namespace, if (path.holder.storage == .std) "std" else "data" });
+                return .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path.path } } }) };
             },
-            .entity_data => return .{ .compound = try compiler.gpa.dupe(Compiler.Value.Entry, &.{ .{ .key = "entity", .value = .{ .string = identifier.selector.? } }, .{ .key = "nbt", .value = .{ .string = identifier.name } } }) },
+            .entity_data => return .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{ .{ .key = "entity", .value = .{ .string = identifier.selector.? } }, .{ .key = "nbt", .value = .{ .string = identifier.name } } }) },
             .compile_time => {},
         }
     }
@@ -185,35 +185,35 @@ pub fn compileListBuiltin(compiler: *Compiler, name: []const u8, call: ast.Call,
     } else 0;
 
     if (std.mem.eql(u8, name, "remove")) {
-        return commands.append(compiler.gpa, .{ .data_remove = list.withPath(try std.fmt.allocPrint(compiler.gpa, "{s}[{d}]", .{ list.path, index })) });
+        return commands.append(compiler.arena, .{ .data_remove = list.withPath(try std.fmt.allocPrint(compiler.arena, "{s}[{d}]", .{ list.path, index })) });
     }
 
     const position: ir.DataAdd.Position = if (std.mem.eql(u8, name, "append")) .append else if (std.mem.eql(u8, name, "prepend")) .prepend else .{ .insert = index };
     const element_path = switch (position) {
         .append => "[-1]",
         .prepend => "[0]",
-        .insert => try std.fmt.allocPrint(compiler.gpa, "[{d}]", .{index}),
+        .insert => try std.fmt.allocPrint(compiler.arena, "[{d}]", .{index}),
     };
     const value = call.args[arity - 1];
 
     if (!values.containsRuntimeValue(compiler, value, env)) {
         const constant = try values.evaluate(compiler, value, env) orelse return;
         const snbt = try values.valueToSnbt(compiler, constant);
-        return commands.append(compiler.gpa, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = snbt } } });
+        return commands.append(compiler.arena, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = snbt } } });
     }
     if (isDataIdentifier(value)) {
         const source = try dataPathOf(compiler, value.kind.identifier, env) orelse return;
-        return commands.append(compiler.gpa, .{ .data_add = .{ .list = list, .position = position, .source = .{ .from = source } } });
+        return commands.append(compiler.arena, .{ .data_add = .{ .list = list, .position = position, .source = .{ .from = source } } });
     }
 
     // Add a `0`, then store the runtime value into it.
-    try commands.append(compiler.gpa, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = "0" } } });
-    const element = list.withPath(try std.mem.concat(compiler.gpa, u8, &.{ list.path, element_path }));
+    try commands.append(compiler.arena, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = "0" } } });
+    const element = list.withPath(try std.mem.concat(compiler.arena, u8, &.{ list.path, element_path }));
     try compileDataAssign(compiler, element, value, env, commands);
 }
 
 // The first argument of a list helper: a `$` variable or entity data.
-pub fn listArgument(compiler: *Compiler, name: []const u8, argument: *const ast.Expression, env: *const Environment) Compiler.CompileError!?ir.DataPath {
+fn listArgument(compiler: *Compiler, name: []const u8, argument: *const ast.Expression, env: *const Environment) Compiler.CompileError!?ir.DataPath {
     const outer_position = compiler.enterExpression(argument);
     defer compiler.restorePosition(outer_position);
     if (!isDataIdentifier(argument)) {
@@ -247,7 +247,7 @@ pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Cal
         const start = try constantIndex(compiler, call.args[1], env) orelse return;
         const end: ?i32 = if (call.args.len == 3) try constantIndex(compiler, call.args[2], env) orelse return else null;
         const source = try stringSource(compiler, call.args[0], env, commands) orelse return;
-        return commands.append(compiler.gpa, .{ .data_set_string = .{ .target = target, .source = source, .start = start, .end = end } });
+        return commands.append(compiler.arena, .{ .data_set_string = .{ .target = target, .source = source, .start = start, .end = end } });
     }
 
     if (call.args.len != 1) return compiler.addError("'str' expects 1 argument, found {d}", .{call.args.len});
@@ -255,7 +255,7 @@ pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Cal
     if (argument.kind == .call and isStringCall(argument.kind.call)) return compileStringInto(compiler, target, argument.kind.call, env, commands);
     if (isDataIdentifier(argument)) {
         const source = try dataPathOf(compiler, argument.kind.identifier, env) orelse return;
-        return commands.append(compiler.gpa, .{ .data_set_string = .{ .target = target, .source = source } });
+        return commands.append(compiler.arena, .{ .data_set_string = .{ .target = target, .source = source } });
     }
     const score = if (argument.kind == .identifier and argument.kind.identifier.kind == .score)
         try scores.scoreSource(compiler, argument.kind.identifier, env) orelse return
@@ -264,12 +264,12 @@ pub fn compileStringInto(compiler: *Compiler, target: ir.DataPath, call: ast.Cal
         try scores.compileInto(compiler, temp, argument, env, commands);
         break :blk temp;
     };
-    try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = string_scratch, .score = score } });
-    try commands.append(compiler.gpa, .{ .data_set_string = .{ .target = target, .source = string_scratch } });
+    try commands.append(compiler.arena, .{ .score_to_data = .{ .target = string_scratch, .score = score } });
+    try commands.append(compiler.arena, .{ .data_set_string = .{ .target = target, .source = string_scratch } });
 }
 
 // The data that a string helper reads: a `$` path, entity data, or another string helper (through the scratch value).
-pub fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.DataPath {
+fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.DataPath {
     if (isDataIdentifier(argument)) return try dataPathOf(compiler, argument.kind.identifier, env);
     if (argument.kind == .call and isStringCall(argument.kind.call)) {
         try compileStringInto(compiler, string_scratch, argument.kind.call, env, commands);
@@ -281,7 +281,7 @@ pub fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *
     return null;
 }
 
-pub fn constantIndex(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.CompileError!?i32 {
+fn constantIndex(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.CompileError!?i32 {
     if (values.containsRuntimeValue(compiler, expression, env)) {
         const outer_position = compiler.enterExpression(expression);
         defer compiler.restorePosition(outer_position);
@@ -306,14 +306,14 @@ pub fn stringTest(compiler: *Compiler, call: ast.Call, env: *Environment, negate
 
     const source = try stringSource(compiler, call.args[0], env, setup) orelse return null;
     const test_value: ir.DataPath = .inStorage(.poplar, string_test_key);
-    try setup.append(compiler.gpa, .{ .data_set = .{ .target = test_value, .snbt = "\"\"" } });
+    try setup.append(compiler.arena, .{ .data_set = .{ .target = test_value, .snbt = "\"\"" } });
     const is_start = calls.isBuiltinCall(call, "startsWith");
-    try setup.append(compiler.gpa, .{ .data_set_string = .{ .target = test_value, .source = source, .start = if (is_start) 0 else -length, .end = if (is_start) length else null } });
-    const filter = try std.fmt.allocPrint(compiler.gpa, "{{{s}:{s}}}", .{ string_test_key, try values.valueToSnbt(compiler, .{ .string = affix }) });
+    try setup.append(compiler.arena, .{ .data_set_string = .{ .target = test_value, .source = source, .start = if (is_start) 0 else -length, .end = if (is_start) length else null } });
+    const filter = try std.fmt.allocPrint(compiler.arena, "{{{s}:{s}}}", .{ string_test_key, try values.valueToSnbt(compiler, .{ .string = affix }) });
     return try conditions.singleCheck(compiler, .{ .negated = negated, .condition = .{ .data_test = .{ .holder = .{ .storage = .poplar }, .path = filter } } });
 }
 
-pub fn constantString(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, builtin: []const u8) Compiler.CompileError!?[]const u8 {
+fn constantString(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, builtin: []const u8) Compiler.CompileError!?[]const u8 {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(compiler, expression, env)) {
@@ -335,7 +335,7 @@ pub fn evaluateStringCall(compiler: *Compiler, call: ast.Call, env: *Environment
     const first = try values.evaluate(compiler, call.args[0], env) orelse return null;
     const text = switch (first) {
         .string => |text| text,
-        .number => |number| try std.fmt.allocPrint(compiler.gpa, "{d}", .{number}),
+        .number => |number| try std.fmt.allocPrint(compiler.arena, "{d}", .{number}),
         .typed_number => |number| number.text,
         else => {
             try compiler.addError("'{s}' needs a string or a number, found {s}", .{ name, @tagName(first) });
@@ -349,7 +349,7 @@ pub fn evaluateStringCall(compiler: *Compiler, call: ast.Call, env: *Environment
         return .{ .boolean = matches };
     }
 
-    const units = std.unicode.utf8ToUtf16LeAlloc(compiler.gpa, text) catch |err| switch (err) {
+    const units = std.unicode.utf8ToUtf16LeAlloc(compiler.arena, text) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidUtf8 => {
             try compiler.addError("'slice' needs valid UTF-8 text", .{});
@@ -365,7 +365,7 @@ pub fn evaluateStringCall(compiler: *Compiler, call: ast.Call, env: *Environment
         try compiler.addError("'slice' bounds {d}..{d} are out of range for a text of length {d}", .{ start, end, length });
         return null;
     }
-    const sliced = std.unicode.utf16LeToUtf8Alloc(compiler.gpa, units[@intCast(from)..@intCast(to)]) catch |err| switch (err) {
+    const sliced = std.unicode.utf16LeToUtf8Alloc(compiler.arena, units[@intCast(from)..@intCast(to)]) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try compiler.addError("'slice' cuts a character in two", .{});
@@ -381,7 +381,7 @@ pub fn compileLength(compiler: *Compiler, target: ir.Score, call: ast.Call, env:
     const argument = call.args[0];
     if (!isDataIdentifier(argument)) return compiler.addError("'len' needs a list, a compound or a string in data", .{});
     const source = try dataPathOf(compiler, argument.kind.identifier, env) orelse return;
-    try commands.append(compiler.gpa, .{ .data_to_score = .{ .source = source, .score = target } });
+    try commands.append(compiler.arena, .{ .data_to_score = .{ .source = source, .score = target } });
 }
 
 test "data variables use storage and macros" {

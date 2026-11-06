@@ -3,7 +3,6 @@ const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
 const Environment = @import("../Environment.zig");
-const Token = @import("../Token.zig");
 const calls = @import("calls.zig");
 const data = @import("data.zig");
 
@@ -33,7 +32,7 @@ pub fn containsRuntimeValue(compiler: *const Compiler, expression: *const ast.Ex
 }
 
 // `text(x)` and `len(x)` on a compile-time value are known when the pack is built.
-pub fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler.CompileError!?Compiler.Value {
+fn evaluateCall(compiler: *Compiler, call: ast.Call, env: *Environment) Compiler.CompileError!?Compiler.Value {
     if (call.callee.kind != .identifier) {
         try compiler.addError("only named functions can be called", .{});
         return null;
@@ -112,19 +111,19 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *En
         .infix => |infix| evaluateInfix(compiler, infix, env),
         .call => |call| evaluateCall(compiler, call, env),
         .selector => |text| {
-            if (try compiler.command_tree.checkSelector(compiler.gpa, text)) |failure| {
+            if (try compiler.command_tree.checkSelector(compiler.arena, text)) |failure| {
                 try compiler.addError("{s}", .{failure.message});
                 return null;
             }
             return .{ .string = text };
         },
         .list => |elements| {
-            const values = try compiler.gpa.alloc(Compiler.Value, elements.len);
+            const values = try compiler.arena.alloc(Compiler.Value, elements.len);
             for (elements, values) |element, *value| value.* = try evaluate(compiler, element, env) orelse return null;
             return .{ .list = values };
         },
         .compound => |entries| {
-            const values = try compiler.gpa.alloc(Compiler.Value.Entry, entries.len);
+            const values = try compiler.arena.alloc(Compiler.Value.Entry, entries.len);
             for (entries, values, 0..) |entry, *value, index| {
                 for (entries[0..index]) |earlier| {
                     if (std.mem.eql(u8, earlier.key, entry.key)) {
@@ -139,27 +138,27 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *En
     };
 }
 
-pub fn evaluatePrefix(compiler: *Compiler, prefix: ast.Prefix, env: *Environment) Compiler.CompileError!?Compiler.Value {
+fn evaluatePrefix(compiler: *Compiler, prefix: ast.Prefix, env: *Environment) Compiler.CompileError!?Compiler.Value {
     const operand = try evaluate(compiler, prefix.operand, env) orelse return null;
 
-    if (prefix.op == .minus and operand == .number) return checkedNumber(compiler, std.math.sub(i64, 0, operand.number));
-    if (prefix.op == .minus and operand == .typed_number) {
+    if (prefix.op == .negate and operand == .number) return checkedNumber(compiler, std.math.sub(i64, 0, operand.number));
+    if (prefix.op == .negate and operand == .typed_number) {
         const text = operand.typed_number.text;
-        const negated = if (text[0] == '-') text[1..] else try std.fmt.allocPrint(compiler.gpa, "-{s}", .{text});
+        const negated = if (text[0] == '-') text[1..] else try std.fmt.allocPrint(compiler.arena, "-{s}", .{text});
         return .{ .typed_number = .{ .text = negated, .type = operand.typed_number.type } };
     }
-    if (prefix.op == .bang and operand == .boolean) return .{ .boolean = !operand.boolean };
+    if (prefix.op == .not and operand == .boolean) return .{ .boolean = !operand.boolean };
 
-    try compiler.addError("operator '{s}' cannot be used with {s}", .{ operatorText(prefix.op), @tagName(operand) });
+    try compiler.addError("operator '{s}' cannot be used with {s}", .{ prefixOperatorText(prefix.op), @tagName(operand) });
     return null;
 }
 
-pub fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compiler.CompileError!?Compiler.Value {
+fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compiler.CompileError!?Compiler.Value {
     const left = try evaluate(compiler, infix.left, env) orelse return null;
     const right = try evaluate(compiler, infix.right, env) orelse return null;
 
-    if (infix.op == .plus and (left == .string or right == .string)) {
-        const text = try std.fmt.allocPrint(compiler.gpa, "{s}{s}", .{ try valueToText(compiler, left), try valueToText(compiler, right) });
+    if (infix.op == .add and (left == .string or right == .string)) {
+        const text = try std.fmt.allocPrint(compiler.arena, "{s}{s}", .{ try valueToText(compiler, left), try valueToText(compiler, right) });
         return .{ .string = text };
     }
 
@@ -168,15 +167,15 @@ pub fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) C
         const b = right.number;
 
         switch (infix.op) {
-            .plus => return checkedNumber(compiler, std.math.add(i64, a, b)),
-            .minus => return checkedNumber(compiler, std.math.sub(i64, a, b)),
-            .star => return checkedNumber(compiler, std.math.mul(i64, a, b)),
-            .slash => return checkedNumber(compiler, std.math.divFloor(i64, a, b)),
-            .percent => return checkedNumber(compiler, floorMod(a, b)),
+            .add => return checkedNumber(compiler, std.math.add(i64, a, b)),
+            .subtract => return checkedNumber(compiler, std.math.sub(i64, a, b)),
+            .multiply => return checkedNumber(compiler, std.math.mul(i64, a, b)),
+            .divide => return checkedNumber(compiler, std.math.divFloor(i64, a, b)),
+            .modulo => return checkedNumber(compiler, floorMod(a, b)),
             .less => return .{ .boolean = a < b },
-            .less_eql => return .{ .boolean = a <= b },
+            .less_equal => return .{ .boolean = a <= b },
             .greater => return .{ .boolean = a > b },
-            .greater_eql => return .{ .boolean = a >= b },
+            .greater_equal => return .{ .boolean = a >= b },
             else => {},
         }
     }
@@ -189,24 +188,24 @@ pub fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) C
         }
     }
 
-    if ((infix.op == .eql_eql or infix.op == .bang_eql) and std.meta.activeTag(left) == std.meta.activeTag(right)) {
+    if ((infix.op == .equal or infix.op == .not_equal) and std.meta.activeTag(left) == std.meta.activeTag(right)) {
         const is_equal = valuesEqual(left, right);
-        return .{ .boolean = if (infix.op == .eql_eql) is_equal else !is_equal };
+        return .{ .boolean = if (infix.op == .equal) is_equal else !is_equal };
     }
 
     if (left == .typed_number or right == .typed_number) {
-        try compiler.addError("build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here", .{operatorText(infix.op)});
+        try compiler.addError("build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here", .{infixOperatorText(infix.op)});
         return null;
     }
     try compiler.addError("operator '{s}' cannot be used with {s} and {s}", .{
-        operatorText(infix.op),
+        infixOperatorText(infix.op),
         @tagName(left),
         @tagName(right),
     });
     return null;
 }
 
-pub fn checkedNumber(compiler: *Compiler, result: error{ Overflow, DivisionByZero }!i64) Compiler.CompileError!?Compiler.Value {
+fn checkedNumber(compiler: *Compiler, result: error{ Overflow, DivisionByZero }!i64) Compiler.CompileError!?Compiler.Value {
     const number = result catch |err| switch (err) {
         error.Overflow => {
             try compiler.addError("integer overflow", .{});
@@ -221,7 +220,7 @@ pub fn checkedNumber(compiler: *Compiler, result: error{ Overflow, DivisionByZer
 }
 
 // Same result as Java's Math.floorMod, which Minecraft uses for `%=`.
-pub fn floorMod(a: i64, b: i64) error{DivisionByZero}!i64 {
+fn floorMod(a: i64, b: i64) error{DivisionByZero}!i64 {
     if (b == 0) return error.DivisionByZero;
     if (b == -1) return 0;
 
@@ -229,7 +228,7 @@ pub fn floorMod(a: i64, b: i64) error{DivisionByZero}!i64 {
     return if (remainder != 0 and (remainder < 0) != (b < 0)) remainder + b else remainder;
 }
 
-pub fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
+fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
     return switch (left) {
         .string => |text| std.mem.eql(u8, text, right.string),
         .number => |number| number == right.number,
@@ -246,30 +245,35 @@ pub fn valuesEqual(left: Compiler.Value, right: Compiler.Value) bool {
     };
 }
 
-pub fn operatorText(op: Token.Tag) []const u8 {
+pub fn prefixOperatorText(op: ast.Prefix.Operator) []const u8 {
     return switch (op) {
-        .plus => "+",
-        .minus => "-",
-        .star => "*",
-        .slash => "/",
-        .percent => "%",
-        .bang => "!",
+        .negate => "-",
+        .not => "!",
+    };
+}
+
+pub fn infixOperatorText(op: ast.Infix.Operator) []const u8 {
+    return switch (op) {
+        .add => "+",
+        .subtract => "-",
+        .multiply => "*",
+        .divide => "/",
+        .modulo => "%",
+        .equal => "==",
+        .not_equal => "!=",
         .less => "<",
-        .less_eql => "<=",
+        .less_equal => "<=",
         .greater => ">",
-        .greater_eql => ">=",
-        .eql_eql => "==",
-        .bang_eql => "!=",
+        .greater_equal => ">=",
         .@"and" => "and",
         .@"or" => "or",
-        else => @tagName(op),
     };
 }
 
 pub fn valueToText(compiler: *Compiler, value: Compiler.Value) Compiler.CompileError![]const u8 {
     return switch (value) {
         .string => |text| text,
-        .number => |number| try std.fmt.allocPrint(compiler.gpa, "{d}", .{number}),
+        .number => |number| try std.fmt.allocPrint(compiler.arena, "{d}", .{number}),
         .typed_number => |number| try typedNumberSnbt(compiler, number),
         .boolean => |boolean| if (boolean) "true" else "false",
         .null => "null",
@@ -279,9 +283,9 @@ pub fn valueToText(compiler: *Compiler, value: Compiler.Value) Compiler.CompileE
 }
 
 // `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is a double.
-pub fn typedNumberSnbt(compiler: *Compiler, number: ast.TypedNumber) Compiler.CompileError![]const u8 {
+fn typedNumberSnbt(compiler: *Compiler, number: ast.TypedNumber) Compiler.CompileError![]const u8 {
     const suffix = if (number.type) |number_type| number_type.suffix() else "";
-    return std.mem.concat(compiler.gpa, u8, &.{ number.text, suffix });
+    return std.mem.concat(compiler.arena, u8, &.{ number.text, suffix });
 }
 
 // A key is written as it is when it is a plain name, else in quotes.
@@ -296,33 +300,33 @@ pub fn valueToSnbt(compiler: *Compiler, value: Compiler.Value) Compiler.CompileE
     switch (value) {
         .list => |elements| {
             var snbt: std.ArrayList(u8) = .empty;
-            try snbt.append(compiler.gpa, '[');
+            try snbt.append(compiler.arena, '[');
             for (elements, 0..) |element, index| {
-                if (index > 0) try snbt.append(compiler.gpa, ',');
-                try snbt.appendSlice(compiler.gpa, try valueToSnbt(compiler, element));
+                if (index > 0) try snbt.append(compiler.arena, ',');
+                try snbt.appendSlice(compiler.arena, try valueToSnbt(compiler, element));
             }
-            try snbt.append(compiler.gpa, ']');
-            return snbt.toOwnedSlice(compiler.gpa);
+            try snbt.append(compiler.arena, ']');
+            return snbt.toOwnedSlice(compiler.arena);
         },
         .compound => |entries| {
             var snbt: std.ArrayList(u8) = .empty;
-            try snbt.append(compiler.gpa, '{');
+            try snbt.append(compiler.arena, '{');
             for (entries, 0..) |entry, index| {
-                if (index > 0) try snbt.append(compiler.gpa, ',');
-                try snbt.print(compiler.gpa, "{s}:{s}", .{ try snbtKey(compiler, entry.key), try valueToSnbt(compiler, entry.value) });
+                if (index > 0) try snbt.append(compiler.arena, ',');
+                try snbt.print(compiler.arena, "{s}:{s}", .{ try snbtKey(compiler, entry.key), try valueToSnbt(compiler, entry.value) });
             }
-            try snbt.append(compiler.gpa, '}');
-            return snbt.toOwnedSlice(compiler.gpa);
+            try snbt.append(compiler.arena, '}');
+            return snbt.toOwnedSlice(compiler.arena);
         },
         .string => |text| {
             var snbt: std.ArrayList(u8) = .empty;
-            try snbt.append(compiler.gpa, '"');
+            try snbt.append(compiler.arena, '"');
             for (text) |ch| {
-                if (ch == '"' or ch == '\\') try snbt.append(compiler.gpa, '\\');
-                try snbt.append(compiler.gpa, ch);
+                if (ch == '"' or ch == '\\') try snbt.append(compiler.arena, '\\');
+                try snbt.append(compiler.arena, ch);
             }
-            try snbt.append(compiler.gpa, '"');
-            return snbt.toOwnedSlice(compiler.gpa);
+            try snbt.append(compiler.arena, '"');
+            return snbt.toOwnedSlice(compiler.arena);
         },
         else => return valueToText(compiler, value),
     }

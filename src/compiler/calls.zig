@@ -18,7 +18,7 @@ const values = @import("values.zig");
 pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compiler.McfunDeclaration, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!?ir.Command {
     const mcfun = declaration.mcfun;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-    try Compiler.collectMacroKeys(compiler.gpa, mcfun.body, &keys);
+    try Compiler.collectMacroKeys(compiler.arena, mcfun.body, &keys);
     if (call.args.len > 0) {
         try compiler.addError("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ mcfun.name, mcfun.name, try exampleCompound(compiler, keys.keys()) });
         return null;
@@ -69,17 +69,17 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
     }
     if (is_inline) {
         var compound: std.ArrayList(u8) = .empty;
-        try compound.append(compiler.gpa, '{');
+        try compound.append(compiler.arena, '{');
         for (entries, 0..) |entry, index| {
-            if (index > 0) try compound.append(compiler.gpa, ',');
-            try compound.print(compiler.gpa, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) orelse return null });
+            if (index > 0) try compound.append(compiler.arena, ',');
+            try compound.print(compiler.arena, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) orelse return null });
         }
-        try compound.append(compiler.gpa, '}');
-        return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(compiler.gpa) } } };
+        try compound.append(compiler.arena, '}');
+        return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(compiler.arena) } } };
     }
 
     // Math is computed before any key is written, so a call inside a value cannot overwrite them.
-    const entry_scores = try compiler.gpa.alloc(?ir.Score, entries.len);
+    const entry_scores = try compiler.arena.alloc(?ir.Score, entries.len);
     for (entries, entry_scores) |entry, *score| {
         score.* = null;
         const entry_value = entry.value;
@@ -102,17 +102,17 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         const target: ir.DataPath = .inStorage(.args, try values.snbtKey(compiler, entry.key));
         const entry_value = entry.value;
         if (entry_score) |score| {
-            try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = target, .score = score } });
+            try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = score } });
         } else if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call) and values.containsRuntimeValue(compiler, entry_value, env)) {
             try data.compileStringInto(compiler, target, entry_value.kind.call, env, commands);
         } else if (data.isDataIdentifier(entry_value)) {
             const source = try data.dataPathOf(compiler, entry_value.kind.identifier, env) orelse return null;
-            try commands.append(compiler.gpa, .{ .data_copy = .{ .target = target, .source = source } });
+            try commands.append(compiler.arena, .{ .data_copy = .{ .target = target, .source = source } });
         } else if ((entry_value.kind == .list or entry_value.kind == .compound) and values.containsRuntimeValue(compiler, entry_value, env)) {
             try data.compileLiteralAssign(compiler, target, entry_value, env, commands);
         } else {
             const snbt = try argumentSnbt(compiler, entry.value, env) orelse return null;
-            try commands.append(compiler.gpa, .{ .data_set = .{ .target = target, .snbt = snbt } });
+            try commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = snbt } });
         }
     }
     return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .args_storage } };
@@ -153,17 +153,17 @@ fn setsData(body: []const ast.Statement, name: []const u8) bool {
 fn exampleCompound(compiler: *Compiler, keys: []const []const u8) Compiler.CompileError![]const u8 {
     if (keys.len == 0) return "{name: ...}";
     var text: std.ArrayList(u8) = .empty;
-    try text.append(compiler.gpa, '{');
-    for (keys, 0..) |key, index| try text.print(compiler.gpa, "{s}{s}: ...", .{ if (index == 0) "" else ", ", key });
-    try text.append(compiler.gpa, '}');
-    return text.toOwnedSlice(compiler.gpa);
+    try text.append(compiler.arena, '{');
+    for (keys, 0..) |key, index| try text.print(compiler.arena, "{s}{s}: ...", .{ if (index == 0) "" else ", ", key });
+    try text.append(compiler.arena, '}');
+    return text.toOwnedSlice(compiler.arena);
 }
 
 // A compile-time value as SNBT. A macro key is `"$(name)"`, so the line becomes a macro line.
-pub fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environment) Compiler.CompileError!?[]const u8 {
+fn argumentSnbt(compiler: *Compiler, arg: *const ast.Expression, env: *Environment) Compiler.CompileError!?[]const u8 {
     const outer_position = compiler.enterExpression(arg);
     defer compiler.restorePosition(outer_position);
-    if (arg.kind == .macro_key) return try std.fmt.allocPrint(compiler.gpa, "\"$({s})\"", .{arg.kind.macro_key});
+    if (arg.kind == .macro_key) return try std.fmt.allocPrint(compiler.arena, "\"$({s})\"", .{arg.kind.macro_key});
 
     const value = try values.evaluate(compiler, arg, env) orelse return null;
     if (value == .null) {
@@ -184,10 +184,10 @@ pub fn generatedCall(compiler: *Compiler, name: []const u8) ir.Command {
 pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.Score, live_temp_count: usize, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
     var saved_scores: std.ArrayList(ir.Score) = .empty;
     var saved_data: std.ArrayList([]const u8) = .empty;
-    for (0..live_temp_count) |index| try saved_scores.append(compiler.gpa, try scores.tempScore(compiler, index));
+    for (0..live_temp_count) |index| try saved_scores.append(compiler.arena, try scores.tempScore(compiler, index));
     for (compiler.live_locals.items) |local| switch (local.kind) {
-        .score => try saved_scores.append(compiler.gpa, .{ .holder = local.generated_name, .owner = local.owner, .namespace = compiler.scope.output_namespace }),
-        .data => try saved_data.append(compiler.gpa, local.generated_name),
+        .score => try saved_scores.append(compiler.arena, .{ .holder = local.generated_name, .owner = local.owner, .namespace = compiler.scope.output_namespace }),
+        .data => try saved_data.append(compiler.arena, local.generated_name),
     };
     if (target) |result| for (saved_scores.items, 0..) |score, index| {
         if (score.eql(result)) {
@@ -195,24 +195,24 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
             break;
         }
     };
-    if (saved_scores.items.len + saved_data.items.len == 0) return commands.append(compiler.gpa, call);
+    if (saved_scores.items.len + saved_data.items.len == 0) return commands.append(compiler.arena, call);
 
     compiler.uses_stack = true;
-    try commands.append(compiler.gpa, .frame_push);
-    for (saved_scores.items) |score| try commands.append(compiler.gpa, .{ .score_to_data = .{ .target = try frameSlot(compiler, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(compiler.gpa, .{ .data_copy = .{ .target = try frameSlot(compiler, key), .source = data.dataLocal(compiler, key) } });
-    try commands.append(compiler.gpa, call);
-    for (saved_scores.items) |score| try commands.append(compiler.gpa, .{ .data_to_score = .{ .source = try frameSlot(compiler, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(compiler.gpa, .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try frameSlot(compiler, key) } });
-    try commands.append(compiler.gpa, .frame_pop);
+    try commands.append(compiler.arena, .frame_push);
+    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .score_to_data = .{ .target = try frameSlot(compiler, score.holder), .score = score } });
+    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = try frameSlot(compiler, key), .source = data.dataLocal(compiler, key) } });
+    try commands.append(compiler.arena, call);
+    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .data_to_score = .{ .source = try frameSlot(compiler, score.holder), .score = score } });
+    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try frameSlot(compiler, key) } });
+    try commands.append(compiler.arena, .frame_pop);
 }
 
 // The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, `s_i_countdown` for the local `#i_countdown`,
 // and `d_names_countdown` for the data local `names_countdown`.
-pub fn frameSlot(compiler: *Compiler, name: []const u8) Compiler.CompileError!ir.DataPath {
+fn frameSlot(compiler: *Compiler, name: []const u8) Compiler.CompileError!ir.DataPath {
     if (std.mem.startsWith(u8, name, "#poplar.")) return .inStorage(.frame, name[std.mem.lastIndexOfScalar(u8, name, '.').? + 1 ..]);
-    if (name[0] == '#') return .inStorage(.frame, try std.fmt.allocPrint(compiler.gpa, "s_{s}", .{name[1..]}));
-    return .inStorage(.frame, try std.fmt.allocPrint(compiler.gpa, "d_{s}", .{name}));
+    if (name[0] == '#') return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "s_{s}", .{name[1..]}));
+    return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "d_{s}", .{name}));
 }
 
 pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {
@@ -220,7 +220,7 @@ pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {
         compiler.scope = compiler.scopeOf(declaration.namespace, declaration.imports);
         var calls: std.StringArrayHashMapUnmanaged(void) = .empty;
         try collectCalls(compiler, declaration.mcfun.body, &calls);
-        try compiler.mcfun_calls.put(compiler.gpa, mcfun_key, calls);
+        try compiler.mcfun_calls.put(compiler.arena, mcfun_key, calls);
     }
 }
 
@@ -232,7 +232,7 @@ pub fn calledKey(compiler: *Compiler, identifier: ast.Identifier) Compiler.Compi
 }
 
 // Finds the mcfun calls in a body. This can find calls that a compile-time branch removes later. That only adds saves.
-pub fn collectCalls(
+fn collectCalls(
     compiler: *Compiler,
     body: []const ast.Statement,
     calls: *std.StringArrayHashMapUnmanaged(void),
@@ -262,7 +262,7 @@ pub fn collectCalls(
 }
 
 // `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
-pub fn collectInsertCalls(
+fn collectInsertCalls(
     compiler: *Compiler,
     parts: []const ast.CommandPart,
     calls: *std.StringArrayHashMapUnmanaged(void),
@@ -274,7 +274,7 @@ pub fn collectInsertCalls(
 }
 
 // A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
-pub fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) Compiler.CompileError!void {
+fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayHashMapUnmanaged(void)) Compiler.CompileError!void {
     const prefix = Compiler.std_namespace ++ ":";
     var index: usize = 0;
     while (std.mem.indexOfPos(u8, text, index, prefix)) |start| {
@@ -283,11 +283,11 @@ pub fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringAr
         var end = index;
         while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
         const mcfun_key = try declarations.qualifiedKey(compiler, Compiler.std_namespace, text[index..end]);
-        if (compiler.mcfuns.contains(mcfun_key)) try calls.put(compiler.gpa, mcfun_key, {});
+        if (compiler.mcfuns.contains(mcfun_key)) try calls.put(compiler.arena, mcfun_key, {});
     }
 }
 
-pub fn collectExpressionCalls(
+fn collectExpressionCalls(
     compiler: *Compiler,
     expression: *const ast.Expression,
     calls: *std.StringArrayHashMapUnmanaged(void),
@@ -309,10 +309,10 @@ pub fn collectExpressionCalls(
             // An event callback is called from `load`, as far as the call graph is concerned.
             const is_event = call.callee.kind.identifier.namespace == null and load.event_builtins.has(call.callee.kind.identifier.name);
             if (is_event and call.args.len > 0 and call.args[call.args.len - 1].kind == .identifier) {
-                if (try calledKey(compiler, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(compiler.gpa, callback, {});
+                if (try calledKey(compiler, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(compiler.arena, callback, {});
             }
             const called = try calledKey(compiler, call.callee.kind.identifier) orelse return;
-            try calls.put(compiler.gpa, called, {});
+            try calls.put(compiler.arena, called, {});
         },
         else => {},
     }
@@ -322,14 +322,14 @@ pub fn collectExpressionCalls(
 pub fn canReach(compiler: *Compiler, from: []const u8, to: []const u8) Compiler.CompileError!bool {
     var pending: std.ArrayList([]const u8) = .empty;
     var visited: std.StringHashMapUnmanaged(void) = .empty;
-    try pending.append(compiler.gpa, from);
+    try pending.append(compiler.arena, from);
 
     while (pending.pop()) |name| {
         if (std.mem.eql(u8, name, to)) return true;
-        if ((try visited.getOrPut(compiler.gpa, name)).found_existing) continue;
+        if ((try visited.getOrPut(compiler.arena, name)).found_existing) continue;
 
         const calls = compiler.mcfun_calls.get(name) orelse continue;
-        try pending.appendSlice(compiler.gpa, calls.keys());
+        try pending.appendSlice(compiler.arena, calls.keys());
     }
     return false;
 }
@@ -346,7 +346,7 @@ pub fn compileCall(compiler: *Compiler, call: ast.Call, env: *Environment, comma
     compiler.temp_count = 0;
     const command = try compileMcfunCall(compiler, call, callee.declaration, env, commands) orelse return;
     if (compiler.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(compiler, command, null, 0, commands);
-    try commands.append(compiler.gpa, command);
+    try commands.append(compiler.arena, command);
 }
 
 pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "onDeath", "onFirstJoin", "onJoin", "onRespawn", "slice", "str", "startsWith", "endsWith" };

@@ -1,5 +1,4 @@
 const std = @import("std");
-const Token = @import("Token.zig");
 
 pub const Program = struct {
     // `namespace combat;`, the first statement of every file. Null when it is missing.
@@ -194,12 +193,16 @@ pub const Entry = struct {
 };
 
 pub const Prefix = struct {
-    op: Token.Tag,
+    pub const Operator = enum { negate, not };
+
+    op: Operator,
     operand: *Expression,
 };
 
 pub const Infix = struct {
-    op: Token.Tag,
+    pub const Operator = enum { add, subtract, multiply, divide, modulo, equal, not_equal, less, less_equal, greater, greater_equal, @"and", @"or" };
+
+    op: Operator,
     left: *Expression,
     right: *Expression,
 };
