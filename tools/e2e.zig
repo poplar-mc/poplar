@@ -172,7 +172,7 @@ fn download(arena: Allocator, io: Io, url: []const u8) ![]const u8 {
     var body: Io.Writer.Allocating = .init(arena);
     const result = try client.fetch(.{ .location = .{ .url = url }, .response_writer = &body.writer });
     if (result.status != .ok) {
-        std.debug.print("download of {s} failed: HTTP {d}\n", .{ url, @intFromEnum(result.status) });
+        std.debug.print("download of {s} failed: HTTP {d}\n", .{ url, @backingInt(result.status) });
         std.process.exit(1);
     }
     return body.written();

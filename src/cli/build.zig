@@ -31,8 +31,8 @@ fn run(ctx: zli.CommandContext) !void {
 // `✓ Built hello in 18 ms → poplar-out/hello (7 functions, zip)`
 pub fn printBuilt(out: Output, summary: Project.Summary, milliseconds: i64) !void {
     try out.success("Built {s}{s}{s} in {d} ms {s}→ {s} ({d} {s}, zip){s}", .{
-        out.bold(),        summary.name, out.reset(),               milliseconds,
-        out.dim(),         summary.pack_path.?, summary.function_count, summary.functionsText(),
+        out.bold(),  summary.name,        out.reset(),            milliseconds,
+        out.dim(),   summary.pack_path.?, summary.function_count, summary.functionsText(),
         out.reset(),
     });
 }

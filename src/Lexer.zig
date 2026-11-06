@@ -310,8 +310,8 @@ fn readDataPathAt(self: *Self, token_type: Token.TokenType, start: usize) Token 
 
 // The `execute if` subcommands of Minecraft 26.3. In a condition, `block ~ ~-1 ~ stone` is raw text.
 const condition_words = std.StaticStringMap(void).initComptime(.{
-    .{"biome"}, .{"block"},   .{"blocks"},    .{"data"},  .{"dimension"}, .{"entity"},    .{"function"},
-    .{"items"}, .{"loaded"},  .{"predicate"}, .{"score"}, .{"slots"},     .{"stopwatch"},
+    .{"biome"}, .{"block"},  .{"blocks"},    .{"data"},  .{"dimension"}, .{"entity"},    .{"function"},
+    .{"items"}, .{"loaded"}, .{"predicate"}, .{"score"}, .{"slots"},     .{"stopwatch"},
 });
 
 // A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a space and

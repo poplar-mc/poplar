@@ -480,7 +480,7 @@ fn parseExpressionStatement(self: *Self) ParseError!?Ast.Stmt.Kind {
 fn parseExpression(self: *Self, precedence: Precedence) ParseError!?*Ast.Expr {
     var left = try self.parsePrefix() orelse return null;
 
-    while (!self.peekIs(.semicolon) and @intFromEnum(precedence) < @intFromEnum(self.peekPrecedence())) {
+    while (!self.peekIs(.semicolon) and @backingInt(precedence) < @backingInt(self.peekPrecedence())) {
         try self.nextToken();
         left = try self.parseInfix(left) orelse return null;
     }
