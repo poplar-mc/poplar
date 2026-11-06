@@ -444,7 +444,7 @@ fn onBodyReturn(self: *Compiler, body_name: []const u8) CompileError!ir.Command 
 
 /// The value of a `return` inside a `while` or `execute (...)` body, on its way out.
 fn resultScore(self: *Compiler) CompileError!ir.Score {
-    return .{ .holder = try std.fmt.allocPrint(self.arena, "#poplar.{s}.result", .{self.mcfun.folder}), .namespace = self.scope.output_namespace };
+    return ir.Score.result(self.arena, self.mcfun.folder, self.scope.output_namespace);
 }
 
 fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
@@ -492,7 +492,7 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     switch (kind) {
         .score => {
             self.temp_count = 0;
-            try scores.compileInto(self, .{ .holder = generated_name, .owner = self.mcfun.name, .namespace = self.scope.output_namespace }, var_decl.value, env, commands);
+            try scores.compileInto(self, ir.Score.local(generated_name, self.mcfun.name, self.scope.output_namespace), var_decl.value, env, commands);
         },
         .data => try data.compileDataAssign(self, data.dataLocal(self, generated_name), var_decl.value, env, commands),
     }

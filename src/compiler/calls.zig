@@ -187,7 +187,7 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
     var saved_data: std.ArrayList([]const u8) = .empty;
     for (0..live_temp_count) |index| try saved_scores.append(compiler.arena, try scores.tempScore(compiler, index));
     for (compiler.live_locals.items) |local| switch (local.kind) {
-        .score => try saved_scores.append(compiler.arena, .{ .holder = local.generated_name, .owner = local.owner, .namespace = compiler.scope.output_namespace }),
+        .score => try saved_scores.append(compiler.arena, ir.Score.local(local.generated_name, local.owner, compiler.scope.output_namespace)),
         .data => try saved_data.append(compiler.arena, local.generated_name),
     };
     if (target) |result| for (saved_scores.items, 0..) |score, index| {
@@ -200,20 +200,27 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
 
     compiler.uses_stack = true;
     try commands.append(compiler.arena, .frame_push);
-    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .score_to_data = .{ .target = try frameSlot(compiler, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = try frameSlot(compiler, key), .source = data.dataLocal(compiler, key) } });
+    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .score_to_data = .{ .target = try scoreFrameSlot(compiler, score), .score = score } });
+    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = try dataFrameSlot(compiler, key), .source = data.dataLocal(compiler, key) } });
     try commands.append(compiler.arena, call);
-    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .data_to_score = .{ .source = try frameSlot(compiler, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try frameSlot(compiler, key) } });
+    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .data_to_score = .{ .source = try scoreFrameSlot(compiler, score), .score = score } });
+    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try dataFrameSlot(compiler, key) } });
     try commands.append(compiler.arena, .frame_pop);
 }
 
-/// The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, `s_i_countdown` for the local `#i_countdown`,
-/// and `d_names_countdown` for the data local `names_countdown`.
-fn frameSlot(compiler: *Compiler, name: []const u8) Compiler.CompileError!ir.DataPath {
-    if (std.mem.startsWith(u8, name, "#poplar.")) return .inStorage(.frame, name[std.mem.lastIndexOfScalar(u8, name, '.').? + 1 ..]);
-    if (name[0] == '#') return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "s_{s}", .{name[1..]}));
-    return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "d_{s}", .{name}));
+/// The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, and `s_i_countdown` for the local `#i_countdown`.
+fn scoreFrameSlot(compiler: *Compiler, score: ir.Score) Compiler.CompileError!ir.DataPath {
+    const key = switch (score.kind) {
+        .temp => |temp| try std.fmt.allocPrint(compiler.arena, "t{d}", .{temp.index}),
+        .local => try std.fmt.allocPrint(compiler.arena, "s_{s}", .{score.holder[1..]}),
+        .global, .constant => unreachable,
+    };
+    return .inStorage(.frame, key);
+}
+
+/// The key in the frame of the data local `names_countdown`: `d_names_countdown`.
+fn dataFrameSlot(compiler: *Compiler, key: []const u8) Compiler.CompileError!ir.DataPath {
+    return .inStorage(.frame, try std.fmt.allocPrint(compiler.arena, "d_{s}", .{key}));
 }
 
 pub fn buildCallGraph(compiler: *Compiler) Compiler.CompileError!void {

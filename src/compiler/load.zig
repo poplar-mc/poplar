@@ -111,8 +111,8 @@ pub fn removeUnusedConstants(compiler: *Compiler, functions: []const ir.McFuncti
     var index = compiler.constants.count();
     while (index > 0) {
         index -= 1;
-        const holder = try std.fmt.allocPrint(compiler.arena, "#poplar.c{d}", .{compiler.constants.keys()[index]});
-        if (!isScoreRead(functions, .{ .holder = holder })) compiler.constants.orderedRemoveAt(index);
+        const constant = try ir.Score.constant(compiler.arena, compiler.constants.keys()[index]);
+        if (!isScoreRead(functions, constant)) compiler.constants.orderedRemoveAt(index);
     }
 }
 

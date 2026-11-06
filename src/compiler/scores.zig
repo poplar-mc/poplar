@@ -134,7 +134,7 @@ pub fn resolveScore(compiler: *Compiler, identifier: ast.Identifier, env: *const
             try compiler.addError("'#{s}' is local, so it has no entity values. Declare it at the top level", .{identifier.name});
             return null;
         }
-        return .{ .holder = local.generated_name, .owner = local.owner, .namespace = compiler.scope.output_namespace };
+        return ir.Score.local(local.generated_name, local.owner, compiler.scope.output_namespace);
     }
     const namespace = try declarations.resolveNamespace(compiler, identifier.namespace) orelse return null;
     const global = compiler.globals.get(try declarations.qualifiedKey(compiler, namespace, identifier.name)) orelse {
@@ -192,7 +192,7 @@ pub fn globalScore(global: Compiler.GlobalScore) ir.Score {
 
 pub fn constantScore(compiler: *Compiler, value: i32) Compiler.CompileError!ir.Score {
     try compiler.constants.put(compiler.arena, value, {});
-    return .{ .holder = try std.fmt.allocPrint(compiler.arena, "#poplar.c{d}", .{value}) };
+    return ir.Score.constant(compiler.arena, value);
 }
 
 pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
@@ -202,7 +202,7 @@ pub fn newTemp(compiler: *Compiler) Compiler.CompileError!ir.Score {
 
 /// Each mcfun has its own temps, so a call to another mcfun cannot overwrite them.
 pub fn tempScore(compiler: *Compiler, index: usize) Compiler.CompileError!ir.Score {
-    return .{ .holder = try std.fmt.allocPrint(compiler.arena, "#poplar.{s}.t{d}", .{ compiler.mcfun.folder, index }), .namespace = compiler.scope.output_namespace };
+    return ir.Score.temp(compiler.arena, compiler.mcfun.folder, index, compiler.scope.output_namespace);
 }
 
 fn scoreOperator(op: ast.Infix.Operator) ?ir.Operator {

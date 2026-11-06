@@ -182,14 +182,49 @@ pub const Objective = struct {
     name: ?[]const u8 = null,
 };
 
-/// A holder is a fake player (`#hp`, `#poplar.t0`) or a selector (`@s`).
+/// A holder is a fake player (`#hp`, `#poplar.c1`) or a selector (`@s`).
 pub const Score = struct {
+    pub const Kind = union(enum) {
+        /// A score that any function can read: a global, or the result of a body on its way out.
+        global,
+        /// A value during one statement. Only the mcfun and its generated functions read it.
+        temp: Temp,
+        /// A number that `poplar/load` sets, for math with a fixed value.
+        constant: i32,
+        /// A local variable. The value is its mcfun (`combat:heal`), and only that mcfun and its generated functions read it.
+        local: []const u8,
+    };
+
+    pub const Temp = struct {
+        /// The mcfun as it appears in generated names (`generatedFolder`).
+        folder: []const u8,
+        index: usize,
+    };
+
     holder: []const u8,
     objective: ?[]const u8 = null,
     /// The objective is `<namespace>` or `<namespace>.<objective>`.
     namespace: ?[]const u8 = null,
-    /// The mcfun of a local variable. Only that mcfun and its generated functions read it. It is not part of `eql`.
-    owner: ?[]const u8 = null,
+    /// Not part of `eql`.
+    kind: Kind = .global,
+
+    pub fn temp(arena: std.mem.Allocator, folder: []const u8, index: usize, namespace: ?[]const u8) std.mem.Allocator.Error!Score {
+        const holder = try std.fmt.allocPrint(arena, "#poplar.{s}.t{d}", .{ folder, index });
+        return .{ .holder = holder, .namespace = namespace, .kind = .{ .temp = .{ .folder = folder, .index = index } } };
+    }
+
+    pub fn constant(arena: std.mem.Allocator, value: i32) std.mem.Allocator.Error!Score {
+        return .{ .holder = try std.fmt.allocPrint(arena, "#poplar.c{d}", .{value}), .kind = .{ .constant = value } };
+    }
+
+    /// The value of a `return` inside a `while` or `execute (...)` body.
+    pub fn result(arena: std.mem.Allocator, folder: []const u8, namespace: ?[]const u8) std.mem.Allocator.Error!Score {
+        return .{ .holder = try std.fmt.allocPrint(arena, "#poplar.{s}.result", .{folder}), .namespace = namespace };
+    }
+
+    pub fn local(generated_name: []const u8, owner: []const u8, namespace: ?[]const u8) Score {
+        return .{ .holder = generated_name, .namespace = namespace, .kind = .{ .local = owner } };
+    }
 
     pub fn eql(a: Score, b: Score) bool {
         return optionalEql(a.objective, b.objective) and optionalEql(a.namespace, b.namespace) and std.mem.eql(u8, a.holder, b.holder);

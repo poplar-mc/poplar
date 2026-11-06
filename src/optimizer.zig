@@ -300,7 +300,7 @@ fn isReadLater(commands: []const ir.Command, temp: ir.Score) bool {
     for (commands) |command| {
         if (readsScore(command, temp) or callsTempReader(command, temp)) return true;
         // Command text can name a local's fake player: a user command, or a `text(#x)` part in a call's arguments.
-        if (temp.owner != null and mentionsInText(command, temp.holder)) return true;
+        if (temp.kind == .local and mentionsInText(command, temp.holder)) return true;
         if (setsScore(command, temp)) return false;
     }
     return false;
@@ -628,8 +628,12 @@ fn readsTempsOf(name: []const u8, temp: ir.Score) bool {
     if (std.mem.startsWith(u8, std.fs.path.basenamePosix(name), "macro_")) return false;
 
     const function_namespace, const path = ir.splitName(name);
-    // A local knows its mcfun (`combat:heal`). A temp names it in its holder (`#poplar.heal.t0`), in its namespace.
-    const owner_namespace, const owner = if (temp.owner) |owner| ir.splitName(owner) else .{ temp.namespace, temp.holder["#poplar.".len..std.mem.lastIndexOfScalar(u8, temp.holder, '.').?] };
+    // A local knows its mcfun (`combat:heal`). A temp knows the folder of its mcfun, in its namespace.
+    const owner_namespace: ?[]const u8, const owner: []const u8 = switch (temp.kind) {
+        .local => |local_owner| ir.splitName(local_owner),
+        .temp => |details| .{ temp.namespace, details.folder },
+        .global, .constant => unreachable,
+    };
     if (!ir.optionalEql(function_namespace, owner_namespace)) return false;
 
     const generated_prefix = "poplar/";
@@ -651,26 +655,19 @@ fn checkReads(check: ir.Check, score: ir.Score) bool {
 /// A temp, or a local of this mcfun, is only read by this function and its generated functions. A local can be
 /// written in a generated body and read by its mcfun after the body returns, so it only counts in the mcfun itself.
 fn isScopedHere(score: ir.Score, function_name: []const u8) bool {
-    if (score.owner) |owner| return std.mem.eql(u8, owner, function_name);
-    return isTemp(score);
+    return switch (score.kind) {
+        .local => |owner| std.mem.eql(u8, owner, function_name),
+        .temp => true,
+        .global, .constant => false,
+    };
 }
 
-/// Temps are `#poplar.<mcfun>.t<N>`. They are only read in the function that writes them.
-fn isTemp(score: ir.Score) bool {
-    if (score.objective != null or !std.mem.startsWith(u8, score.holder, "#poplar.") or isConstant(score)) return false;
-    const name = score.holder[std.mem.lastIndexOfScalar(u8, score.holder, '.').? + 1 ..];
-    return name.len > 1 and name[0] == 't' and std.ascii.isDigit(name[1]);
-}
-
-/// Constants are `#poplar.c<N>`.
 fn constantValue(score: ir.Score) ?i32 {
-    const prefix = "#poplar.c";
-    if (score.objective != null or !std.mem.startsWith(u8, score.holder, prefix)) return null;
-    return std.fmt.parseInt(i32, score.holder[prefix.len..], 10) catch null;
+    return if (score.kind == .constant) score.kind.constant else null;
 }
 
 fn isConstant(score: ir.Score) bool {
-    return constantValue(score) != null;
+    return score.kind == .constant;
 }
 
 fn isConstantOne(score: ir.Score) bool {
@@ -688,14 +685,14 @@ test "removes identities and inlines copies of temps" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const temp: ir.Score = .{ .holder = "#poplar.f.t0" };
-    const other_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
-    const division_temp: ir.Score = .{ .holder = "#poplar.f.t2" };
+    const temp = try ir.Score.temp(arena, "f", 0, null);
+    const other_temp = try ir.Score.temp(arena, "f", 1, null);
+    const division_temp = try ir.Score.temp(arena, "f", 2, null);
     const entity: ir.Score = .{ .holder = "@p", .objective = "x" };
 
     const commands = [_]ir.Command{
         .{ .score_add = .{ .score = temp, .value = 0 } },
-        .{ .score_operation = .{ .target = temp, .op = .mul, .source = .{ .holder = "#poplar.c1" } } },
+        .{ .score_operation = .{ .target = temp, .op = .mul, .source = try ir.Score.constant(arena, 1) } },
         .{ .score_remove = .{ .score = temp, .value = 1 } },
         .{ .score_to_data = .{ .target = .inStorage(.args, "n"), .score = temp } },
         // Not inlined: the temp is read again below.
@@ -721,9 +718,9 @@ test "uses known values, removes dead writes and scales data gets" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const temp: ir.Score = .{ .holder = "#poplar.f.t0" };
-    const copy_temp: ir.Score = .{ .holder = "#poplar.f.t1" };
-    const after_call_temp: ir.Score = .{ .holder = "#poplar.f.t2" };
+    const temp = try ir.Score.temp(arena, "f", 0, null);
+    const copy_temp = try ir.Score.temp(arena, "f", 1, null);
+    const after_call_temp = try ir.Score.temp(arena, "f", 2, null);
     const global: ir.Score = .{ .holder = "#global", .objective = "x" };
     const at_most_one: ir.Check = .{ .negated = false, .condition = .{ .matches = .{ .score = temp, .min = null, .max = 1 } } };
 
@@ -741,10 +738,10 @@ test "uses known values, removes dead writes and scales data gets" {
         .{ .score_to_data = .{ .target = .inStorage(.args, "m"), .score = after_call_temp } },
         // `set 7` is removed, and `*= 3` becomes `set 21`.
         .{ .score_set = .{ .score = global, .value = 7 } },
-        .{ .score_operation = .{ .target = global, .op = .mul, .source = .{ .holder = "#poplar.c3" } } },
+        .{ .score_operation = .{ .target = global, .op = .mul, .source = try ir.Score.constant(arena, 3) } },
         .{ .function = "other" },
         .{ .data_to_score = .{ .source = .inStorage(.data, "count"), .score = global } },
-        .{ .score_operation = .{ .target = global, .op = .mul, .source = .{ .holder = "#poplar.c100" } } },
+        .{ .score_operation = .{ .target = global, .op = .mul, .source = try ir.Score.constant(arena, 100) } },
     };
 
     const result = try optimizeFunction(arena, "f", &commands);
