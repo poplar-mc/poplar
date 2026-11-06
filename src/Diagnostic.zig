@@ -1,5 +1,10 @@
 //! An error in the user's files.
 
+const std = @import("std");
+
+/// `Reported` means that a diagnostic is already recorded, so the caller only has to stop what it is doing.
+pub const Error = std.mem.Allocator.Error || error{Reported};
+
 /// A place in a source file. Lines and columns start at 1.
 pub const Position = struct {
     line: usize,
