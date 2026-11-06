@@ -57,10 +57,6 @@ pub const Id = struct {
     can_be_pack_name: bool,
 };
 
-pub fn check(self: *const Self, gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!?Failure {
-    return (try self.checkText(gpa, text, &.{})).failure;
-}
-
 // `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
 pub fn checkText(self: *const Self, gpa: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
     var walk: Walk = .{ .gpa = gpa, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
@@ -544,6 +540,10 @@ fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
+fn checkForTest(tree: *const Self, arena: std.mem.Allocator, text: []const u8) !?Failure {
+    return (try tree.checkText(arena, text, &.{})).failure;
+}
+
 test "checks the options of a selector the way the game does" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -562,13 +562,13 @@ test "checks the options of a selector the way the game does" {
         }
     }
 
-    const quoted = (try tree.check(arena.allocator(), "execute as @e[type=\"minecraft:zombie\"] run say x")).?;
+    const quoted = (try checkForTest(&tree, arena.allocator(), "execute as @e[type=\"minecraft:zombie\"] run say x")).?;
     try std.testing.expectEqualStrings("selector option 'type' cannot have quotes: write type=minecraft:zombie", quoted.message);
     try std.testing.expectEqual(19, quoted.at);
-    try std.testing.expectEqualStrings("selector option 'tag' cannot have quotes: write tag=a", (try tree.check(arena.allocator(), "execute as @e[tag=!\"a\"] run say x")).?.message);
-    try std.testing.expectEqualStrings("unknown entity_type 'zombiee'. Did you mean 'zombie'?", (try tree.check(arena.allocator(), "execute as @e[type=!zombiee] run say x")).?.message);
-    try std.testing.expectEqualStrings("unknown selector option 'tagg'. Did you mean 'tag'?", (try tree.check(arena.allocator(), "kill @e[tagg=a]")).?.message);
-    try std.testing.expectEqualStrings("unknown selector option 'foo'", (try tree.check(arena.allocator(), "kill @e[foo=1]")).?.message);
+    try std.testing.expectEqualStrings("selector option 'tag' cannot have quotes: write tag=a", (try checkForTest(&tree, arena.allocator(), "execute as @e[tag=!\"a\"] run say x")).?.message);
+    try std.testing.expectEqualStrings("unknown entity_type 'zombiee'. Did you mean 'zombie'?", (try checkForTest(&tree, arena.allocator(), "execute as @e[type=!zombiee] run say x")).?.message);
+    try std.testing.expectEqualStrings("unknown selector option 'tagg'. Did you mean 'tag'?", (try checkForTest(&tree, arena.allocator(), "kill @e[tagg=a]")).?.message);
+    try std.testing.expectEqualStrings("unknown selector option 'foo'", (try checkForTest(&tree, arena.allocator(), "kill @e[foo=1]")).?.message);
 }
 
 test "finds ids in id arguments and selectors, not in text" {
@@ -600,26 +600,26 @@ test "checks commands against the tree" {
         "summon zombie ~ ~1 ~ {Tags:[\"a b\"],Data:[I;1,2]}",
     };
     for (valid) |text| {
-        if (try tree.check(arena.allocator(), text)) |failure| {
+        if (try checkForTest(&tree, arena.allocator(), text)) |failure| {
             std.debug.print("'{s}': {s}\n", .{ text, failure.message });
             return error.TestUnexpectedResult;
         }
     }
 
-    const unknown = (try tree.check(arena.allocator(), "efect give @p poison")).?;
+    const unknown = (try checkForTest(&tree, arena.allocator(), "efect give @p poison")).?;
     try std.testing.expectEqualStrings("expected a command, found 'efect'", unknown.message);
 
-    const bad_number = (try tree.check(arena.allocator(), "effect give @p poison abc")).?;
+    const bad_number = (try checkForTest(&tree, arena.allocator(), "effect give @p poison abc")).?;
     try std.testing.expectEqualStrings("expected integer, found 'abc'", bad_number.message);
     try std.testing.expectEqual(22, bad_number.at);
 
-    const effect = (try tree.check(arena.allocator(), "effect give @p minecraft:poision 10")).?;
+    const effect = (try checkForTest(&tree, arena.allocator(), "effect give @p minecraft:poision 10")).?;
     try std.testing.expectEqualStrings("unknown mob_effect 'poision'. Did you mean 'poison'?", effect.message);
-    const item = (try tree.check(arena.allocator(), "give @s diamnod 2")).?;
+    const item = (try checkForTest(&tree, arena.allocator(), "give @s diamnod 2")).?;
     try std.testing.expectEqualStrings("unknown item 'diamnod'. Did you mean 'diamond'?", item.message);
-    const block = (try tree.check(arena.allocator(), "setblock ~ ~ ~ stonee[lit=true]")).?;
+    const block = (try checkForTest(&tree, arena.allocator(), "setblock ~ ~ ~ stonee[lit=true]")).?;
     try std.testing.expectEqualStrings("unknown block 'stonee'. Did you mean 'stone'?", block.message);
 
     const not_checked = [_][]const u8{ "give @s mypack:wand", "clear @s #minecraft:logs", "give @s $(item)" };
-    for (not_checked) |text| try std.testing.expectEqual(null, try tree.check(arena.allocator(), text));
+    for (not_checked) |text| try std.testing.expectEqual(null, try checkForTest(&tree, arena.allocator(), text));
 }

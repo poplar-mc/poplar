@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
     b.installDirectory(.{ .source_dir = b.path("std"), .install_dir = .lib, .install_subdir = "poplar/std" });
     const std_source_path = b.root.joinString(b.allocator, "std") catch @panic("OOM");
 
-    const run_step = b.step("run", "Run the app");
+    const run_step = b.step("run", "Build and run poplar");
 
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);

@@ -90,10 +90,6 @@ pub fn parse(arena: std.mem.Allocator, json: []const u8, folder_name: []const u8
             min_format = try reader.readFormat(field);
         } else if (std.mem.eql(u8, field, "maxFormat")) {
             max_format = try reader.readFormat(field);
-        } else if (std.mem.eql(u8, field, "entry")) {
-            return reader.fail("\"entry\" was removed: every .poplar file in src/ is built. Remove the field", .{});
-        } else if (std.mem.eql(u8, field, "zip")) {
-            return reader.fail("\"zip\" was removed: every build now writes poplar-out/<zipName>.zip. Remove the field", .{});
         } else {
             return reader.fail("unknown field '{s}'. Fields: zipName, namespace, description, minFormat, maxFormat", .{field});
         }
@@ -161,14 +157,6 @@ const FieldReader = struct {
         return switch (try reader.next()) {
             .string, .allocated_string => |text| text,
             else => reader.fail("\"{s}\" must be a string", .{field}),
-        };
-    }
-
-    fn readBool(reader: *FieldReader, field: []const u8) ParseError!bool {
-        return switch (try reader.next()) {
-            .true => true,
-            .false => false,
-            else => reader.fail("\"{s}\" must be true or false", .{field}),
         };
     }
 
@@ -247,7 +235,7 @@ test "parses poplar.json" {
     try std.testing.expectEqual(1, full.min_format.minor);
 
     try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\"zip\": true}", "hello", latest, &problem));
-    try std.testing.expect(std.mem.startsWith(u8, problem.message, "\"zip\" was removed"));
+    try std.testing.expect(std.mem.startsWith(u8, problem.message, "unknown field 'zip'"));
 
     try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\n  \"nmae\": \"x\"\n}", "hello", latest, &problem));
     try std.testing.expectEqual(2, problem.line);

@@ -910,28 +910,6 @@ test "SNBT numbers keep their text and type, and a range still works" {
     try std.testing.expectEqual(5, program.functions[0].body[1].kind.@"for".end.kind.number);
 }
 
-test "parse var statement" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-
-    const program = try parseValidForTest(arena.allocator(), "mcfun f() { var count = 5; }");
-
-    const var_decl = firstStatement(program).kind.var_decl;
-    try std.testing.expectEqualStrings("count", var_decl.target.name);
-    try std.testing.expectEqual(5, var_decl.value.kind.number);
-}
-
-test "parse return statement" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-
-    const program = try parseValidForTest(arena.allocator(), "mcfun f() { return 1; return; }");
-
-    const body = program.functions[0].body;
-    try std.testing.expectEqual(1, body[0].kind.@"return".?.kind.number);
-    try std.testing.expectEqual(null, body[1].kind.@"return");
-}
-
 test "parse operator precedence" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();

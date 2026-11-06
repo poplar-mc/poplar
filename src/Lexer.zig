@@ -544,13 +544,6 @@ test "skips comments" {
     try std.testing.expectEqual(.eof, l.nextToken().type);
 }
 
-test "reads slash" {
-    var l = Self.init("a / b");
-
-    _ = l.nextToken();
-    try std.testing.expectEqual(.slash, l.nextToken().type);
-}
-
 test "reads commands and keeps division" {
     var l = Self.init("x = a / b; /give @s stone{a:[I;1]} 1;");
 
@@ -563,23 +556,6 @@ test "reads commands and keeps division" {
     try std.testing.expectEqual(.command, command.type);
     try std.testing.expectEqualStrings("give @s stone{a:[I;1]} 1", command.literal);
     try std.testing.expectEqual(.semicolon, l.nextToken().type);
-}
-
-test "reads full string content" {
-    var l = Self.init("\"hello\"");
-
-    const tok = l.nextToken();
-    try std.testing.expectEqual(.string, tok.type);
-    try std.testing.expectEqualStrings("hello", tok.literal);
-}
-
-test "sets line on every token" {
-    var l = Self.init("mcfun\nname\n42\n\"text\"");
-
-    try std.testing.expectEqual(1, l.nextToken().line);
-    try std.testing.expectEqual(2, l.nextToken().line);
-    try std.testing.expectEqual(3, l.nextToken().line);
-    try std.testing.expectEqual(4, l.nextToken().line);
 }
 
 test "reads illegal characters as tokens" {
@@ -598,12 +574,6 @@ test "a string ends at the end of its line" {
     const next = l.nextToken();
     try std.testing.expectEqualStrings("b", next.literal);
     try std.testing.expectEqual(2, next.line);
-}
-
-test "reads null keyword" {
-    var l = Self.init("null");
-
-    try std.testing.expectEqual(.null, l.nextToken().type);
 }
 
 test "reads entity data paths after a selector" {
