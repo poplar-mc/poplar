@@ -272,16 +272,12 @@ fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *Envi
         try compileStringInto(compiler, string_scratch, argument.kind.call, env, commands);
         return string_scratch;
     }
-    const outer_position = compiler.enterExpression(argument);
-    defer compiler.restorePosition(outer_position);
-    return compiler.fail("the text must be data ('$x' or '@s.$path') or another string helper. For a score, use 'str(#x)'", .{});
+    return compiler.failOn(argument, "the text must be data ('$x' or '@s.$path') or another string helper. For a score, use 'str(#x)'", .{});
 }
 
 fn constantIndex(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.Error!i32 {
     if (values.containsRuntimeValue(expression)) {
-        const outer_position = compiler.enterExpression(expression);
-        defer compiler.restorePosition(outer_position);
-        return compiler.fail("the bounds of 'slice' must be constant integers", .{});
+        return compiler.failOn(expression, "the bounds of 'slice' must be constant integers", .{});
     }
     const value = try values.evaluate(compiler, expression, env);
     return scores.toScoreValue(compiler, value);

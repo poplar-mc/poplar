@@ -292,61 +292,14 @@ pub fn compile(self: *Compiler) std.mem.Allocator.Error!ir.Program {
     var paths: std.StringHashMapUnmanaged([]const u8) = .empty;
 
     for (self.mcfuns.keys(), self.mcfuns.values()) |mcfun_key, declaration| {
-        const mcfun = declaration.mcfun;
         // `import std;` costs nothing for the std mcfuns that the project never calls.
         if (declaration.origin == .std and !used.contains(mcfun_key)) continue;
 
-        self.path = declaration.path;
-        self.position = mcfun.position;
-        self.scope = self.scopeOf(declaration.namespace, declaration.imports);
-
-        // The file name is the snake_case of the name (`playerDied` → `player_died`), so both must be valid and unique.
-        const path = try std.fmt.allocPrint(self.arena, "{f}", .{datapack_writer.functionPath(mcfun.name)});
-        if (!Config.isValidResourceName(path)) {
-            try self.addError("mcfun name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{mcfun.name});
-            continue;
-        }
-        const path_entry = try paths.getOrPut(self.arena, try declarations.functionName(self, declaration.namespace, path));
-        if (path_entry.found_existing) {
-            try self.addError("mcfun '{s}' and '{s}' have the same file name '{s}.mcfunction'", .{ path_entry.value_ptr.*, mcfun.name, path });
-            continue;
-        }
-        path_entry.value_ptr.* = mcfun.name;
-
-        var macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-        try collectMacroKeys(self.arena, mcfun.body, &macro_keys);
-        const is_hook = declaration.origin == .project and (std.mem.eql(u8, mcfun.name, "load") or std.mem.eql(u8, mcfun.name, "tick"));
-        if (is_hook and macro_keys.count() > 0) {
-            try self.addError("mcfun '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ mcfun.name, macro_keys.keys()[0] });
-            continue;
-        }
-
-        var forwarded: std.ArrayList(u8) = .empty;
-        for (macro_keys.keys(), 0..) |key, index| {
-            try forwarded.appendSlice(self.arena, if (index == 0) "{" else ",");
-            try forwarded.print(self.arena, "{s}:\"$({s})\"", .{ key, key });
-        }
-        if (macro_keys.count() > 0) try forwarded.append(self.arena, '}');
-
-        self.mcfun = .{
-            .folder = try ir.generatedFolder(self.arena, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
-            .name = declaration.ir_name,
-            .key = mcfun_key,
-            .macro_keys = macro_keys,
-            .forwarded_args = if (macro_keys.count() > 0) try forwarded.toOwnedSlice(self.arena) else null,
-            .in_load = declaration.origin == .project and std.mem.eql(u8, mcfun.name, "load"),
+        const function = self.compileMcfun(mcfun_key, declaration, &paths) catch |err| switch (err) {
+            error.Reported => continue,
+            error.OutOfMemory => return error.OutOfMemory,
         };
-        self.mcfun.cleanup = try self.localCleanup(mcfun.body);
-
-        var env: Environment = .{};
-        var commands: std.ArrayList(ir.Command) = .empty;
-        try self.compileBlock(mcfun.body, &env, &commands);
-        if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.arena, self.mcfun.cleanup);
-
-        try mc_functions.append(self.arena, .{
-            .name = declaration.ir_name,
-            .commands = try commands.toOwnedSlice(self.arena),
-        });
+        try mc_functions.append(self.arena, function);
     }
 
     try mc_functions.appendSlice(self.arena, self.generated.items);
@@ -369,6 +322,61 @@ pub fn compile(self: *Compiler) std.mem.Allocator.Error!ir.Program {
         .tick = if (self.events.items.len > 0) try self.arena.dupe([]const u8, &.{"poplar/tick"}) else ticks,
         .data_files = self.data_files.items,
     };
+}
+
+/// `paths` holds the file name of each mcfun so far, so that two names cannot write one file.
+fn compileMcfun(self: *Compiler, mcfun_key: []const u8, declaration: McfunDeclaration, paths: *std.StringHashMapUnmanaged([]const u8)) Error!ir.McFunction {
+    const mcfun = declaration.mcfun;
+    self.path = declaration.path;
+    self.position = mcfun.position;
+    self.scope = self.scopeOf(declaration.namespace, declaration.imports);
+
+    // The file name is the snake_case of the name (`playerDied` → `player_died`), so both must be valid and unique.
+    const path = try std.fmt.allocPrint(self.arena, "{f}", .{datapack_writer.functionPath(mcfun.name)});
+    if (!Config.isValidResourceName(path)) return self.fail("mcfun name '{s}' must only use letters, 0-9, '_', '.' and '-'", .{mcfun.name});
+    const path_entry = try paths.getOrPut(self.arena, try declarations.functionName(self, declaration.namespace, path));
+    if (path_entry.found_existing) {
+        return self.fail("mcfun '{s}' and '{s}' have the same file name '{s}.mcfunction'", .{ path_entry.value_ptr.*, mcfun.name, path });
+    }
+    path_entry.value_ptr.* = mcfun.name;
+
+    var macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty;
+    try collectMacroKeys(self.arena, mcfun.body, &macro_keys);
+    const is_project = declaration.origin == .project;
+    const is_load = is_project and std.mem.eql(u8, mcfun.name, "load");
+    const is_hook = is_load or (is_project and std.mem.eql(u8, mcfun.name, "tick"));
+    if (is_hook and macro_keys.count() > 0) {
+        return self.fail("mcfun '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ mcfun.name, macro_keys.keys()[0] });
+    }
+
+    self.mcfun = .{
+        .folder = try ir.generatedFolder(self.arena, try declarations.outputPath(self, declaration.namespace, mcfun.name)),
+        .name = declaration.ir_name,
+        .key = mcfun_key,
+        .macro_keys = macro_keys,
+        .forwarded_args = try self.forwardedArguments(macro_keys.keys()),
+        .in_load = is_load,
+    };
+    self.mcfun.cleanup = try self.localCleanup(mcfun.body);
+
+    var env: Environment = .{};
+    var commands: std.ArrayList(ir.Command) = .empty;
+    try self.compileBlock(mcfun.body, &env, &commands);
+    if (mcfun.body.len == 0 or !isJump(mcfun.body[mcfun.body.len - 1].kind)) try commands.appendSlice(self.arena, self.mcfun.cleanup);
+
+    return .{ .name = declaration.ir_name, .commands = try commands.toOwnedSlice(self.arena) };
+}
+
+/// `{a:"$(a)",b:"$(b)"}`, or null when the mcfun uses no macro arguments.
+fn forwardedArguments(self: *Compiler, keys: []const []const u8) std.mem.Allocator.Error!?[]const u8 {
+    if (keys.len == 0) return null;
+    var forwarded: std.ArrayList(u8) = .empty;
+    for (keys, 0..) |key, index| {
+        try forwarded.appendSlice(self.arena, if (index == 0) "{" else ",");
+        try forwarded.print(self.arena, "{s}:\"$({s})\"", .{ key, key });
+    }
+    try forwarded.append(self.arena, '}');
+    return forwarded.items;
 }
 
 pub fn scopeOf(self: *const Compiler, namespace: []const u8, imports: []const ast.NamespaceName) Scope {
@@ -1008,6 +1016,12 @@ pub fn addError(self: *Compiler, comptime format: []const u8, args: anytype) std
 pub fn fail(self: *Compiler, comptime format: []const u8, args: anytype) Error {
     try self.addError(format, args);
     return error.Reported;
+}
+
+/// The same as `fail`, at an expression. The statement stops, so its position is not restored here.
+pub fn failOn(self: *Compiler, expression: *const ast.Expression, comptime format: []const u8, args: anytype) Error {
+    self.position = expression.position;
+    return self.fail(format, args);
 }
 
 /// The same as `fail`, at a column of the current line.

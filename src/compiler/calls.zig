@@ -25,95 +25,109 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         return compiler.fail("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ mcfun.name, mcfun.name, try exampleCompound(compiler, keys.keys()) });
     }
     const with = call.with orelse {
-        if (keys.count() > 0) return compiler.fail("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ mcfun.name, keys.keys()[0], mcfun.name, try exampleCompound(compiler, keys.keys()) });
+        if (keys.count() > 0) {
+            return compiler.fail("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ mcfun.name, keys.keys()[0], mcfun.name, try exampleCompound(compiler, keys.keys()) });
+        }
         return .{ .function = declaration.ir_name };
     };
-    const value = switch (with) {
-        .raw => |text| return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .raw = text } } },
-        .value => |value| value,
-    };
 
-    if (data.isDataIdentifier(value)) {
-        const path = try data.dataPathOf(compiler, value.kind.identifier, env);
-        if (try nonCompoundGlobal(compiler, value.kind.identifier, env)) |initial| {
-            const outer_position = compiler.enterExpression(value);
-            defer compiler.restorePosition(outer_position);
-            return compiler.fail("'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ value.kind.identifier.name, initial, value.kind.identifier.name, initial });
-        }
-        return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .data_path = path } } };
+    const arguments: ir.FunctionWith.Arguments = switch (with) {
+        .raw => |text| .{ .raw = text },
+        .value => |value| if (data.isDataIdentifier(value))
+            try dataArguments(compiler, value, env)
+        else
+            try compoundArguments(compiler, mcfun.name, keys.keys(), value, env, commands),
+    };
+    return .{ .function_with = .{ .name = declaration.ir_name, .arguments = arguments } };
+}
+
+/// `f() with $player`: the `$` variable is read as it is.
+fn dataArguments(compiler: *Compiler, value: *const ast.Expression, env: *Environment) Compiler.Error!ir.FunctionWith.Arguments {
+    const identifier = value.kind.identifier;
+    const path = try data.dataPathOf(compiler, identifier, env);
+    if (try nonCompoundGlobal(compiler, identifier, env)) |initial| {
+        return compiler.failOn(value, "'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ identifier.name, initial, identifier.name, initial });
     }
-    const entries = switch (value.kind) {
-        .compound => |entries| entries,
-        else => {
-            const outer_position = compiler.enterExpression(value);
-            defer compiler.restorePosition(outer_position);
-            return compiler.fail("'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
-        },
-    };
+    return .{ .data_path = path };
+}
 
-    for (keys.keys()) |key| {
+/// `f() with {name: ...}`: written in the call when every value is known, else stored in `<ns>:poplar args` first.
+fn compoundArguments(compiler: *Compiler, mcfun_name: []const u8, keys: []const []const u8, value: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!ir.FunctionWith.Arguments {
+    if (value.kind != .compound) {
+        return compiler.failOn(value, "'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
+    }
+    const entries = value.kind.compound;
+
+    for (keys) |key| {
         for (entries) |entry| {
             if (std.mem.eql(u8, entry.key, key)) break;
         } else {
-            const outer_position = compiler.enterExpression(value);
-            defer compiler.restorePosition(outer_position);
-            return compiler.fail("mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ mcfun.name, key, key });
+            return compiler.failOn(value, "mcfun '{s}' uses '$({s})', but this compound has no key '{s}'", .{ mcfun_name, key, key });
         }
     }
 
-    var is_inline = true;
-    for (entries) |entry| {
-        if (values.containsRuntimeValue(entry.value) and entry.value.kind != .macro_key) is_inline = false;
-    }
-    if (is_inline) {
-        var compound: std.ArrayList(u8) = .empty;
-        try compound.append(compiler.arena, '{');
-        for (entries, 0..) |entry, index| {
-            if (index > 0) try compound.append(compiler.arena, ',');
-            try compound.print(compiler.arena, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) });
-        }
-        try compound.append(compiler.arena, '}');
-        return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .{ .compound = try compound.toOwnedSlice(compiler.arena) } } };
-    }
+    const is_inline = for (entries) |entry| {
+        if (values.containsRuntimeValue(entry.value) and entry.value.kind != .macro_key) break false;
+    } else true;
+    if (is_inline) return .{ .compound = try inlineCompound(compiler, entries, env) };
 
-    // Math is computed before any key is written, so a call inside a value cannot overwrite them.
+    try storeArguments(compiler, entries, env, commands);
+    return .args_storage;
+}
+
+fn inlineCompound(compiler: *Compiler, entries: []const ast.Entry, env: *Environment) Compiler.Error![]const u8 {
+    var compound: std.ArrayList(u8) = .empty;
+    try compound.append(compiler.arena, '{');
+    for (entries, 0..) |entry, index| {
+        if (index > 0) try compound.append(compiler.arena, ',');
+        try compound.print(compiler.arena, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) });
+    }
+    try compound.append(compiler.arena, '}');
+    return compound.items;
+}
+
+/// Writes each key of `<ns>:poplar args`. Math is computed before any key is written, so a call inside a value cannot
+/// overwrite them.
+fn storeArguments(compiler: *Compiler, entries: []const ast.Entry, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
     const entry_scores = try compiler.arena.alloc(?ir.Score, entries.len);
-    for (entries, entry_scores) |entry, *score| {
-        score.* = null;
-        const entry_value = entry.value;
-        if (!values.containsRuntimeValue(entry_value) or entry_value.kind == .macro_key) continue;
-        if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call)) continue;
-        if (entry_value.kind == .list or entry_value.kind == .compound) continue;
-
-        if (entry_value.kind == .identifier) {
-            if (entry_value.kind.identifier.kind == .score) score.* = try scores.scoreSource(compiler, entry_value.kind.identifier, env);
-            continue;
-        }
-
-        score.* = try scores.newTemp(compiler);
-        try scores.compileInto(compiler, score.*.?, entry_value, env, commands);
-    }
+    for (entries, entry_scores) |entry, *score| score.* = try scoreOfArgument(compiler, entry.value, env, commands);
 
     for (entries, entry_scores) |entry, entry_score| {
         const outer_position = compiler.enterExpression(entry.value);
         defer compiler.restorePosition(outer_position);
         const target: ir.DataPath = .inStorage(.args, try values.snbtKey(compiler, entry.key));
-        const entry_value = entry.value;
+        const value = entry.value;
+        const is_runtime = values.containsRuntimeValue(value);
         if (entry_score) |score| {
             try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = score } });
-        } else if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call) and values.containsRuntimeValue(entry_value)) {
-            try data.compileStringInto(compiler, target, entry_value.kind.call, env, commands);
-        } else if (data.isDataIdentifier(entry_value)) {
-            const source = try data.dataPathOf(compiler, entry_value.kind.identifier, env);
+        } else if (value.kind == .call and data.isStringCall(value.kind.call) and is_runtime) {
+            try data.compileStringInto(compiler, target, value.kind.call, env, commands);
+        } else if (data.isDataIdentifier(value)) {
+            const source = try data.dataPathOf(compiler, value.kind.identifier, env);
             try commands.append(compiler.arena, .{ .data_copy = .{ .target = target, .source = source } });
-        } else if ((entry_value.kind == .list or entry_value.kind == .compound) and values.containsRuntimeValue(entry_value)) {
-            try data.compileLiteralAssign(compiler, target, entry_value, env, commands);
+        } else if ((value.kind == .list or value.kind == .compound) and is_runtime) {
+            try data.compileLiteralAssign(compiler, target, value, env, commands);
         } else {
-            const snbt = try argumentSnbt(compiler, entry.value, env);
+            const snbt = try argumentSnbt(compiler, value, env);
             try commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = snbt } });
         }
     }
-    return .{ .function_with = .{ .name = declaration.ir_name, .arguments = .args_storage } };
+}
+
+/// The score that holds a value that is a score or math. Null for any other value.
+fn scoreOfArgument(compiler: *Compiler, value: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!?ir.Score {
+    if (!values.containsRuntimeValue(value) or value.kind == .macro_key) return null;
+    if (value.kind == .call and data.isStringCall(value.kind.call)) return null;
+    if (value.kind == .list or value.kind == .compound) return null;
+
+    if (value.kind == .identifier) {
+        if (value.kind.identifier.kind != .score) return null;
+        return try scores.scoreSource(compiler, value.kind.identifier, env);
+    }
+
+    const temp = try scores.newTemp(compiler);
+    try scores.compileInto(compiler, temp, value, env, commands);
+    return temp;
 }
 
 /// The initial value of a whole `$` global that is not a compound and that no code changes. A global that code sets
