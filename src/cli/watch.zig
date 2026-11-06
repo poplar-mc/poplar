@@ -47,7 +47,10 @@ const WorldCopy = struct {
         const world_name = std.fs.path.basename(std.fs.path.dirname(copy.datapacks_path).?);
         if (!try isReplaceable(io, datapacks, name)) {
             copy.failed = true;
-            out.failure("{s}{s}/datapacks/{s}{s} already exists and was not made by poplar watch. Remove it, then run watch again", .{ out.bold(), world_name, name, out.reset() });
+            out.failure(
+                "{s}{s}/datapacks/{s}{s} already exists and was not made by poplar watch. Remove it, then run watch again",
+                .{ out.bold(), world_name, name, out.reset() },
+            );
             return;
         }
         datapacks.deleteTree(io, name) catch |err| switch (err) {
@@ -69,9 +72,15 @@ const WorldCopy = struct {
             .file => try source.copyFile(entry.path, target, entry.path, io, .{}),
             else => {},
         };
-        try target.writeFile(io, .{ .sub_path = marker_name, .data = "Copied by poplar watch, which replaces this folder after each build.\n" });
+        try target.writeFile(
+            io,
+            .{ .sub_path = marker_name, .data = "Copied by poplar watch, which replaces this folder after each build.\n" },
+        );
 
-        if (!copy.copied_before) try out.success("Copied to {s}{s}/datapacks/{s}{s}{s}. Run {s}/reload{s} in the game after each build", .{ out.bold(), world_name, name, out.reset(), copy.source, out.bold(), out.reset() });
+        if (!copy.copied_before) try out.success(
+            "Copied to {s}{s}/datapacks/{s}{s}{s}. Run {s}/reload{s} in the game after each build",
+            .{ out.bold(), world_name, name, out.reset(), copy.source, out.bold(), out.reset() },
+        );
         copy.copied_before = true;
     }
 
@@ -155,7 +164,10 @@ fn run(ctx: zli.CommandContext) !void {
         };
     } else {
         const out = root.output(ctx);
-        out.warning("No world specified, so builds are not copied anywhere. Use {s}--world{s}, or set {s}POPLAR_WORLD{s} in .env", .{ out.bold(), out.reset(), out.bold(), out.reset() });
+        out.warning(
+            "No world specified, so builds are not copied anywhere. Use {s}--world{s}, or set {s}POPLAR_WORLD{s} in .env",
+            .{ out.bold(), out.reset(), out.bold(), out.reset() },
+        );
     }
 
     var last_fingerprint = try fingerprint(ctx.allocator, ctx.io, project_path);
@@ -181,7 +193,10 @@ fn rebuild(ctx: zli.CommandContext, project_path: []const u8, world_copy: ?*Worl
 
     // The time of day (UTC, because Zig has no time zones), so that each build is easy to tell apart.
     const seconds_today: u64 = @intCast(@mod(std.Io.Timestamp.now(ctx.io, .real).toSeconds(), std.time.s_per_day));
-    try ctx.writer.print("{s}{d:0>2}:{d:0>2}:{d:0>2} UTC{s} ", .{ out.dim(), seconds_today / 3600, seconds_today / 60 % 60, seconds_today % 60, out.reset() });
+    try ctx.writer.print(
+        "{s}{d:0>2}:{d:0>2}:{d:0>2} UTC{s} ",
+        .{ out.dim(), seconds_today / 3600, seconds_today / 60 % 60, seconds_today % 60, out.reset() },
+    );
     if (result.summary) |summary| {
         try build.printBuilt(out, summary, root.elapsedMilliseconds(ctx, started));
         if (world_copy) |copy| try copy.update(ctx, arena.allocator(), project_path, summary.pack_path.?);

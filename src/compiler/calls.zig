@@ -17,16 +17,28 @@ const scores = @import("scores.zig");
 const values = @import("values.zig");
 
 /// Returns the command that calls an mcfun. CommandTree that write a runtime `with` compound go into `commands` first.
-pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compiler.McfunDeclaration, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!ir.Command {
+pub fn compileMcfunCall(
+    compiler: *Compiler,
+    call: ast.Call,
+    declaration: Compiler.McfunDeclaration,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!ir.Command {
     const mcfun = declaration.mcfun;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
     try Compiler.collectMacroKeys(compiler.arena, mcfun.body, &keys);
     if (call.args.len > 0) {
-        return compiler.fail("mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'", .{ mcfun.name, mcfun.name, try exampleCompound(compiler, keys.keys()) });
+        return compiler.fail(
+            "mcfun '{s}' takes no arguments. Pass them as a compound: '{s}() with {s}'",
+            .{ mcfun.name, mcfun.name, try exampleCompound(compiler, keys.keys()) },
+        );
     }
     const with = call.with orelse {
         if (keys.count() > 0) {
-            return compiler.fail("mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'", .{ mcfun.name, keys.keys()[0], mcfun.name, try exampleCompound(compiler, keys.keys()) });
+            return compiler.fail(
+                "mcfun '{s}' uses '$({s})', so it needs a compound: '{s}() with {s}'",
+                .{ mcfun.name, keys.keys()[0], mcfun.name, try exampleCompound(compiler, keys.keys()) },
+            );
         }
         return .{ .function = declaration.ir_name };
     };
@@ -46,15 +58,30 @@ fn dataArguments(compiler: *Compiler, value: *const ast.Expression, env: *Enviro
     const identifier = value.kind.identifier;
     const path = try data.dataPathOf(compiler, identifier, env);
     if (try nonCompoundGlobal(compiler, identifier, env)) |initial| {
-        return compiler.failOn(value, "'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'", .{ identifier.name, initial, identifier.name, initial });
+        return compiler.failOn(
+            value,
+            "'with' needs a compound, but '${s}' is {s}. Declare it as a compound: 'var ${s} = {{name: {s}}};'",
+            .{ identifier.name, initial, identifier.name, initial },
+        );
     }
     return .{ .data_path = path };
 }
 
 /// `f() with {name: ...}`: written in the call when every value is known, else stored in `<ns>:poplar args` first.
-fn compoundArguments(compiler: *Compiler, mcfun_name: []const u8, keys: []const []const u8, value: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!ir.FunctionWith.Arguments {
+fn compoundArguments(
+    compiler: *Compiler,
+    mcfun_name: []const u8,
+    keys: []const []const u8,
+    value: *const ast.Expression,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!ir.FunctionWith.Arguments {
     if (value.kind != .compound) {
-        return compiler.failOn(value, "'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'", .{});
+        return compiler.failOn(
+            value,
+            "'with' needs a compound ('{{name: ...}}'), a '$' variable, 'entity <selector>' or 'block <position>'",
+            .{},
+        );
     }
     const entries = value.kind.compound;
 
@@ -80,7 +107,11 @@ fn inlineCompound(compiler: *Compiler, entries: []const ast.Entry, env: *Environ
     try compound.append(compiler.arena, '{');
     for (entries, 0..) |entry, index| {
         if (index > 0) try compound.append(compiler.arena, ',');
-        try compound.print(compiler.arena, "{s}:{s}", .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) });
+        try compound.print(
+            compiler.arena,
+            "{s}:{s}",
+            .{ try values.snbtKey(compiler, entry.key), try argumentSnbt(compiler, entry.value, env) },
+        );
     }
     try compound.append(compiler.arena, '}');
     return compound.items;
@@ -88,7 +119,12 @@ fn inlineCompound(compiler: *Compiler, entries: []const ast.Entry, env: *Environ
 
 /// Writes each key of `<ns>:poplar args`. Math is computed before any key is written, so a call inside a value cannot
 /// overwrite them.
-fn storeArguments(compiler: *Compiler, entries: []const ast.Entry, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+fn storeArguments(
+    compiler: *Compiler,
+    entries: []const ast.Entry,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     const entry_scores = try compiler.arena.alloc(?ir.Score, entries.len);
     for (entries, entry_scores) |entry, *score| score.* = try scoreOfArgument(compiler, entry.value, env, commands);
 
@@ -115,7 +151,12 @@ fn storeArguments(compiler: *Compiler, entries: []const ast.Entry, env: *Environ
 }
 
 /// The score that holds a value that is a score or math. Null for any other value.
-fn scoreOfArgument(compiler: *Compiler, value: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!?ir.Score {
+fn scoreOfArgument(
+    compiler: *Compiler,
+    value: *const ast.Expression,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!?ir.Score {
     if (!values.containsRuntimeValue(value) or value.kind == .macro_key) return null;
     if (value.kind == .call and data.isStringCall(value.kind.call)) return null;
     if (value.kind == .list or value.kind == .compound) return null;
@@ -192,12 +233,21 @@ pub fn generatedCall(compiler: *Compiler, name: []const u8) ir.Command {
 
 /// A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
 /// locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
-pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.Score, live_temp_count: usize, commands: *std.ArrayList(ir.Command)) std.mem.Allocator.Error!void {
+pub fn appendWithSavedValues(
+    compiler: *Compiler,
+    call: ir.Command,
+    target: ?ir.Score,
+    live_temp_count: usize,
+    commands: *std.ArrayList(ir.Command),
+) std.mem.Allocator.Error!void {
     var saved_scores: std.ArrayList(ir.Score) = .empty;
     var saved_data: std.ArrayList([]const u8) = .empty;
     for (0..live_temp_count) |index| try saved_scores.append(compiler.arena, try scores.tempScore(compiler, index));
     for (compiler.mcfun.live_locals.items) |local| switch (local.kind) {
-        .score => try saved_scores.append(compiler.arena, ir.Score.local(local.generated_name, local.owner, compiler.scope.output_namespace)),
+        .score => try saved_scores.append(
+            compiler.arena,
+            ir.Score.local(local.generated_name, local.owner, compiler.scope.output_namespace),
+        ),
         .data => try saved_data.append(compiler.arena, local.generated_name),
     };
     if (target) |result| for (saved_scores.items, 0..) |score, index| {
@@ -210,11 +260,23 @@ pub fn appendWithSavedValues(compiler: *Compiler, call: ir.Command, target: ?ir.
 
     compiler.uses_stack = true;
     try commands.append(compiler.arena, .frame_push);
-    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .score_to_data = .{ .target = try scoreFrameSlot(compiler, score), .score = score } });
-    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = try dataFrameSlot(compiler, key), .source = data.dataLocal(compiler, key) } });
+    for (saved_scores.items) |score| try commands.append(
+        compiler.arena,
+        .{ .score_to_data = .{ .target = try scoreFrameSlot(compiler, score), .score = score } },
+    );
+    for (saved_data.items) |key| try commands.append(
+        compiler.arena,
+        .{ .data_copy = .{ .target = try dataFrameSlot(compiler, key), .source = data.dataLocal(compiler, key) } },
+    );
     try commands.append(compiler.arena, call);
-    for (saved_scores.items) |score| try commands.append(compiler.arena, .{ .data_to_score = .{ .source = try scoreFrameSlot(compiler, score), .score = score } });
-    for (saved_data.items) |key| try commands.append(compiler.arena, .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try dataFrameSlot(compiler, key) } });
+    for (saved_scores.items) |score| try commands.append(
+        compiler.arena,
+        .{ .data_to_score = .{ .source = try scoreFrameSlot(compiler, score), .score = score } },
+    );
+    for (saved_data.items) |key| try commands.append(
+        compiler.arena,
+        .{ .data_copy = .{ .target = data.dataLocal(compiler, key), .source = try dataFrameSlot(compiler, key) } },
+    );
     try commands.append(compiler.arena, .frame_pop);
 }
 
@@ -327,7 +389,11 @@ fn collectExpressionCalls(
             // An event callback is called from `load`, as far as the call graph is concerned.
             const is_event = call.callee.kind.identifier.namespace == null and load.event_builtins.has(call.callee.kind.identifier.name);
             if (is_event and call.args.len > 0 and call.args[call.args.len - 1].kind == .identifier) {
-                if (try calledKey(compiler, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(compiler.arena, callback, {});
+                if (try calledKey(compiler, call.args[call.args.len - 1].kind.identifier)) |callback| try calls.put(
+                    compiler.arena,
+                    callback,
+                    {},
+                );
             }
             const called = try calledKey(compiler, call.callee.kind.identifier) orelse return;
             try calls.put(compiler.arena, called, {});
@@ -356,18 +422,55 @@ pub fn compileCall(compiler: *Compiler, call: ast.Call, env: *Environment, comma
     if (call.callee.kind != .identifier) return compiler.fail("only named functions can be called", .{});
     const name = call.callee.kind.identifier.name;
 
-    if (call.callee.kind.identifier.namespace == null and load.event_builtins.has(name)) return load.compileEvent(compiler, call, name, env);
-    if (data.isStringCall(call) or data.isStringTest(call)) return compiler.fail("'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'", .{ name, name, name });
-    if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return data.compileListBuiltin(compiler, name, call, env, commands);
+    if (call.callee.kind.identifier.namespace == null and load.event_builtins.has(name)) return load.compileEvent(
+        compiler,
+        call,
+        name,
+        env,
+    );
+    if (data.isStringCall(call) or data.isStringTest(call)) return compiler.fail(
+        "'{s}' gives a value. Use it: '$x = {s}(...);' or 'if ({s}(...))'",
+        .{ name, name, name },
+    );
+    if (call.callee.kind.identifier.namespace == null and isBuiltin(name)) return data.compileListBuiltin(
+        compiler,
+        name,
+        call,
+        env,
+        commands,
+    );
     const callee = try declarations.findMcfun(compiler, call.callee.kind.identifier);
 
     compiler.mcfun.temp_count = 0;
     const command = try compileMcfunCall(compiler, call, callee.declaration, env, commands);
-    if (compiler.mcfun.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(compiler, command, null, 0, commands);
+    if (compiler.mcfun.live_locals.items.len > 0 and try canReach(compiler, callee.key, compiler.mcfun.key)) return appendWithSavedValues(
+        compiler,
+        command,
+        null,
+        0,
+        commands,
+    );
     try commands.append(compiler.arena, command);
 }
 
-pub const builtin_names = [_][]const u8{ "append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "onDeath", "onFirstJoin", "onJoin", "onRespawn", "slice", "str", "startsWith", "endsWith" };
+pub const builtin_names = [_][]const u8{
+    "append",
+    "prepend",
+    "insert",
+    "remove",
+    "len",
+    "text",
+    "onEvent",
+    "onTrigger",
+    "onDeath",
+    "onFirstJoin",
+    "onJoin",
+    "onRespawn",
+    "slice",
+    "str",
+    "startsWith",
+    "endsWith",
+};
 
 pub fn isBuiltin(name: []const u8) bool {
     for (builtin_names) |builtin| {
@@ -429,7 +532,10 @@ test "a name with a namespace is never a builtin, and an mcfun is not known at b
     const errors = compiler.errors.items;
     try std.testing.expectEqual(2, errors.len);
     try std.testing.expectEqualStrings("unknown function 'len'", errors[0].message);
-    try std.testing.expectEqualStrings("mcfun 'one' runs in the game, so its result is not known when the pack is built", errors[1].message);
+    try std.testing.expectEqualStrings(
+        "mcfun 'one' runs in the game, so its result is not known when the pack is built",
+        errors[1].message,
+    );
 }
 
 test "return values, mcfun calls as values and while" {
@@ -539,8 +645,14 @@ test "with: a compound must have the keys the body uses, and a declared non-comp
     try std.testing.expectEqual(4, errors.len);
     try std.testing.expectEqualStrings("mcfun 'two' uses '$(b)', but this compound has no key 'b'", errors[0].message);
     try std.testing.expectEqualStrings("mcfun 'two' uses '$(b)', but this compound has no key 'b'", errors[1].message);
-    try std.testing.expectEqualStrings("'with' needs a compound, but '$num' is 0.05f. Declare it as a compound: 'var $num = {name: 0.05f};'", errors[2].message);
-    try std.testing.expectEqualStrings("'with' needs a compound, but '$list' is [1]. Declare it as a compound: 'var $list = {name: [1]};'", errors[3].message);
+    try std.testing.expectEqualStrings(
+        "'with' needs a compound, but '$num' is 0.05f. Declare it as a compound: 'var $num = {name: 0.05f};'",
+        errors[2].message,
+    );
+    try std.testing.expectEqualStrings(
+        "'with' needs a compound, but '$list' is [1]. Declare it as a compound: 'var $list = {name: [1]};'",
+        errors[3].message,
+    );
 }
 
 test "mcfun call errors" {
@@ -557,10 +669,22 @@ test "mcfun call errors" {
 
     const errors = compiler.errors.items;
     try std.testing.expectEqual(4, errors.len);
-    try std.testing.expectEqualStrings("'copy' is a build-time constant, but this value only exists in the game. Use 'var #copy' for a score or 'var $copy' for data", errors[0].message);
-    try std.testing.expectEqualStrings("mcfun 'heal' uses '$(amount)', so it needs a compound: 'heal() with {amount: ...}'", errors[1].message);
-    try std.testing.expectEqualStrings("mcfun 'heal' takes no arguments. Pass them as a compound: 'heal() with {amount: ...}'", errors[2].message);
-    try std.testing.expectEqualStrings("'with' needs a compound ('{name: ...}'), a '$' variable, 'entity <selector>' or 'block <position>'", errors[3].message);
+    try std.testing.expectEqualStrings(
+        "'copy' is a build-time constant, but this value only exists in the game. Use 'var #copy' for a score or 'var $copy' for data",
+        errors[0].message,
+    );
+    try std.testing.expectEqualStrings(
+        "mcfun 'heal' uses '$(amount)', so it needs a compound: 'heal() with {amount: ...}'",
+        errors[1].message,
+    );
+    try std.testing.expectEqualStrings(
+        "mcfun 'heal' takes no arguments. Pass them as a compound: 'heal() with {amount: ...}'",
+        errors[2].message,
+    );
+    try std.testing.expectEqualStrings(
+        "'with' needs a compound ('{name: ...}'), a '$' variable, 'entity <selector>' or 'block <position>'",
+        errors[3].message,
+    );
 }
 
 test "recursive calls save live temps in a frame" {

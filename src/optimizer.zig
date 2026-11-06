@@ -3,7 +3,11 @@ const ir = @import("ir.zig");
 const datapack_writer = @import("datapack_writer.zig");
 
 /// The passes run in this order on each function. Each pass is a small rewrite, as in bolt-expressions.
-pub fn optimizeFunction(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
+pub fn optimizeFunction(
+    arena: std.mem.Allocator,
+    function_name: []const u8,
+    commands: []const ir.Command,
+) std.mem.Allocator.Error![]const ir.Command {
     const without_identities = try removeIdentities(arena, commands);
     const with_known_values = try propagateKnownValues(arena, without_identities);
     const without_dead_writes = try removeDeadWrites(arena, function_name, with_known_values);
@@ -14,7 +18,11 @@ pub fn optimizeFunction(arena: std.mem.Allocator, function_name: []const u8, com
 
 /// `execute store result storage X float 1 run scoreboard players set T 20` → `data modify storage X set value 20f`,
 /// when nothing reads the temp after it. A store into a score becomes `scoreboard players set`.
-fn storeConstants(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
+fn storeConstants(
+    arena: std.mem.Allocator,
+    function_name: []const u8,
+    commands: []const ir.Command,
+) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands, 0..) |command, index| {
@@ -190,7 +198,11 @@ fn foldMath(known: KnownScores, command: ir.Command) ?ir.ScoreValue {
 
 /// A write to a temp or a local is removed when nothing reads it before it is set again or the function ends.
 /// A write to a global is removed only when it is set again before anything else can read it.
-fn removeDeadWrites(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
+fn removeDeadWrites(
+    arena: std.mem.Allocator,
+    function_name: []const u8,
+    commands: []const ir.Command,
+) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     for (commands, 0..) |command, index| {
@@ -203,7 +215,10 @@ fn removeDeadWrites(arena: std.mem.Allocator, function_name: []const u8, command
         };
         if (written) |score| {
             const rest = commands[index + 1 ..];
-            const is_dead = if (isScopedHere(score, function_name)) !isReadLater(rest, score) else isTracked(score) and isSetBeforeUse(rest, score);
+            const is_dead = if (isScopedHere(score, function_name)) !isReadLater(rest, score) else isTracked(score) and isSetBeforeUse(
+                rest,
+                score,
+            );
             if (is_dead) continue;
         }
         try result.append(arena, command);
@@ -238,7 +253,11 @@ fn scaleDataGets(arena: std.mem.Allocator, commands: []const ir.Command) std.mem
 /// A command that computes a temp, followed by a copy of that temp, becomes one command:
 /// `scoreboard players remove T 1` + `execute store result storage X int 1 run scoreboard players get T`
 /// → `execute store result storage X int 1 run scoreboard players remove T 1`.
-fn inlineStores(arena: std.mem.Allocator, function_name: []const u8, commands: []const ir.Command) std.mem.Allocator.Error![]const ir.Command {
+fn inlineStores(
+    arena: std.mem.Allocator,
+    function_name: []const u8,
+    commands: []const ir.Command,
+) std.mem.Allocator.Error![]const ir.Command {
     var result: std.ArrayList(ir.Command) = .empty;
 
     var index: usize = 0;
@@ -397,7 +416,12 @@ pub fn inlineSmallFunctions(arena: std.mem.Allocator, functions: []const ir.McFu
     return used.toOwnedSlice(arena);
 }
 
-fn inlineCall(arena: std.mem.Allocator, functions: []const ir.McFunction, caller: []const u8, command: ir.Command) std.mem.Allocator.Error!?ir.Command {
+fn inlineCall(
+    arena: std.mem.Allocator,
+    functions: []const ir.McFunction,
+    caller: []const u8,
+    command: ir.Command,
+) std.mem.Allocator.Error!?ir.Command {
     switch (command) {
         .function => |name| return smallBody(functions, caller, name),
         // A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the caller.
@@ -511,7 +535,11 @@ pub fn dropUnusedArguments(arena: std.mem.Allocator, functions: []ir.McFunction)
     }
 }
 
-fn usesArguments(arena: std.mem.Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) std.mem.Allocator.Error!bool {
+fn usesArguments(
+    arena: std.mem.Allocator,
+    command: ir.Command,
+    needs: *const std.StringHashMapUnmanaged(void),
+) std.mem.Allocator.Error!bool {
     switch (command) {
         .function_with => |call| if (call.arguments == .compound and isGenerated(call.name)) return needs.contains(call.name),
         // The wrapper and its run are checked apart, so a call inside counts only as itself.
@@ -530,10 +558,20 @@ fn hasMacroText(arena: std.mem.Allocator, command: ir.Command) std.mem.Allocator
     return std.mem.indexOf(u8, text.items, "$(") != null;
 }
 
-fn withoutArguments(arena: std.mem.Allocator, command: ir.Command, needs: *const std.StringHashMapUnmanaged(void)) std.mem.Allocator.Error!ir.Command {
+fn withoutArguments(
+    arena: std.mem.Allocator,
+    command: ir.Command,
+    needs: *const std.StringHashMapUnmanaged(void),
+) std.mem.Allocator.Error!ir.Command {
     switch (command) {
-        .function_with => |call| if (call.arguments == .compound and isGenerated(call.name) and !needs.contains(call.name)) return .{ .function = call.name },
-        .execute, .execute_raw, .store_result, .return_run => return withRun(arena, command, try withoutArguments(arena, runOf(command).?.*, needs)),
+        .function_with => |call| if (call.arguments == .compound and isGenerated(call.name) and !needs.contains(call.name)) return .{
+            .function = call.name,
+        },
+        .execute, .execute_raw, .store_result, .return_run => return withRun(
+            arena,
+            command,
+            try withoutArguments(arena, runOf(command).?.*, needs),
+        ),
         else => {},
     }
     return command;
@@ -564,7 +602,10 @@ fn callsFunction(command: ir.Command, name: []const u8) bool {
     return switch (command) {
         .function => |called| std.mem.eql(u8, called, name),
         .function_with => |call| std.mem.eql(u8, call.name, name),
-        .execute => |execute| if (checkedFunction(execute)) |checked| std.mem.eql(u8, checked, name) or callsFunction(execute.run.*, name) else callsFunction(execute.run.*, name),
+        .execute => |execute| if (checkedFunction(execute)) |checked| std.mem.eql(u8, checked, name) or callsFunction(execute.run.*, name) else callsFunction(
+            execute.run.*,
+            name,
+        ),
         else => if (runOf(command)) |run| callsFunction(run.*, name) else false,
     };
 }

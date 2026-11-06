@@ -23,5 +23,8 @@ fn run(ctx: zli.CommandContext) !void {
         out.errorCount(result.diagnostics.len, "");
         root.fail(ctx);
     };
-    try out.success("No errors in {s}{s}{s} {s}({d} {s}){s}", .{ out.bold(), summary.name, out.reset(), out.dim(), summary.function_count, summary.functionsText(), out.reset() });
+    try out.success(
+        "No errors in {s}{s}{s} {s}({d} {s}){s}",
+        .{ out.bold(), summary.name, out.reset(), out.dim(), summary.function_count, summary.functionsText(), out.reset() },
+    );
 }

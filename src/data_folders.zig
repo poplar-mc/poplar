@@ -68,7 +68,11 @@ pub const folders = std.StaticStringMap([]const u8).initComptime(.{
 
 /// `itemTag` → `tags/item`, `biomeTag` → `tags/worldgen/biome`, `functionTag` → `tags/function`.
 /// A registry in `worldgen/` comes first, so `structureTag` is the worldgen structure.
-pub fn tagFolder(arena: std.mem.Allocator, word: []const u8, registries: *const std.array_hash_map.String([]const []const u8)) std.mem.Allocator.Error!?[]const u8 {
+pub fn tagFolder(
+    arena: std.mem.Allocator,
+    word: []const u8,
+    registries: *const std.array_hash_map.String([]const []const u8),
+) std.mem.Allocator.Error!?[]const u8 {
     if (!std.mem.endsWith(u8, word, "Tag") or word.len == "Tag".len) return null;
     const registry = try snakeCase(arena, word[0 .. word.len - "Tag".len]);
     if (std.mem.eql(u8, registry, "function")) return "tags/function";

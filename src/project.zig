@@ -67,7 +67,12 @@ pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, opt
     const cwd = std.Io.Dir.cwd();
 
     const project_real_path = cwd.realPathFileAlloc(io, project_path, arena) catch |err| switch (err) {
-        error.FileNotFound => return onlyDiagnostic(arena, "", null, try std.fmt.allocPrint(arena, "the project folder {s} does not exist", .{project_path})),
+        error.FileNotFound => return onlyDiagnostic(
+            arena,
+            "",
+            null,
+            try std.fmt.allocPrint(arena, "the project folder {s} does not exist", .{project_path}),
+        ),
         else => return err,
     };
 
@@ -81,7 +86,12 @@ pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, opt
     };
 
     var src_dir = project_dir.openDir(io, "src", .{}) catch |err| switch (err) {
-        error.FileNotFound => return onlyDiagnostic(arena, "", null, try std.fmt.allocPrint(arena, "the folder {s} is not a Poplar project: it has no src/ folder", .{project_path})),
+        error.FileNotFound => return onlyDiagnostic(
+            arena,
+            "",
+            null,
+            try std.fmt.allocPrint(arena, "the folder {s} is not a Poplar project: it has no src/ folder", .{project_path}),
+        ),
         else => return err,
     };
     defer src_dir.close(io);
@@ -235,12 +245,20 @@ const Loader = struct {
 
         var parser = try Parser.init(arena, Lexer.init(input));
         const program = try parser.parseProgram();
-        for (parser.errors.items) |err| try loader.diagnostics.append(arena, .{ .path = display_path, .position = err.position, .message = err.message });
+        for (parser.errors.items) |err| try loader.diagnostics.append(
+            arena,
+            .{ .path = display_path, .position = err.position, .message = err.message },
+        );
         if (parser.errors.items.len > 0) has_errors.* = true;
 
         if (program.namespace == null) {
             // A broken `namespace` line already has its own error.
-            if (parser.errors.items.len == 0) try loader.addError(display_path, .{ .line = 1, .column = 1 }, "a file must start with 'namespace <name>;'", .{});
+            if (parser.errors.items.len == 0) try loader.addError(
+                display_path,
+                .{ .line = 1, .column = 1 },
+                "a file must start with 'namespace <name>;'",
+                .{},
+            );
             has_errors.* = true;
             return null;
         }
@@ -399,8 +417,20 @@ test "only the std mcfuns that the project calls are written, under std/" {
 
     try tmp.dir.createDirPath(io, "src");
     try tmp.dir.createDirPath(io, "std");
-    try tmp.dir.writeFile(io, .{ .sub_path = "src/main.poplar", .data = "namespace ns;\nimport std;\nmcfun main() { /say {{ std:double() with {x: 2} }}; /function std:fromCommand; }\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "std/std.poplar", .data = "namespace std;\nmcfun double() { return twice() with {x: $(x)}; }\nmcfun twice() { return $(x) * 2; }\nmcfun fromCommand() {}\nmcfun unused() {}\n" });
+    try tmp.dir.writeFile(
+        io,
+        .{
+            .sub_path = "src/main.poplar",
+            .data = "namespace ns;\nimport std;\nmcfun main() { /say {{ std:double() with {x: 2} }}; /function std:fromCommand; }\n",
+        },
+    );
+    try tmp.dir.writeFile(
+        io,
+        .{
+            .sub_path = "std/std.poplar",
+            .data = "namespace std;\nmcfun double() { return twice() with {x: $(x)}; }\nmcfun twice() { return $(x) * 2; }\nmcfun fromCommand() {}\nmcfun unused() {}\n",
+        },
+    );
 
     var src_dir = try tmp.dir.openDir(io, "src", .{});
     defer src_dir.close(io);

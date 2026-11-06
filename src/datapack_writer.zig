@@ -181,24 +181,45 @@ pub fn renderFunction(arena: std.mem.Allocator, namespace: []const u8, function:
     return text.toOwnedSlice(arena);
 }
 
-pub fn renderCommand(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespace: []const u8, command: ir.Command) std.mem.Allocator.Error!void {
+pub fn renderCommand(
+    text: *std.ArrayList(u8),
+    arena: std.mem.Allocator,
+    namespace: []const u8,
+    command: ir.Command,
+) std.mem.Allocator.Error!void {
     switch (command) {
         .raw => |command_text| try text.appendSlice(arena, command_text),
         .function => |name| try text.print(arena, "function {f}", .{functionId(namespace, name)}),
-        .add_objective => |objective| try text.print(arena, "scoreboard objectives add {f} dummy", .{objectiveText(objective.namespace orelse namespace, objective.name)}),
+        .add_objective => |objective| try text.print(
+            arena,
+            "scoreboard objectives add {f} dummy",
+            .{objectiveText(objective.namespace orelse namespace, objective.name)},
+        ),
         .score_set => |set| try text.print(arena, "scoreboard players set {f} {d}", .{ scoreText(namespace, set.score), set.value }),
         .score_set_if_unset => |set| {
             const score = scoreText(namespace, set.score);
-            try text.print(arena, "execute unless score {f} matches -2147483648.. run scoreboard players set {f} {d}", .{ score, score, set.value });
+            try text.print(
+                arena,
+                "execute unless score {f} matches -2147483648.. run scoreboard players set {f} {d}",
+                .{ score, score, set.value },
+            );
         },
         .score_add => |add| try text.print(arena, "scoreboard players add {f} {d}", .{ scoreText(namespace, add.score), add.value }),
-        .score_remove => |remove| try text.print(arena, "scoreboard players remove {f} {d}", .{ scoreText(namespace, remove.score), remove.value }),
+        .score_remove => |remove| try text.print(
+            arena,
+            "scoreboard players remove {f} {d}",
+            .{ scoreText(namespace, remove.score), remove.value },
+        ),
         .score_operation => |operation| try text.print(arena, "scoreboard players operation {f} {s} {f}", .{
             scoreText(namespace, operation.target),
             operatorText(operation.op),
             scoreText(namespace, operation.source),
         }),
-        .score_set_macro_argument => |set| try text.print(arena, "scoreboard players set {f} $({s})", .{ scoreText(namespace, set.score), set.macro_argument }),
+        .score_set_macro_argument => |set| try text.print(
+            arena,
+            "scoreboard players set {f} $({s})",
+            .{ scoreText(namespace, set.score), set.macro_argument },
+        ),
         .data_set => |data| try text.print(arena, "data modify {f} set value {s}", .{ dataPathText(namespace, data.target), data.snbt }),
         .data_set_if_unset => |data| {
             const target = dataPathText(namespace, data.target);
@@ -222,7 +243,11 @@ pub fn renderCommand(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespa
             dataPathText(namespace, copy.source),
         }),
         .data_set_string => |set| {
-            try text.print(arena, "data modify {f} set string {f}", .{ dataPathText(namespace, set.target), dataPathText(namespace, set.source) });
+            try text.print(
+                arena,
+                "data modify {f} set string {f}",
+                .{ dataPathText(namespace, set.target), dataPathText(namespace, set.source) },
+            );
             if (set.start) |start| try text.print(arena, " {d}", .{start});
             if (set.end) |end| try text.print(arena, " {d}", .{end});
         },
@@ -241,7 +266,11 @@ pub fn renderCommand(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespa
             try text.print(arena, "function {f}", .{functionId(namespace, call.name)});
             switch (call.arguments) {
                 .compound => |compound| try text.print(arena, " {s}", .{compound}),
-                .data_storage => |storage| try text.print(arena, " with storage {s}:{s}", .{ storage.namespace orelse namespace, storage.kind.variablesName() }),
+                .data_storage => |storage| try text.print(
+                    arena,
+                    " with storage {s}:{s}",
+                    .{ storage.namespace orelse namespace, storage.kind.variablesName() },
+                ),
                 .args_storage => try text.print(arena, " with storage {s}:poplar args", .{namespace}),
                 .macro_storage => try text.print(arena, " with storage {s}:poplar macro", .{namespace}),
                 .data_path => |path| try text.print(arena, " with {f}", .{dataPathText(namespace, path)}),
@@ -408,7 +437,10 @@ const ScoreText = struct {
     score: ir.Score,
 
     pub fn format(self: ScoreText, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("{s} {f}", .{ self.score.holder, objectiveText(self.score.namespace orelse self.namespace, self.score.objective) });
+        try writer.print(
+            "{s} {f}",
+            .{ self.score.holder, objectiveText(self.score.namespace orelse self.namespace, self.score.objective) },
+        );
     }
 };
 

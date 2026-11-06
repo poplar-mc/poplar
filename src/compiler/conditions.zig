@@ -15,7 +15,13 @@ const Operand = union(enum) {
     score: ir.Score,
 };
 
-pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.Error!Compiler.Condition {
+pub fn lowerCondition(
+    compiler: *Compiler,
+    expression: *const ast.Expression,
+    env: *Environment,
+    negated: bool,
+    setup: *std.ArrayList(ir.Command),
+) Compiler.Error!Compiler.Condition {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(expression)) {
@@ -58,7 +64,13 @@ pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expression, en
 }
 
 /// `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of `execute (...)`.
-fn minecraftCheck(compiler: *Compiler, parts: []const ast.CommandPart, column: usize, env: *Environment, negated: bool) Compiler.Error!Compiler.Condition {
+fn minecraftCheck(
+    compiler: *Compiler,
+    parts: []const ast.CommandPart,
+    column: usize,
+    env: *Environment,
+    negated: bool,
+) Compiler.Error!Compiler.Condition {
     const check = try minecraft_text.buildCommandText(compiler, parts, env);
     if (check.is_macro) {
         return compiler.fail("a game value in a Minecraft check is not supported yet. Use 'execute (if ...) {{ }}'", .{});
@@ -69,7 +81,13 @@ fn minecraftCheck(compiler: *Compiler, parts: []const ast.CommandPart, column: u
 }
 
 /// `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
-fn dataCondition(compiler: *Compiler, identifier: ast.Identifier, value: Compiler.Value, negated: bool, env: *const Environment) Compiler.Error!Compiler.Condition {
+fn dataCondition(
+    compiler: *Compiler,
+    identifier: ast.Identifier,
+    value: Compiler.Value,
+    negated: bool,
+    env: *const Environment,
+) Compiler.Error!Compiler.Condition {
     const path = try data.dataPathOf(compiler, identifier, env);
     if (std.mem.indexOfAny(u8, path.path, "[\"") != null) {
         return compiler.fail("a condition on '{s}' is not supported yet: the path must only have keys", .{identifier.name});
@@ -84,10 +102,19 @@ fn dataCondition(compiler: *Compiler, identifier: ast.Identifier, value: Compile
     try filter.appendSlice(compiler.arena, snbt);
     try filter.appendNTimes(compiler.arena, '}', depth);
 
-    return try singleCheck(compiler, .{ .negated = negated, .condition = .{ .data_test = path.withPath(try filter.toOwnedSlice(compiler.arena)) } });
+    return try singleCheck(
+        compiler,
+        .{ .negated = negated, .condition = .{ .data_test = path.withPath(try filter.toOwnedSlice(compiler.arena)) } },
+    );
 }
 
-fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.Error!Compiler.Condition {
+fn lowerComparison(
+    compiler: *Compiler,
+    infix: ast.Infix,
+    env: *Environment,
+    negated: bool,
+    setup: *std.ArrayList(ir.Command),
+) Compiler.Error!Compiler.Condition {
     const check_negated = negated != (infix.op == .not_equal);
     const op = compareOperator(infix.op);
 
@@ -114,7 +141,13 @@ fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment, neg
 
 /// `==` between data and a compile-time string, bool, list, compound or typed number is an NBT filter.
 /// A number comparison still goes through a score, which also works for other number types.
-fn dataComparison(compiler: *Compiler, data_side: *const ast.Expression, other: *const ast.Expression, env: *Environment, negated: bool) Compiler.Error!Compiler.Condition {
+fn dataComparison(
+    compiler: *Compiler,
+    data_side: *const ast.Expression,
+    other: *const ast.Expression,
+    env: *Environment,
+    negated: bool,
+) Compiler.Error!Compiler.Condition {
     const outer_position = compiler.enterExpression(other);
     defer compiler.restorePosition(outer_position);
     if (values.containsRuntimeValue(other)) {
@@ -138,13 +171,21 @@ fn isNbtFilterComparison(left: *const ast.Expression, right: *const ast.Expressi
     return false;
 }
 
-fn lowerOperand(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, setup: *std.ArrayList(ir.Command)) Compiler.Error!Operand {
+fn lowerOperand(
+    compiler: *Compiler,
+    expression: *const ast.Expression,
+    env: *Environment,
+    setup: *std.ArrayList(ir.Command),
+) Compiler.Error!Operand {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(expression)) {
         const value = try values.evaluate(compiler, expression, env);
         if (value == .typed_number) {
-            return compiler.fail("a score holds whole numbers with no suffix, so it cannot be compared with '{s}'", .{value.typed_number.text});
+            return compiler.fail(
+                "a score holds whole numbers with no suffix, so it cannot be compared with '{s}'",
+                .{value.typed_number.text},
+            );
         }
         if (value != .number) {
             return compiler.fail("only numbers can be compared with scores, found {s}", .{@tagName(value)});
@@ -161,7 +202,13 @@ fn lowerOperand(compiler: *Compiler, expression: *const ast.Expression, env: *En
     return .{ .score = temp };
 }
 
-fn matchesCondition(compiler: *Compiler, score: ir.Score, op: ir.CompareOp, number: i64, negated: bool) std.mem.Allocator.Error!Compiler.Condition {
+fn matchesCondition(
+    compiler: *Compiler,
+    score: ir.Score,
+    op: ir.CompareOp,
+    number: i64,
+    negated: bool,
+) std.mem.Allocator.Error!Compiler.Condition {
     var min: ?i64 = null;
     var max: ?i64 = null;
 

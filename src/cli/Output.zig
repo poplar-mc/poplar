@@ -54,7 +54,10 @@ pub fn diagnostics(self: Output, list: []const Diagnostic) void {
     for (list) |diagnostic| {
         const message: Capitalized = .{ .text = diagnostic.message };
         if (diagnostic.position) |position| {
-            self.failure("{s}{s}:{d}:{d}{s}  {f}", .{ self.bold(), diagnostic.path, position.line, position.column, self.reset(), message });
+            self.failure(
+                "{s}{s}:{d}:{d}{s}  {f}",
+                .{ self.bold(), diagnostic.path, position.line, position.column, self.reset(), message },
+            );
         } else if (diagnostic.path.len > 0) {
             self.failure("{s}{s}{s}  {f}", .{ self.bold(), diagnostic.path, self.reset(), message });
         } else {

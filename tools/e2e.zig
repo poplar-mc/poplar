@@ -196,7 +196,10 @@ fn checkJava(arena: Allocator, io: Io, version_id: []const u8, required: u32) !v
     const major = std.fmt.parseInt(u32, result.stderr[start..end], 10) catch 0;
 
     if (major < required) {
-        std.debug.print("Minecraft {s} needs Java {d}, but 'java' is version {d}. {s}{d}\n", .{ version_id, required, major, hint, required });
+        std.debug.print(
+            "Minecraft {s} needs Java {d}, but 'java' is version {d}. {s}{d}\n",
+            .{ version_id, required, major, hint, required },
+        );
         std.process.exit(1);
     }
 }

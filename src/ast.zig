@@ -196,7 +196,21 @@ pub const Prefix = struct {
 };
 
 pub const Infix = struct {
-    pub const Operator = enum { add, subtract, multiply, divide, modulo, equal, not_equal, less, less_equal, greater, greater_equal, @"and", @"or" };
+    pub const Operator = enum {
+        add,
+        subtract,
+        multiply,
+        divide,
+        modulo,
+        equal,
+        not_equal,
+        less,
+        less_equal,
+        greater,
+        greater_equal,
+        @"and",
+        @"or",
+    };
 
     op: Operator,
     left: *Expression,

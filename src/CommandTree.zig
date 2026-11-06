@@ -59,8 +59,19 @@ pub const Id = struct {
 };
 
 /// `poplar_namespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
-pub fn checkText(self: *const CommandTree, arena: std.mem.Allocator, text: []const u8, poplar_namespaces: []const []const u8) std.mem.Allocator.Error!Checked {
-    var walk: Walk = .{ .arena = arena, .root = &self.root, .registries = &self.registries, .text = text, .poplar_namespaces = poplar_namespaces };
+pub fn checkText(
+    self: *const CommandTree,
+    arena: std.mem.Allocator,
+    text: []const u8,
+    poplar_namespaces: []const []const u8,
+) std.mem.Allocator.Error!Checked {
+    var walk: Walk = .{
+        .arena = arena,
+        .root = &self.root,
+        .registries = &self.registries,
+        .text = text,
+        .poplar_namespaces = poplar_namespaces,
+    };
     if (try walk.matchChildren(&self.root, 0)) return .{ .ids = walk.ids.items };
 
     const failure = walk.furthest orelse return .{ .failure = .{ .message = "invalid command", .at = 0 } };
@@ -77,12 +88,21 @@ const Walk = struct {
         /// The registry when the id is not in it.
         unknown_in: ?[]const u8 = null,
 
-        fn describe(problem: Problem, arena: std.mem.Allocator, text: []const u8, registries: *const Registries) std.mem.Allocator.Error![]const u8 {
+        fn describe(
+            problem: Problem,
+            arena: std.mem.Allocator,
+            text: []const u8,
+            registries: *const Registries,
+        ) std.mem.Allocator.Error![]const u8 {
             if (problem.message) |message| return message;
             const found = text[problem.at..readBalanced(text, problem.at)];
             if (problem.unknown_in) |registry| {
                 const id = registryId(found).?;
-                return std.fmt.allocPrint(arena, "unknown {s} '{s}'{f}", .{ registry, id, Suggestion{ .closest = closestId(registries.map.get(registry).?, id) } });
+                return std.fmt.allocPrint(
+                    arena,
+                    "unknown {s} '{s}'{f}",
+                    .{ registry, id, Suggestion{ .closest = closestId(registries.map.get(registry).?, id) } },
+                );
             }
             if (problem.out_of_range) return std.fmt.allocPrint(arena, "{s} '{s}' is out of range", .{ problem.expected, found });
             if (found.len == 0) return std.fmt.allocPrint(arena, "expected {s}, found end of command", .{problem.expected});
@@ -318,7 +338,12 @@ fn registryOf(parser: []const u8, properties: Properties) ?[]const u8 {
     if (eql(parser, "minecraft:item_stack") or eql(parser, "minecraft:item_predicate")) return "item";
     if (eql(parser, "minecraft:block_state") or eql(parser, "minecraft:block_predicate")) return "block";
 
-    const keyed = [_][]const u8{ "minecraft:resource", "minecraft:resource_key", "minecraft:resource_or_tag", "minecraft:resource_or_tag_key" };
+    const keyed = [_][]const u8{
+        "minecraft:resource",
+        "minecraft:resource_key",
+        "minecraft:resource_or_tag",
+        "minecraft:resource_or_tag_key",
+    };
     for (keyed) |keyed_parser| {
         if (!eql(parser, keyed_parser)) continue;
         const registry = properties.registry orelse return null;
@@ -395,7 +420,29 @@ fn isCoordinate(word: []const u8) bool {
 }
 
 /// The options of a selector, as the game knows them.
-const selector_options = [_][]const u8{ "advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit", "name", "nbt", "predicate", "scores", "sort", "tag", "team", "type", "x", "x_rotation", "y", "y_rotation", "z" };
+const selector_options = [_][]const u8{
+    "advancements",
+    "distance",
+    "dx",
+    "dy",
+    "dz",
+    "gamemode",
+    "level",
+    "limit",
+    "name",
+    "nbt",
+    "predicate",
+    "scores",
+    "sort",
+    "tag",
+    "team",
+    "type",
+    "x",
+    "x_rotation",
+    "y",
+    "y_rotation",
+    "z",
+};
 
 pub fn checkSelector(self: *const CommandTree, arena: std.mem.Allocator, selector: []const u8) std.mem.Allocator.Error!?Failure {
     return selectorFailure(arena, &self.registries, selector);
@@ -419,7 +466,14 @@ fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, sele
             // Option names are short, so only a near match is worth suggesting.
             const closest = closestId(&selector_options, key);
             const is_near = closest != null and editDistance(key, closest.?).? <= 2;
-            return .{ .message = try std.fmt.allocPrint(arena, "unknown selector option '{s}'{f}", .{ key, Suggestion{ .closest = if (is_near) closest else null } }), .at = pos };
+            return .{
+                .message = try std.fmt.allocPrint(
+                    arena,
+                    "unknown selector option '{s}'{f}",
+                    .{ key, Suggestion{ .closest = if (is_near) closest else null } },
+                ),
+                .at = pos,
+            };
         }
 
         var value_start = separator + 1;
@@ -437,7 +491,14 @@ fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, sele
         for (ids) |known_id| {
             if (eql(known_id, id)) break;
         } else {
-            return .{ .message = try std.fmt.allocPrint(arena, "unknown entity_type '{s}'{f}", .{ id, Suggestion{ .closest = closestId(ids, id) } }), .at = value_start };
+            return .{
+                .message = try std.fmt.allocPrint(
+                    arena,
+                    "unknown entity_type '{s}'{f}",
+                    .{ id, Suggestion{ .closest = closestId(ids, id) } },
+                ),
+                .at = value_start,
+            };
         }
     }
     return null;
@@ -563,10 +624,22 @@ test "checks the options of a selector the way the game does" {
     const quoted = (try checkForTest(&tree, arena.allocator(), "execute as @e[type=\"minecraft:zombie\"] run say x")).?;
     try std.testing.expectEqualStrings("selector option 'type' cannot have quotes: write type=minecraft:zombie", quoted.message);
     try std.testing.expectEqual(19, quoted.at);
-    try std.testing.expectEqualStrings("selector option 'tag' cannot have quotes: write tag=a", (try checkForTest(&tree, arena.allocator(), "execute as @e[tag=!\"a\"] run say x")).?.message);
-    try std.testing.expectEqualStrings("unknown entity_type 'zombiee'. Did you mean 'zombie'?", (try checkForTest(&tree, arena.allocator(), "execute as @e[type=!zombiee] run say x")).?.message);
-    try std.testing.expectEqualStrings("unknown selector option 'tagg'. Did you mean 'tag'?", (try checkForTest(&tree, arena.allocator(), "kill @e[tagg=a]")).?.message);
-    try std.testing.expectEqualStrings("unknown selector option 'foo'", (try checkForTest(&tree, arena.allocator(), "kill @e[foo=1]")).?.message);
+    try std.testing.expectEqualStrings(
+        "selector option 'tag' cannot have quotes: write tag=a",
+        (try checkForTest(&tree, arena.allocator(), "execute as @e[tag=!\"a\"] run say x")).?.message,
+    );
+    try std.testing.expectEqualStrings(
+        "unknown entity_type 'zombiee'. Did you mean 'zombie'?",
+        (try checkForTest(&tree, arena.allocator(), "execute as @e[type=!zombiee] run say x")).?.message,
+    );
+    try std.testing.expectEqualStrings(
+        "unknown selector option 'tagg'. Did you mean 'tag'?",
+        (try checkForTest(&tree, arena.allocator(), "kill @e[tagg=a]")).?.message,
+    );
+    try std.testing.expectEqualStrings(
+        "unknown selector option 'foo'",
+        (try checkForTest(&tree, arena.allocator(), "kill @e[foo=1]")).?.message,
+    );
 }
 
 test "finds ids in id arguments and selectors, not in text" {
@@ -578,7 +651,9 @@ test "finds ids in id arguments and selectors, not in text" {
     const checked = try tree.checkText(arena.allocator(), text, &.{"self"});
     try std.testing.expectEqual(null, checked.failure);
     try std.testing.expectEqual(2, checked.ids.len);
-    for (checked.ids) |id| try std.testing.expect(std.mem.startsWith(u8, text[id.at..], "self:undead") or std.mem.startsWith(u8, text[id.at..], "self:isSitting"));
+    for (checked.ids) |id| try std.testing.expect(
+        std.mem.startsWith(u8, text[id.at..], "self:undead") or std.mem.startsWith(u8, text[id.at..], "self:isSitting"),
+    );
 
     const storage = try tree.checkText(arena.allocator(), "data get storage self:data x", &.{"self"});
     try std.testing.expect((try tree.checkText(arena.allocator(), "function other:Caps", &.{"self"})).failure != null);

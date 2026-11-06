@@ -113,7 +113,12 @@ fn validate(config: Config, arena: std.mem.Allocator, has_namespace: bool, probl
         if (has_namespace) {
             return failWithoutPosition(arena, problem, "\"namespace\" '{s}' must only use a-z, 0-9, '_', '.' and '-'", .{config.namespace});
         }
-        return failWithoutPosition(arena, problem, "the project folder name '{s}' is not a valid namespace. Set \"namespace\" in poplar.json (a-z, 0-9, '_', '.' and '-')", .{config.namespace});
+        return failWithoutPosition(
+            arena,
+            problem,
+            "the project folder name '{s}' is not a valid namespace. Set \"namespace\" in poplar.json (a-z, 0-9, '_', '.' and '-')",
+            .{config.namespace},
+        );
     }
     if (config.min_format.lessThan(oldest_format)) {
         return failWithoutPosition(arena, problem, "\"minFormat\" must be at least {d} (Minecraft 1.21.9)", .{oldest_format.major});
@@ -244,5 +249,8 @@ test "parses poplar.json" {
     try std.testing.expect(std.mem.startsWith(u8, problem.message, "unknown field 'nmae'"));
 
     try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\"minFormat\": 80}", "hello", latest, &problem));
-    try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\"minFormat\": 121, \"maxFormat\": 101}", "hello", latest, &problem));
+    try std.testing.expectError(
+        error.InvalidConfig,
+        parse(arena.allocator(), "{\"minFormat\": 121, \"maxFormat\": 101}", "hello", latest, &problem),
+    );
 }

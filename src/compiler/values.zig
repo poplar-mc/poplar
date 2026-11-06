@@ -73,7 +73,10 @@ pub fn evaluate(compiler: *Compiler, expression: *const ast.Expression, env: *En
             return compiler.fail("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition", .{});
         },
         .macro_key => |name| {
-            return compiler.fail("'$({s})' is a macro argument, known only when the call starts, so it cannot be used at compile time", .{name});
+            return compiler.fail(
+                "'$({s})' is a macro argument, known only when the call starts, so it cannot be used at compile time",
+                .{name},
+            );
         },
         .string => |text| .{ .string = text },
         .number => |number| .{ .number = number },
@@ -147,7 +150,11 @@ fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compi
     const right = try evaluate(compiler, infix.right, env);
 
     if (infix.op == .add and (left == .string or right == .string)) {
-        const text = try std.fmt.allocPrint(compiler.arena, "{s}{s}", .{ try valueToText(compiler, left), try valueToText(compiler, right) });
+        const text = try std.fmt.allocPrint(
+            compiler.arena,
+            "{s}{s}",
+            .{ try valueToText(compiler, left), try valueToText(compiler, right) },
+        );
         return .{ .string = text };
     }
 
@@ -183,7 +190,10 @@ fn evaluateInfix(compiler: *Compiler, infix: ast.Infix, env: *Environment) Compi
     }
 
     if (left == .typed_number or right == .typed_number) {
-        return compiler.fail("build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here", .{infixOperatorText(infix.op)});
+        return compiler.fail(
+            "build-time math only works on whole numbers with no suffix, so '{s}' cannot be used here",
+            .{infixOperatorText(infix.op)},
+        );
     }
     return compiler.fail("operator '{s}' cannot be used with {s} and {s}", .{
         infixOperatorText(infix.op),
@@ -274,7 +284,10 @@ fn typedNumberSnbt(compiler: *Compiler, number: ast.TypedNumber) std.mem.Allocat
 /// A key is written as it is when it is a plain name, else in quotes.
 pub fn snbtKey(compiler: *Compiler, key: []const u8) std.mem.Allocator.Error![]const u8 {
     for (key) |ch| {
-        if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-' and ch != '.' and ch != '+') return valueToSnbt(compiler, .{ .string = key });
+        if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-' and ch != '.' and ch != '+') return valueToSnbt(
+            compiler,
+            .{ .string = key },
+        );
     }
     return if (key.len == 0) "\"\"" else key;
 }

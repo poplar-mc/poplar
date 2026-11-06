@@ -85,7 +85,10 @@ fn parseDeclaration(self: *Parser, declarations: *Declarations) Error!void {
 
 /// `import magic;`
 fn parseImport(self: *Parser) Error!ast.NamespaceName {
-    if (self.peekIs(.string)) return self.fail("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/", .{});
+    if (self.peekIs(.string)) return self.fail(
+        "imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/",
+        .{},
+    );
     return self.parseNamespaceStatement();
 }
 
@@ -123,7 +126,10 @@ fn parseDataFile(self: *Parser) Error!ast.DataFile {
     };
     if (self.peekIs(.unclosed)) return self.fail("the JSON of {s} '{s}' is not closed", .{ type_word, self.current.literal });
     if (!self.peekIs(.json_body)) {
-        return self.fail("expected the JSON of {s} '{s}' (an object or a list), found {s}", .{ type_word, self.current.literal, try self.describe(self.peek) });
+        return self.fail(
+            "expected the JSON of {s} '{s}' (an object or a list), found {s}",
+            .{ type_word, self.current.literal, try self.describe(self.peek) },
+        );
     }
     try self.nextToken();
 
@@ -840,7 +846,10 @@ test "parse calls with a macro compound, a path or raw text, and macro keys" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
 
-    const program = try parseValidForTest(arena.allocator(), "mcfun f() { g() with {name: $(name)}; g() with $players[0]; g() with entity @s; }");
+    const program = try parseValidForTest(
+        arena.allocator(),
+        "mcfun f() { g() with {name: $(name)}; g() with $players[0]; g() with entity @s; }",
+    );
 
     const body = program.mcfuns[0].body;
     try std.testing.expectEqualStrings("name", body[0].kind.expression.kind.call.with.?.value.kind.compound[0].value.kind.macro_key);

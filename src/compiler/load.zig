@@ -15,7 +15,11 @@ const values = @import("values.zig");
 
 /// The IR names of `load` or `tick` of each namespace that has one. A namespace comes after the namespaces it
 /// imports. Namespaces that import each other are in alphabetical order.
-pub fn hookNames(compiler: *Compiler, namespaces: std.StringArrayHashMapUnmanaged(void), hook: []const u8) std.mem.Allocator.Error![]const []const u8 {
+pub fn hookNames(
+    compiler: *Compiler,
+    namespaces: std.StringArrayHashMapUnmanaged(void),
+    hook: []const u8,
+) std.mem.Allocator.Error![]const []const u8 {
     var names: std.ArrayList([]const u8) = .empty;
     for (try namespaceOrder(compiler)) |namespace| {
         if (namespaces.contains(namespace)) try names.append(compiler.arena, try declarations.functionName(compiler, namespace, hook));
@@ -32,7 +36,12 @@ fn namespaceOrder(compiler: *Compiler) std.mem.Allocator.Error![]const []const u
     return order.items;
 }
 
-fn visitNamespace(compiler: *Compiler, namespace: []const u8, visited: *std.StringHashMapUnmanaged(void), order: *std.ArrayList([]const u8)) std.mem.Allocator.Error!void {
+fn visitNamespace(
+    compiler: *Compiler,
+    namespace: []const u8,
+    visited: *std.StringHashMapUnmanaged(void),
+    order: *std.ArrayList([]const u8),
+) std.mem.Allocator.Error!void {
     if ((try visited.getOrPut(compiler.arena, namespace)).found_existing) return;
     if (compiler.namespace_imports.get(namespace)) |imports| {
         const sorted = try compiler.arena.dupe([]const u8, imports.keys());
@@ -64,7 +73,11 @@ pub fn reachableFromProject(compiler: *Compiler) std.mem.Allocator.Error!std.Str
 
 /// For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
 /// `poplar/tick` runs it for every player with a count, then the user's `tick`.
-pub fn appendEventFunctions(compiler: *Compiler, functions: *std.ArrayList(ir.McFunction), ticks: []const []const u8) std.mem.Allocator.Error!void {
+pub fn appendEventFunctions(
+    compiler: *Compiler,
+    functions: *std.ArrayList(ir.McFunction),
+    ticks: []const []const u8,
+) std.mem.Allocator.Error!void {
     if (compiler.events.items.len == 0) return;
 
     var tick: std.ArrayList(ir.Command) = .empty;
@@ -85,18 +98,27 @@ pub fn appendEventFunctions(compiler: *Compiler, functions: *std.ArrayList(ir.Mc
             .criteria, .trigger => &.{try std.fmt.allocPrint(compiler.arena, "@a[scores={{{s}=1..}}]", .{objective})},
             .first_join => &.{try std.fmt.allocPrint(compiler.arena, "@a[tag=!{s}]", .{objective})},
             // A rejoin: the score of `leave_game` counted when the player left.
-            .join => &.{ try std.fmt.allocPrint(compiler.arena, "@a[tag=!{s}]", .{objective}), try std.fmt.allocPrint(compiler.arena, "@a[scores={{{s}=1..}}]", .{objective}) },
+            .join => &.{
+                try std.fmt.allocPrint(compiler.arena, "@a[tag=!{s}]", .{objective}),
+                try std.fmt.allocPrint(compiler.arena, "@a[scores={{{s}=1..}}]", .{objective}),
+            },
             // Dead, and alive again: `time_since_death` only counts while the player is alive.
             .respawn => &.{try std.fmt.allocPrint(compiler.arena, "@a[scores={{{s}=1..,{s}_alive=1..}}]", .{ objective, objective })},
         };
         for (players) |selector| {
             const subcommands = try std.fmt.allocPrint(compiler.arena, "as {s} at @s", .{selector});
-            try tick.append(compiler.arena, .{ .execute_raw = .{ .subcommands = subcommands, .run = try compiler.createCommand(.{ .function = name }) } });
+            try tick.append(
+                compiler.arena,
+                .{ .execute_raw = .{ .subcommands = subcommands, .run = try compiler.createCommand(.{ .function = name }) } },
+            );
         }
     }
     for (compiler.events.items) |event| {
         if (event.source != .trigger) continue;
-        try tick.append(compiler.arena, .{ .raw = try std.fmt.allocPrint(compiler.arena, "scoreboard players enable @a {s}", .{event.source.trigger}) });
+        try tick.append(
+            compiler.arena,
+            .{ .raw = try std.fmt.allocPrint(compiler.arena, "scoreboard players enable @a {s}", .{event.source.trigger}) },
+        );
     }
     for (ticks) |name| try tick.append(compiler.arena, .{ .function = name });
     try functions.append(compiler.arena, .{ .name = "poplar/tick", .commands = try tick.toOwnedSlice(compiler.arena) });
@@ -130,7 +152,11 @@ fn isScoreRead(functions: []const ir.McFunction, score: ir.Score) bool {
 /// `text(#mana)` names `#global` in the command text, so that counts as a use too.
 fn isGlobalValueUsed(compiler: *Compiler, functions: []const ir.McFunction, global: Compiler.GlobalScore) std.mem.Allocator.Error!bool {
     const score = scores.globalScore(global);
-    const objective = try std.fmt.allocPrint(compiler.arena, "\"{s}.{s}\"", .{ global.output_namespace orelse compiler.pack_namespace, global.name });
+    const objective = try std.fmt.allocPrint(
+        compiler.arena,
+        "\"{s}.{s}\"",
+        .{ global.output_namespace orelse compiler.pack_namespace, global.name },
+    );
     for (functions) |function| {
         for (function.commands) |command| {
             if (optimizer.readsScore(command, score) or mentionsGlobalHolder(command, objective)) return true;
@@ -155,8 +181,14 @@ pub fn buildLoadFunction(compiler: *Compiler, functions: []const ir.McFunction) 
     // A run that stopped in the middle of a recursive call can leave frames behind.
     if (compiler.uses_stack) try commands.append(compiler.arena, .stack_clear);
     try commands.append(compiler.arena, .{ .add_objective = .{} });
-    for (try declarations.outputNamespaces(compiler)) |namespace| try commands.append(compiler.arena, .{ .add_objective = .{ .namespace = namespace } });
-    for (compiler.globals.values()) |global| try commands.append(compiler.arena, .{ .add_objective = .{ .namespace = global.output_namespace, .name = global.name } });
+    for (try declarations.outputNamespaces(compiler)) |namespace| try commands.append(
+        compiler.arena,
+        .{ .add_objective = .{ .namespace = namespace } },
+    );
+    for (compiler.globals.values()) |global| try commands.append(
+        compiler.arena,
+        .{ .add_objective = .{ .namespace = global.output_namespace, .name = global.name } },
+    );
     for (compiler.events.items, 0..) |event, index| {
         const objective = try eventObjective(compiler, event, index);
         const criteria = switch (event.source) {
@@ -166,9 +198,21 @@ pub fn buildLoadFunction(compiler: *Compiler, functions: []const ir.McFunction) 
             .join => "minecraft.custom:minecraft.leave_game",
             .respawn => "deathCount",
         };
-        try commands.append(compiler.arena, .{ .raw = try std.fmt.allocPrint(compiler.arena, "scoreboard objectives add {s} {s}", .{ objective, criteria }) });
+        try commands.append(
+            compiler.arena,
+            .{ .raw = try std.fmt.allocPrint(compiler.arena, "scoreboard objectives add {s} {s}", .{ objective, criteria }) },
+        );
         if (event.source == .respawn) {
-            try commands.append(compiler.arena, .{ .raw = try std.fmt.allocPrint(compiler.arena, "scoreboard objectives add {s}_alive minecraft.custom:minecraft.time_since_death", .{objective}) });
+            try commands.append(
+                compiler.arena,
+                .{
+                    .raw = try std.fmt.allocPrint(
+                        compiler.arena,
+                        "scoreboard objectives add {s}_alive minecraft.custom:minecraft.time_since_death",
+                        .{objective},
+                    ),
+                },
+            );
         }
     }
 
@@ -219,13 +263,22 @@ pub const event_builtins = std.StaticStringMap(std.meta.Tag(Compiler.Event.Sourc
 pub fn compileEvent(compiler: *Compiler, call: ast.Call, builtin: []const u8, env: *Environment) Compiler.Error!void {
     const kind = event_builtins.get(builtin).?;
     if (!compiler.mcfun.in_load) return compiler.fail("'{s}' must be in 'mcfun load'", .{builtin});
-    if (isInRuntimeBranch(env)) return compiler.fail("'{s}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'", .{builtin});
+    if (isInRuntimeBranch(env)) return compiler.fail(
+        "'{s}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', 'while' or 'execute'",
+        .{builtin},
+    );
 
     // `onEvent(criteria, callback)` and `onTrigger(name, callback)` take a name first; the player events only a callback.
     const takes_name = kind == .trigger or std.mem.eql(u8, builtin, "onEvent");
     const first = if (kind == .trigger) "name" else "criteria";
-    if (takes_name and call.args.len != 2) return compiler.fail("'{s}' expects 2 arguments ({s}, callback), found {d}", .{ builtin, first, call.args.len });
-    if (!takes_name and call.args.len != 1) return compiler.fail("'{s}' expects 1 argument (callback), found {d}", .{ builtin, call.args.len });
+    if (takes_name and call.args.len != 2) return compiler.fail(
+        "'{s}' expects 2 arguments ({s}, callback), found {d}",
+        .{ builtin, first, call.args.len },
+    );
+    if (!takes_name and call.args.len != 1) return compiler.fail(
+        "'{s}' expects 1 argument (callback), found {d}",
+        .{ builtin, call.args.len },
+    );
 
     const name = if (takes_name) try eventName(compiler, call.args[0], builtin, kind, first, env) else "";
     const callback = try callbackOf(compiler, call.args[call.args.len - 1], builtin);
@@ -240,10 +293,20 @@ pub fn compileEvent(compiler: *Compiler, call: ast.Call, builtin: []const u8, en
 }
 
 /// The first argument of `onEvent` or `onTrigger`, which must be a constant string.
-fn eventName(compiler: *Compiler, argument: *const ast.Expression, builtin: []const u8, kind: std.meta.Tag(Compiler.Event.Source), first: []const u8, env: *Environment) Compiler.Error![]const u8 {
+fn eventName(
+    compiler: *Compiler,
+    argument: *const ast.Expression,
+    builtin: []const u8,
+    kind: std.meta.Tag(Compiler.Event.Source),
+    first: []const u8,
+    env: *Environment,
+) Compiler.Error![]const u8 {
     const value = try values.evaluate(compiler, argument, env);
     if (value != .string or value.string.len == 0) {
-        return compiler.fail("the {s} of '{s}' must be a string, for example \"{s}\"", .{ first, builtin, if (kind == .trigger) "showoff" else "deathCount" });
+        return compiler.fail(
+            "the {s} of '{s}' must be a string, for example \"{s}\"",
+            .{ first, builtin, if (kind == .trigger) "showoff" else "deathCount" },
+        );
     }
     if (kind != .trigger) return value.string;
 
@@ -253,7 +316,10 @@ fn eventName(compiler: *Compiler, argument: *const ast.Expression, builtin: []co
         }
     }
     if (try poplarObjectiveClash(compiler, value.string)) |prefix| {
-        return compiler.fail("the trigger name '{s}' starts with '{s}', which Poplar uses for its own objectives", .{ value.string, prefix });
+        return compiler.fail(
+            "the trigger name '{s}' starts with '{s}', which Poplar uses for its own objectives",
+            .{ value.string, prefix },
+        );
     }
     return value.string;
 }
@@ -270,7 +336,10 @@ fn callbackOf(compiler: *Compiler, callback: *const ast.Expression, builtin: []c
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
     try Compiler.collectMacroKeys(compiler.arena, found.declaration.mcfun.body, &keys);
     if (keys.count() > 0) {
-        return compiler.fail("the callback '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'", .{ name, keys.keys()[0] });
+        return compiler.fail(
+            "the callback '{s}' is run by the game, so it gets no macro arguments and cannot use '$({s})'",
+            .{ name, keys.keys()[0] },
+        );
     }
     return found.declaration.ir_name;
 }
@@ -278,7 +347,11 @@ fn callbackOf(compiler: *Compiler, callback: *const ast.Expression, builtin: []c
 /// Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name clashes with.
 fn poplarObjectiveClash(compiler: *Compiler, name: []const u8) std.mem.Allocator.Error!?[]const u8 {
     if (std.mem.startsWith(u8, name, "poplar.")) return "poplar.";
-    const namespaces = try std.mem.concat(compiler.arena, []const u8, &.{ &.{compiler.pack_namespace}, try declarations.outputNamespaces(compiler) });
+    const namespaces = try std.mem.concat(
+        compiler.arena,
+        []const u8,
+        &.{ &.{compiler.pack_namespace}, try declarations.outputNamespaces(compiler) },
+    );
     for (namespaces) |namespace| {
         const prefix = try std.fmt.allocPrint(compiler.arena, "{s}.", .{namespace});
         if (std.mem.startsWith(u8, name, prefix)) return prefix;
@@ -315,7 +388,10 @@ test "selectors as values, text parts and events" {
         \\function ns:tellraw {target:"@a",message:["HP ",{score:{name:"#global",objective:"ns.hp"}},{storage:"ns:data",nbt:"stats.maxHp"},{entity:"@s",nbt:"CustomName"},{score:{name:"#left_playerDied",objective:"poplar.ns"}}]}
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "playerDied"));
-    try std.testing.expectEqualStrings("function ns:greet {target:\"@p\"}\n", try Compiler.renderForTest(arena.allocator(), program, "main"));
+    try std.testing.expectEqualStrings(
+        "function ns:greet {target:\"@p\"}\n",
+        try Compiler.renderForTest(arena.allocator(), program, "main"),
+    );
     try std.testing.expectEqualStrings(
         \\scoreboard players reset @s ns.event_0
         \\function ns:player_died
@@ -349,7 +425,10 @@ test "onEvent errors" {
 
     const errors = compiler.errors.items;
     try std.testing.expectEqual(3, errors.len);
-    try std.testing.expectEqualStrings("the callback 'withMacroArgument' is run by the game, so it gets no macro arguments and cannot use '$(x)'", errors[0].message);
+    try std.testing.expectEqualStrings(
+        "the callback 'withMacroArgument' is run by the game, so it gets no macro arguments and cannot use '$(x)'",
+        errors[0].message,
+    );
     try std.testing.expectEqualStrings("unknown function 'missing'", errors[1].message);
     try std.testing.expectEqualStrings("'onEvent' must be in 'mcfun load'", errors[2].message);
 }
@@ -394,8 +473,14 @@ test "onTrigger makes a trigger objective, runs the callback and enables it agai
     );
     const program = try compiler.compile();
     try std.testing.expectEqual(2, compiler.errors.items.len);
-    try std.testing.expectEqualStrings("the trigger name 'bad name' can only have letters, 0-9, '_', '-', '.' and '+'", compiler.errors.items[0].message);
-    try std.testing.expectEqualStrings("the trigger name 'ns.mana' starts with 'ns.', which Poplar uses for its own objectives", compiler.errors.items[1].message);
+    try std.testing.expectEqualStrings(
+        "the trigger name 'bad name' can only have letters, 0-9, '_', '-', '.' and '+'",
+        compiler.errors.items[0].message,
+    );
+    try std.testing.expectEqualStrings(
+        "the trigger name 'ns.mana' starts with 'ns.', which Poplar uses for its own objectives",
+        compiler.errors.items[1].message,
+    );
 
     try std.testing.expectEqualStrings(
         \\execute as @a[scores={ns=1..}] at @s run function ns:poplar/event_0
@@ -408,7 +493,9 @@ test "onTrigger makes a trigger objective, runs the callback and enables it agai
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "poplar/event_0"));
     const load = try datapack_writer.renderFunction(arena.allocator(), "ns", program.load.?);
-    try std.testing.expect(std.mem.indexOf(u8, load, "scoreboard objectives add poplar.ns dummy\nscoreboard objectives add ns trigger\n") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, load, "scoreboard objectives add poplar.ns dummy\nscoreboard objectives add ns trigger\n") != null,
+    );
 }
 
 test "player events: first join, join, death and respawn" {

@@ -11,7 +11,13 @@ const data = @import("data.zig");
 const declarations = @import("declarations.zig");
 const values = @import("values.zig");
 
-pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+pub fn compileScoreAssign(
+    compiler: *Compiler,
+    identifier: ast.Identifier,
+    expression: *const ast.Expression,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     const target = try resolveScore(compiler, identifier, env);
     compiler.mcfun.temp_count = 0;
 
@@ -24,15 +30,27 @@ pub fn compileScoreAssign(compiler: *Compiler, identifier: ast.Identifier, expre
 }
 
 /// `#n = 3 + #n` is the same as `#n = #n + 3`, which is computed in `#n` with no temp.
-fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target: ast.Identifier) std.mem.Allocator.Error!?*const ast.Expression {
+fn swappedInPlace(
+    compiler: *Compiler,
+    expression: *const ast.Expression,
+    target: ast.Identifier,
+) std.mem.Allocator.Error!?*const ast.Expression {
     if (expression.kind != .infix) return null;
     const infix = expression.kind.infix;
     if (infix.op != .add and infix.op != .multiply) return null;
     if (infix.right.kind != .identifier or !referencesScore(infix.right, target) or referencesScore(infix.left, target)) return null;
-    return try compiler.createExpression(.{ .position = expression.position, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
+    return try compiler.createExpression(
+        .{ .position = expression.position, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } },
+    );
 }
 
-pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+pub fn compileInto(
+    compiler: *Compiler,
+    target: ir.Score,
+    expression: *const ast.Expression,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(expression)) {
@@ -42,7 +60,10 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
     }
 
     switch (expression.kind) {
-        .macro_key => |name| return commands.append(compiler.arena, .{ .score_set_macro_argument = .{ .score = target, .macro_argument = name } }),
+        .macro_key => |name| return commands.append(
+            compiler.arena,
+            .{ .score_set_macro_argument = .{ .score = target, .macro_argument = name } },
+        ),
         .identifier => |identifier| {
             if (identifier.kind == .data or identifier.kind == .entity_data) {
                 const source = try data.dataPathOf(compiler, identifier, env);
@@ -70,8 +91,14 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
         },
         .call => |call| {
             if (calls.isBuiltinCall(call, "len")) return data.compileLength(compiler, target, call, env, commands);
-            if (data.isStringCall(call)) return compiler.fail("'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'", .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name });
-            if (data.isStringTest(call)) return compiler.fail("'{s}' is a condition. Use it in 'if' or 'while'", .{call.callee.kind.identifier.name});
+            if (data.isStringCall(call)) return compiler.fail(
+                "'{s}' gives a string, so it cannot be a score. Store it in data: '$x = {s}(...);'",
+                .{ call.callee.kind.identifier.name, call.callee.kind.identifier.name },
+            );
+            if (data.isStringTest(call)) return compiler.fail(
+                "'{s}' is a condition. Use it in 'if' or 'while'",
+                .{call.callee.kind.identifier.name},
+            );
             if (call.callee.kind != .identifier) return compiler.fail("only an mcfun call can be used as a runtime value", .{});
             const found = try declarations.findMcfun(compiler, call.callee.kind.identifier);
             // Temps made after this point hold arguments. They are not needed after the call.
@@ -87,7 +114,14 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
     }
 }
 
-fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+fn applyOperand(
+    compiler: *Compiler,
+    target: ir.Score,
+    op: ir.Operator,
+    operand: *const ast.Expression,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     const outer_position = compiler.enterExpression(operand);
     defer compiler.restorePosition(outer_position);
     if (!values.containsRuntimeValue(operand)) {
@@ -115,7 +149,13 @@ fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand:
     try appendOperation(compiler, commands, target, op, temp);
 }
 
-fn appendOperation(compiler: *Compiler, commands: *std.ArrayList(ir.Command), target: ir.Score, op: ir.Operator, source: ir.Score) std.mem.Allocator.Error!void {
+fn appendOperation(
+    compiler: *Compiler,
+    commands: *std.ArrayList(ir.Command),
+    target: ir.Score,
+    op: ir.Operator,
+    source: ir.Score,
+) std.mem.Allocator.Error!void {
     try commands.append(compiler.arena, .{ .score_operation = .{ .target = target, .op = op, .source = source } });
 }
 

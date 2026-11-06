@@ -61,7 +61,13 @@ pub fn isValidNamespace(name: []const u8) bool {
 pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Error!void {
     const folder = data_folders.folders.get(data_file.type_word) orelse
         try data_folders.tagFolder(compiler.arena, data_file.type_word, &compiler.command_tree.registries.map) orelse
-        return compiler.fail("unknown data file type '{s}'{f}", .{ data_file.type_word, CommandTree.Suggestion{ .closest = CommandTree.closestId(data_folders.folders.keys(), data_file.type_word) } });
+        return compiler.fail(
+            "unknown data file type '{s}'{f}",
+            .{
+                data_file.type_word,
+                CommandTree.Suggestion{ .closest = CommandTree.closestId(data_folders.folders.keys(), data_file.type_word) },
+            },
+        );
 
     const own_namespace = compiler.scope.output_namespace orelse compiler.pack_namespace;
     const namespace: []const u8, const file_path: []const u8 = switch (data_file.name) {
@@ -80,7 +86,10 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Error!
             const is_valid = while (segments.next()) |segment| {
                 if (!Config.isValidResourceName(segment)) break false;
             } else Config.isValidResourceName(id_namespace);
-            if (!is_valid) return compiler.fail("data file id '{s}' must only use a-z, 0-9, '_', '.', '-' and '/', with one ':' after the namespace", .{id});
+            if (!is_valid) return compiler.fail(
+                "data file id '{s}' must only use a-z, 0-9, '_', '.', '-' and '/', with one ':' after the namespace",
+                .{id},
+            );
             break :blk .{ id_namespace, path };
         },
     };
@@ -92,7 +101,10 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Error!
     const full_path = try std.fmt.allocPrint(compiler.arena, "data/{s}/{s}/{s}.json", .{ namespace, folder, file_path });
     const location = try std.fmt.allocPrint(compiler.arena, "{s}:{d}", .{ compiler.path, data_file.position.line });
     const path_entry = try compiler.data_file_paths.getOrPut(compiler.arena, full_path);
-    if (path_entry.found_existing) return compiler.fail("{s} '{s}:{s}' is already declared at {s}", .{ data_file.type_word, namespace, file_path, path_entry.value_ptr.* });
+    if (path_entry.found_existing) return compiler.fail(
+        "{s} '{s}:{s}' is already declared at {s}",
+        .{ data_file.type_word, namespace, file_path, path_entry.value_ptr.* },
+    );
     path_entry.value_ptr.* = location;
 
     // A data file in the namespace of its file can be named in Minecraft text: `self:isSitting`.
@@ -106,7 +118,10 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Error!
 
     if (data_file.name == .identifier) {
         const id = try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ namespace, file_path });
-        const entry = try compiler.named_data_files.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, data_file.name.identifier));
+        const entry = try compiler.named_data_files.getOrPut(
+            compiler.arena,
+            try qualifiedKey(compiler, compiler.scope.namespace, data_file.name.identifier),
+        );
         if (entry.found_existing) return compiler.fail("'{s}' is already the name of another data file", .{data_file.name.identifier});
         entry.value_ptr.* = .{ .type_word = data_file.type_word, .id = id, .path = compiler.path, .position = data_file.position };
     }
@@ -148,18 +163,28 @@ fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) std.mem.Alloc
 
 /// A name that the project and std both define is reported in the project file, where it can be renamed.
 /// Otherwise the later definition is reported.
-pub fn addDuplicateError(compiler: *Compiler, existing: Compiler.McfunDeclaration, later: Compiler.McfunDeclaration) std.mem.Allocator.Error!void {
+pub fn addDuplicateError(
+    compiler: *Compiler,
+    existing: Compiler.McfunDeclaration,
+    later: Compiler.McfunDeclaration,
+) std.mem.Allocator.Error!void {
     const project_side, const other = if (existing.origin != .std and later.origin == .std) .{ existing, later } else .{ later, existing };
     compiler.path = project_side.path;
     compiler.position = project_side.mcfun.position;
     if (other.origin == .std and project_side.origin != .std) {
-        return compiler.addError("function '{s}' is already defined in {s}:{d}. Rename yours", .{ later.mcfun.name, other.path, other.mcfun.position.line });
+        return compiler.addError(
+            "function '{s}' is already defined in {s}:{d}. Rename yours",
+            .{ later.mcfun.name, other.path, other.mcfun.position.line },
+        );
     }
     try compiler.addError("function '{s}' is already defined at {s}:{d}", .{ later.mcfun.name, other.path, other.mcfun.position.line });
 }
 
 pub fn addGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.Error!void {
-    if (decl.target.namespace) |namespace| return compiler.fail("'{s}:' cannot be declared here. Declare it in a file with 'namespace {s};'", .{ namespace, namespace });
+    if (decl.target.namespace) |namespace| return compiler.fail(
+        "'{s}:' cannot be declared here. Declare it in a file with 'namespace {s};'",
+        .{ namespace, namespace },
+    );
     switch (decl.target.kind) {
         .score => {},
         .compile_time => return compiler.fail("only score (#) and data ($) variables can be declared at the top level", .{}),
@@ -195,7 +220,10 @@ fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.Error!void {
     if (value == .null) return compiler.fail("a data variable cannot start as null", .{});
     const initial_snbt = try values.valueToSnbt(compiler, value);
 
-    const entry = try compiler.data_globals.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
+    const entry = try compiler.data_globals.getOrPut(
+        compiler.arena,
+        try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name),
+    );
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
         return compiler.fail("data '${s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.position.line });
@@ -304,7 +332,10 @@ test "two namespaces keep their own names, files and scores" {
         \\give @s minecraft:stone
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "heal"));
-    try std.testing.expectEqualStrings("scoreboard players add #global magic.mana 1\n", try Compiler.renderForTest(arena.allocator(), program, "magic:heal"));
+    try std.testing.expectEqualStrings(
+        "scoreboard players add #global magic.mana 1\n",
+        try Compiler.renderForTest(arena.allocator(), program, "magic:heal"),
+    );
     try std.testing.expectEqualStrings(
         \\data modify storage magic:data player_build set value {mana:0}
         \\execute store result storage magic:data player_build.mana int 1 run scoreboard players get #global magic.mana

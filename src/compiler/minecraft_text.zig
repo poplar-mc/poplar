@@ -14,7 +14,13 @@ const scores = @import("scores.zig");
 const values = @import("values.zig");
 
 /// `text_column` is the column where the command text starts, after the `/`.
-pub fn compileCommand(compiler: *Compiler, command: ast.Command, text_column: usize, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+pub fn compileCommand(
+    compiler: *Compiler,
+    command: ast.Command,
+    text_column: usize,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     var command_text = try buildCommandText(compiler, command.parts, env);
     command_text.text = try checkMinecraftText(compiler, command.parts, command_text, text_column, "", "");
 
@@ -45,13 +51,23 @@ fn sharedStorage(inserts: []const Compiler.Insert) ?ir.DataStorage {
 
 /// A macro call gets its arguments from one place. A helper that also needs the macro arguments of the mcfun,
 /// or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro arguments, then each value it uses.
-fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Compiler.CommandText, needs_macro_keys: bool, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+fn callMacroHelper(
+    compiler: *Compiler,
+    name: []const u8,
+    command_text: Compiler.CommandText,
+    needs_macro_keys: bool,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     if (!needs_macro_keys) if (sharedStorage(command_text.inserts)) |storage| {
         return commands.append(compiler.arena, .{ .function_with = .{ .name = name, .arguments = .{ .data_storage = storage } } });
     };
 
     // Old keys from an earlier helper do no harm, because a macro line reads only the names it uses.
-    if (needs_macro_keys) try commands.append(compiler.arena, .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = compiler.mcfun.forwarded_args.? } });
+    if (needs_macro_keys) try commands.append(
+        compiler.arena,
+        .{ .data_set = .{ .target = .inStorage(.macro, ""), .snbt = compiler.mcfun.forwarded_args.? } },
+    );
     compiler.mcfun.temp_count = 0;
     for (command_text.inserts) |insert| {
         const target: ir.DataPath = .inStorage(.macro, insert.macro_name);
@@ -78,18 +94,35 @@ fn callMacroHelper(compiler: *Compiler, name: []const u8, command_text: Compiler
     try commands.append(compiler.arena, .{ .function_with = .{ .name = name, .arguments = .macro_storage } });
 }
 
-pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
+pub fn compileExecute(
+    compiler: *Compiler,
+    execute: ast.Execute,
+    env: *Environment,
+    commands: *std.ArrayList(ir.Command),
+) Compiler.Error!void {
     var subcommands = try buildCommandText(compiler, execute.subcommands, env);
-    subcommands.text = try checkMinecraftText(compiler, execute.subcommands, subcommands, execute.subcommands_column, "execute ", " run say x");
+    subcommands.text = try checkMinecraftText(
+        compiler,
+        execute.subcommands,
+        subcommands,
+        execute.subcommands_column,
+        "execute ",
+        " run say x",
+    );
 
     const can_return = Compiler.jumpsIn(execute.body).has_return;
     if (can_return) {
-        if (compiler.mcfun.forwarded_args != null) return compiler.fail("'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet", .{});
+        if (compiler.mcfun.forwarded_args != null) return compiler.fail(
+            "'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet",
+            .{},
+        );
         if (subcommands.is_macro) return compiler.fail("'return' inside 'execute (...)' with a data insert is not supported yet", .{});
     }
 
     const run = try compiler.compileJumpBody(execute.body, env, null);
-    const execute_command: ir.Command = .{ .execute_raw = .{ .subcommands = subcommands.text, .run = try compiler.createCommand(run orelse return) } };
+    const execute_command: ir.Command = .{
+        .execute_raw = .{ .subcommands = subcommands.text, .run = try compiler.createCommand(run orelse return) },
+    };
     if (!subcommands.is_macro) return commands.append(compiler.arena, execute_command);
 
     const name = try compiler.newGeneratedName("macro");
@@ -148,7 +181,12 @@ pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env
 
 /// Where the value of a runtime insert comes from, and its macro name. The same value again in the line
 /// gives the insert that is already there.
-fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, used: []const Compiler.Insert) Compiler.Error!Compiler.Insert {
+fn runtimeInsert(
+    compiler: *Compiler,
+    expression: *const ast.Expression,
+    env: *Environment,
+    used: []const Compiler.Insert,
+) Compiler.Error!Compiler.Insert {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
 
@@ -174,7 +212,11 @@ fn runtimeInsert(compiler: *Compiler, expression: *const ast.Expression, env: *E
     // A helper may get the macro arguments and the values in one compound, so each name must be new.
     var name = base;
     var number: usize = 2;
-    while (isUsedMacroName(compiler, name, used)) : (number += 1) name = try std.fmt.allocPrint(compiler.arena, "{s}_{d}", .{ base, number });
+    while (isUsedMacroName(compiler, name, used)) : (number += 1) name = try std.fmt.allocPrint(
+        compiler.arena,
+        "{s}_{d}",
+        .{ base, number },
+    );
     return .{ .macro_name = name, .source = source };
 }
 
@@ -222,7 +264,14 @@ fn macroName(arena: std.mem.Allocator, path: []const u8) std.mem.Allocator.Error
 
 /// Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each `self:name` and
 /// `ns:name` of a declaration into its id. `column` is where the text starts in the source. Null after an error.
-pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, built: Compiler.CommandText, column: usize, comptime prefix: []const u8, comptime suffix: []const u8) Compiler.Error![]const u8 {
+pub fn checkMinecraftText(
+    compiler: *Compiler,
+    parts: []const ast.CommandPart,
+    built: Compiler.CommandText,
+    column: usize,
+    comptime prefix: []const u8,
+    comptime suffix: []const u8,
+) Compiler.Error![]const u8 {
     const full_text = try std.fmt.allocPrint(compiler.arena, prefix ++ "{s}" ++ suffix, .{built.text});
     const checked = try compiler.command_tree.checkText(compiler.arena, full_text, compiler.poplar_namespaces);
     if (checked.failure) |failure| {
@@ -248,7 +297,11 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
         // A storage or bossbar id is not a Poplar declaration: `self:` only gives it the namespace.
         if (!text_id.names_declaration) {
             if (!std.mem.eql(u8, written, "self")) continue;
-            try resolved.print(compiler.arena, "{s}{s}", .{ built.text[copied..start], compiler.scope.output_namespace orelse compiler.pack_namespace });
+            try resolved.print(
+                compiler.arena,
+                "{s}{s}",
+                .{ built.text[copied..start], compiler.scope.output_namespace orelse compiler.pack_namespace },
+            );
             copied = colon;
             continue;
         }
@@ -261,7 +314,11 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
             // `magic:heal_player`, the real id, stays as it is. `self:` only takes the name from the source.
             const is_self = std.mem.eql(u8, written, "self");
             if (!is_self and try declarationWithFileName(compiler, namespace, name) != null) continue;
-            return compiler.failAt(column + sourceOffset(parts, built.text_starts, start), "{s}", .{try unknownIdMessage(compiler, written, namespace, name)});
+            return compiler.failAt(
+                column + sourceOffset(parts, built.text_starts, start),
+                "{s}",
+                .{try unknownIdMessage(compiler, written, namespace, name)},
+            );
         };
         try resolved.print(compiler.arena, "{s}{s}", .{ built.text[copied..start], id });
         copied = end;
@@ -271,7 +328,13 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
 }
 
 /// A name with no namespace means `minecraft:name`, so a name from this pack needs `self:`.
-fn checkBareName(compiler: *Compiler, parts: []const ast.CommandPart, built: Compiler.CommandText, column: usize, start: usize) Compiler.Error!void {
+fn checkBareName(
+    compiler: *Compiler,
+    parts: []const ast.CommandPart,
+    built: Compiler.CommandText,
+    column: usize,
+    start: usize,
+) Compiler.Error!void {
     var end = start;
     while (end < built.text.len and isIdChar(built.text[end])) end += 1;
     const name = built.text[start..end];
@@ -280,11 +343,19 @@ fn checkBareName(compiler: *Compiler, parts: []const ast.CommandPart, built: Com
     const source_name = if (in_pack) name else try declarationWithFileName(compiler, namespace, name) orelse {
         // An id cannot have a capital letter, so this is a typo of a name from this pack, or a mistake.
         for (name) |ch| {
-            if (std.ascii.isUpper(ch)) return compiler.failAt(column + sourceOffset(parts, built.text_starts, start), "'{s}' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:{s}'", .{ name, name });
+            if (std.ascii.isUpper(ch)) return compiler.failAt(
+                column + sourceOffset(parts, built.text_starts, start),
+                "'{s}' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:{s}'",
+                .{ name, name },
+            );
         }
         return;
     };
-    return compiler.failAt(column + sourceOffset(parts, built.text_starts, start), "'{s}' is in this pack, but with no namespace it means 'minecraft:{s}'. Write 'self:{s}'", .{ name, name, source_name });
+    return compiler.failAt(
+        column + sourceOffset(parts, built.text_starts, start),
+        "'{s}' is in this pack, but with no namespace it means 'minecraft:{s}'. Write 'self:{s}'",
+        .{ name, name, source_name },
+    );
 }
 
 fn idBefore(_: void, a: CommandTree.Id, b: CommandTree.Id) bool {
@@ -310,7 +381,11 @@ fn idOf(compiler: *Compiler, namespace: []const u8, name: []const u8) std.mem.Al
     const name_key = try declarations.qualifiedKey(compiler, namespace, name);
     if (compiler.data_file_names.get(name_key)) |path| return try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ output, path });
     if (!compiler.mcfuns.contains(name_key)) return null;
-    return try std.fmt.allocPrint(compiler.arena, "{s}:{f}", .{ output, datapack_writer.functionPath(try declarations.outputPath(compiler, namespace, name)) });
+    return try std.fmt.allocPrint(
+        compiler.arena,
+        "{s}:{f}",
+        .{ output, datapack_writer.functionPath(try declarations.outputPath(compiler, namespace, name)) },
+    );
 }
 
 /// The source names of the data files and mcfuns of a namespace.
@@ -338,10 +413,18 @@ fn declarationWithFileName(compiler: *Compiler, namespace: []const u8, file_name
 fn unknownIdMessage(compiler: *Compiler, written: []const u8, namespace: []const u8, name: []const u8) std.mem.Allocator.Error![]const u8 {
     // `self:heal_player` is the file name of `healPlayer`: point to the name in the source.
     if (try declarationWithFileName(compiler, namespace, name)) |declared| {
-        return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is a file name. Use the name from the source: '{s}:{s}'", .{ written, name, written, declared });
+        return std.fmt.allocPrint(
+            compiler.arena,
+            "'{s}:{s}' is a file name. Use the name from the source: '{s}:{s}'",
+            .{ written, name, written, declared },
+        );
     }
     const names = try declaredNames(compiler, namespace);
-    return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, CommandTree.Suggestion{ .closest = CommandTree.closestId(names, name) } });
+    return std.fmt.allocPrint(
+        compiler.arena,
+        "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}",
+        .{ written, name, namespace, CommandTree.Suggestion{ .closest = CommandTree.closestId(names, name) } },
+    );
 }
 
 test "a bare name from this pack is an error where it can only be a function or a data file" {
@@ -370,12 +453,27 @@ test "a bare name from this pack is an error where it can only be a function or 
     _ = try compiler.compile();
     const errors = compiler.errors.items;
     try std.testing.expectEqual(7, errors.len);
-    try std.testing.expectEqualStrings("'isMissing' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:isMissing'", errors[6].message);
-    try std.testing.expectEqualStrings("'isVehicle' is in this pack, but with no namespace it means 'minecraft:isVehicle'. Write 'self:isVehicle'", errors[0].message);
+    try std.testing.expectEqualStrings(
+        "'isMissing' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:isMissing'",
+        errors[6].message,
+    );
+    try std.testing.expectEqualStrings(
+        "'isVehicle' is in this pack, but with no namespace it means 'minecraft:isVehicle'. Write 'self:isVehicle'",
+        errors[0].message,
+    );
     try std.testing.expectEqual(27, errors[0].position.?.column);
-    try std.testing.expectEqualStrings("'is_vehicle' is in this pack, but with no namespace it means 'minecraft:is_vehicle'. Write 'self:isVehicle'", errors[1].message);
-    try std.testing.expectEqualStrings("'speed' is in this pack, but with no namespace it means 'minecraft:speed'. Write 'self:speed'", errors[3].message);
-    try std.testing.expectEqualStrings("'greeters' is in this pack, but with no namespace it means 'minecraft:greeters'. Write 'self:greeters'", errors[4].message);
+    try std.testing.expectEqualStrings(
+        "'is_vehicle' is in this pack, but with no namespace it means 'minecraft:is_vehicle'. Write 'self:isVehicle'",
+        errors[1].message,
+    );
+    try std.testing.expectEqualStrings(
+        "'speed' is in this pack, but with no namespace it means 'minecraft:speed'. Write 'self:speed'",
+        errors[3].message,
+    );
+    try std.testing.expectEqualStrings(
+        "'greeters' is in this pack, but with no namespace it means 'minecraft:greeters'. Write 'self:greeters'",
+        errors[4].message,
+    );
 }
 
 test "inserts compile-time and runtime values into commands" {
@@ -408,7 +506,10 @@ test "inserts compile-time and runtime values into commands" {
         \\function ns:poplar/main/macro_0 with storage ns:poplar macro
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "main"));
-    try std.testing.expectEqualStrings("$say $(hp_2) $(value) $(CustomName) $(hp) $(hp_2)\n", try Compiler.renderForTest(arena.allocator(), program, "poplar/main/macro_0"));
+    try std.testing.expectEqualStrings(
+        "$say $(hp_2) $(value) $(CustomName) $(hp) $(hp_2)\n",
+        try Compiler.renderForTest(arena.allocator(), program, "poplar/main/macro_0"),
+    );
 }
 
 test "a command uses a data variable and a macro key together" {
@@ -428,5 +529,8 @@ test "a command uses a data variable and a macro key together" {
         \\function ns:poplar/give/macro_0 with storage ns:poplar macro
         \\
     , try Compiler.renderForTest(arena.allocator(), program, "give"));
-    try std.testing.expectEqualStrings("$give @s $(item) $(count)\n", try Compiler.renderForTest(arena.allocator(), program, "poplar/give/macro_0"));
+    try std.testing.expectEqualStrings(
+        "$give @s $(item) $(count)\n",
+        try Compiler.renderForTest(arena.allocator(), program, "poplar/give/macro_0"),
+    );
 }
