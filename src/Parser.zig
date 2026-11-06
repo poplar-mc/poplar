@@ -30,6 +30,8 @@ lexer: Lexer,
 current: Token = undefined,
 peek: Token = undefined,
 errors: std.ArrayList(Error) = .empty,
+// What the end of the input is called in a message. An insert has its own.
+end_of_input: []const u8 = "end of file",
 
 pub fn init(gpa: std.mem.Allocator, lexer: Lexer) ParseError!Self {
     var p = Self{
@@ -142,15 +144,15 @@ fn parseDataFile(self: *Self) ParseError!?Ast.DataFile {
         .identifier => .{ .identifier = self.current.literal },
         .string => .{ .id = try self.decodeString(self.current.literal) orelse return null },
         else => {
-            try self.addError("expected a name after '{s}', found '{s}'", .{ type_word, describe(self.current) });
+            try self.addError("expected a name after '{s}', found {s}", .{ type_word, try self.describe(self.current) });
             return null;
         },
     };
     if (!self.peekIs(.json_body)) {
         if (self.peekIs(.unclosed)) {
-            try self.addError("the JSON of {s} '{s}' is not closed", .{ type_word, describe(self.current) });
+            try self.addError("the JSON of {s} '{s}' is not closed", .{ type_word, self.current.literal });
         } else {
-            try self.addError("expected the JSON of {s} '{s}' (an object or a list), found '{s}'", .{ type_word, describe(self.current), describe(self.peek) });
+            try self.addError("expected the JSON of {s} '{s}' (an object or a list), found {s}", .{ type_word, self.current.literal, try self.describe(self.peek) });
         }
         return null;
     }
@@ -169,7 +171,7 @@ fn parseDataFile(self: *Self) ParseError!?Ast.DataFile {
 
 fn parseFunction(self: *Self) ParseError!?Ast.Function {
     if (!self.currentIs(.mcfun)) {
-        try self.addError("expected 'import', 'var', 'mcfun' or a data file, found '{s}'", .{describe(self.current)});
+        try self.addError("expected 'import', 'var', 'mcfun' or a data file, found {s}", .{try self.describe(self.current)});
         return null;
     }
     const line = self.current.line;
@@ -202,7 +204,7 @@ fn parseBlock(self: *Self) ParseError!?[]const Ast.Stmt {
 
     while (!self.currentIs(.right_brace)) {
         if (self.currentIs(.eof)) {
-            try self.addError("expected '}}', found end of file", .{});
+            try self.addError("expected '}}', found {s}", .{self.end_of_input});
             return null;
         }
 
@@ -233,9 +235,29 @@ fn skipStatement(self: *Self) ParseError!void {
     }
 }
 
+// Skips the rest of a broken declaration, so a statement in its body is not read as a declaration. It stops
+// after the `;`, `}` or JSON body that ends the declaration, or before a word that starts a new one.
 fn skipToDeclaration(self: *Self) ParseError!void {
-    while (!self.peekIs(.eof) and !self.peekIs(.import) and !self.peekIs(.@"var") and !self.peekIs(.mcfun)) {
+    var depth: usize = if (self.currentIs(.left_brace)) 1 else 0;
+
+    while (!self.peekIs(.eof)) {
+        const starts_declaration = self.peekIs(.import) or self.peekIs(.@"var") or self.peekIs(.mcfun);
+        if (depth == 0 and starts_declaration) return;
+
+        const ends_declaration = switch (self.peek.type) {
+            .left_brace => blk: {
+                depth += 1;
+                break :blk false;
+            },
+            .right_brace => blk: {
+                depth -|= 1;
+                break :blk depth == 0;
+            },
+            .semicolon, .json_body => depth == 0,
+            else => false,
+        };
         try self.nextToken();
+        if (ends_declaration) return;
     }
 }
 
@@ -305,14 +327,13 @@ fn parseInsert(self: *Self, source: []const u8, column: usize) ParseError!?*Ast.
     lexer.line = self.current.line;
     lexer.first_line_column = column - 1;
     var insert_parser = try Self.init(self.gpa, lexer);
+    insert_parser.end_of_input = "the end of '{{...}}'";
     const expression = try insert_parser.parseExpression(.lowest);
 
     if (expression != null and !insert_parser.peekIs(.eof)) {
-        try insert_parser.addError("unexpected '{s}' in '{{{{...}}}}'", .{describe(insert_parser.peek)});
+        try insert_parser.addError("unexpected {s} in '{{{{...}}}}'", .{try insert_parser.describe(insert_parser.peek)});
     }
-    for (insert_parser.errors.items) |err| {
-        try self.appendError(.{ .line = self.current.line, .message = err.message });
-    }
+    for (insert_parser.errors.items) |err| try self.appendError(err);
 
     if (insert_parser.errors.items.len > 0) return null;
     return expression;
@@ -336,7 +357,7 @@ fn parseExecuteStatement(self: *Self) ParseError!?Ast.Stmt.Kind {
 fn parseVarStatement(self: *Self) ParseError!?Ast.Stmt.Kind {
     try self.nextToken();
     const target = self.currentIdentifier() orelse {
-        try self.addError("expected a variable name, found '{s}'", .{describe(self.current)});
+        try self.addError("expected a variable name, found {s}", .{try self.describe(self.current)});
         return null;
     };
 
@@ -496,7 +517,7 @@ fn parsePrefix(self: *Self) ParseError!?*Ast.Expr {
         .macro_key => .{ .macro_key = self.current.literal },
         .left_paren => return self.parseGroupedExpression(),
         else => {
-            try self.addError("expected an expression, found '{s}'", .{describe(self.current)});
+            try self.addError("expected an expression, found {s}", .{try self.describe(self.current)});
             return null;
         },
     };
@@ -595,7 +616,7 @@ fn parseCompoundLiteral(self: *Self) ParseError!?[]const Ast.Entry {
             .identifier => self.current.literal,
             .string => try self.decodeString(self.current.literal) orelse return null,
             else => {
-                try self.addError("expected a key, found '{s}'", .{describe(self.current)});
+                try self.addError("expected a key, found {s}", .{try self.describe(self.current)});
                 return null;
             },
         };
@@ -727,8 +748,29 @@ fn expectPeek(self: *Self, token_type: Token.TokenType) ParseError!bool {
         return true;
     }
 
-    try self.addError("expected {s}, found '{s}'", .{ @tagName(token_type), describe(self.peek) });
+    try self.addError("expected {s}, found {s}", .{ expectedText(token_type), try self.describe(self.peek) });
     return false;
+}
+
+// How a message names a token that `expectPeek` wants.
+fn expectedText(token_type: Token.TokenType) []const u8 {
+    return switch (token_type) {
+        .semicolon => "';'",
+        .eql => "'='",
+        .left_paren => "'('",
+        .right_paren => "')'",
+        .left_brace => "'{'",
+        .right_brace => "'}'",
+        .right_bracket => "']'",
+        .colon => "':'",
+        .dot => "'.'",
+        .dot_dot => "'..'",
+        .pipe => "'|'",
+        .identifier => "a name",
+        .score_identifier => "a score name",
+        .execute_subcommands => "'(...)' after 'execute'",
+        else => @tagName(token_type),
+    };
 }
 
 fn currentPrecedence(self: *Self) Precedence {
@@ -754,7 +796,7 @@ fn precedenceOf(token_type: Token.TokenType) Precedence {
 
 fn addError(self: *Self, comptime format: []const u8, args: anytype) ParseError!void {
     const message = try std.fmt.allocPrint(self.gpa, format, args);
-    try self.appendError(.{ .line = self.current.line, .message = message });
+    try self.appendError(.{ .line = self.current.line, .column = self.current.column, .message = message });
 }
 
 // Only the first error on a line is kept. Later ones on that line are usually caused by it.
@@ -765,8 +807,9 @@ fn appendError(self: *Self, err: Error) ParseError!void {
     try self.errors.append(self.gpa, err);
 }
 
-fn describe(token: Token) []const u8 {
-    return if (token.type == .eof) "end of file" else token.literal;
+fn describe(self: *const Self, token: Token) ParseError![]const u8 {
+    if (token.type == .eof) return self.end_of_input;
+    return std.fmt.allocPrint(self.gpa, "'{s}'", .{token.literal});
 }
 
 const TestResult = struct {
@@ -976,7 +1019,43 @@ test "missing semicolon reports line" {
 
     try std.testing.expectEqual(1, result.errors.len);
     try std.testing.expectEqual(2, result.errors[0].line);
-    try std.testing.expectEqualStrings("expected semicolon, found '}'", result.errors[0].message);
+    try std.testing.expectEqualStrings("expected ';', found '}'", result.errors[0].message);
+}
+
+test "errors have a column, also in an insert, and name the end of the insert" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const result = try parseForTest(arena.allocator(),
+        \\mcfun f() {
+        \\    /say {{ 1 + }};
+        \\    var x 5;
+        \\}
+    );
+
+    try std.testing.expectEqualStrings("expected an expression, found the end of '{{...}}'", result.errors[0].message);
+    try std.testing.expectEqual(2, result.errors[0].line);
+    try std.testing.expectEqual(17, result.errors[0].column);
+    try std.testing.expectEqualStrings("expected '=', found '5'", result.errors[1].message);
+    try std.testing.expectEqual(9, result.errors[1].column);
+}
+
+test "after a broken declaration, its body is skipped and the next declaration is read" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const result = try parseForTest(arena.allocator(),
+        \\mcfun broken( {
+        \\    var x = 1;
+        \\}
+        \\recipe a {}
+        \\mcfun f() {}
+    );
+
+    try std.testing.expectEqual(1, result.errors.len);
+    try std.testing.expectEqual(0, result.program.globals.len);
+    try std.testing.expectEqual(1, result.program.data_files.len);
+    try std.testing.expectEqual(1, result.program.functions.len);
 }
 
 test "decodes string escapes" {

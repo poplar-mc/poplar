@@ -15,3 +15,16 @@ mcfun heal() {
 mcfun castSpell() {
     /say spell;
 }
+
+// Locals survive a recursive call, in a namespace that is not the pack's.
+var #depth = 0;
+
+mcfun keepLocals() {
+    var #mine = #depth;
+    var $label = "level";
+    if (#depth < 2) {
+        #depth = #depth + 1;
+        keepLocals();
+    }
+    /say {{$label}} {{#mine}};
+}

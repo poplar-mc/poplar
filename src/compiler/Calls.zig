@@ -5,6 +5,8 @@ const Ast = @import("../Ast.zig");
 const Commands = @import("../Commands.zig");
 const Environment = @import("../Environment.zig");
 const Ir = @import("../Ir.zig");
+const Lexer = @import("../Lexer.zig");
+const Parser = @import("../Parser.zig");
 const Data = @import("Data.zig");
 const Declarations = @import("Declarations.zig");
 const Load = @import("Load.zig");
@@ -184,7 +186,7 @@ pub fn appendWithSavedValues(self: *Compiler, call: Ir.Command, target: ?Ir.Scor
     var saved_data: std.ArrayList([]const u8) = .empty;
     for (0..live_temp_count) |index| try saved_scores.append(self.gpa, try Scores.tempScore(self, index));
     for (self.live_locals.items) |local| switch (local.kind) {
-        .score => try saved_scores.append(self.gpa, .{ .holder = local.generated_name, .owner = local.owner }),
+        .score => try saved_scores.append(self.gpa, .{ .holder = local.generated_name, .owner = local.owner, .namespace = self.scope.output_namespace }),
         .data => try saved_data.append(self.gpa, local.generated_name),
     };
     if (target) |result| for (saved_scores.items, 0..) |score, index| {
@@ -198,10 +200,10 @@ pub fn appendWithSavedValues(self: *Compiler, call: Ir.Command, target: ?Ir.Scor
     self.uses_stack = true;
     try commands.append(self.gpa, .frame_push);
     for (saved_scores.items) |score| try commands.append(self.gpa, .{ .score_to_data = .{ .target = try frameSlot(self, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(self.gpa, .{ .data_copy = .{ .target = try frameSlot(self, key), .source = .inStorage(.data, key) } });
+    for (saved_data.items) |key| try commands.append(self.gpa, .{ .data_copy = .{ .target = try frameSlot(self, key), .source = Data.dataLocal(self, key) } });
     try commands.append(self.gpa, call);
     for (saved_scores.items) |score| try commands.append(self.gpa, .{ .data_to_score = .{ .source = try frameSlot(self, score.holder), .score = score } });
-    for (saved_data.items) |key| try commands.append(self.gpa, .{ .data_copy = .{ .target = .inStorage(.data, key), .source = try frameSlot(self, key) } });
+    for (saved_data.items) |key| try commands.append(self.gpa, .{ .data_copy = .{ .target = Data.dataLocal(self, key), .source = try frameSlot(self, key) } });
     try commands.append(self.gpa, .frame_pop);
 }
 
@@ -357,7 +359,59 @@ pub fn isBuiltin(name: []const u8) bool {
 }
 
 pub fn isBuiltinCall(call: Ast.Call, name: []const u8) bool {
-    return call.callee.kind == .identifier and std.mem.eql(u8, call.callee.kind.identifier.name, name);
+    if (call.callee.kind != .identifier or call.callee.kind.identifier.namespace != null) return false;
+    return std.mem.eql(u8, call.callee.kind.identifier.name, name);
+}
+
+test "a recursive call saves the locals of an mcfun in another namespace where they are" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const command_tree = try arena.allocator().create(Commands);
+    command_tree.* = try .load(arena.allocator());
+    var compiler = Compiler.init(arena.allocator(), command_tree);
+
+    var parser = try Parser.init(arena.allocator(), Lexer.init(
+        \\namespace magic;
+        \\mcfun down() {
+        \\    var #i = 1;
+        \\    var $name = "a";
+        \\    if (#i > 0) { down(); }
+        \\    /say {{#i}} {{$name}};
+        \\}
+    ));
+    try compiler.addProgram("magic.poplar", try parser.parseProgram(), .project);
+    const program = try compiler.compile();
+    try std.testing.expectEqual(0, compiler.errors.items.len);
+
+    try std.testing.expectEqualStrings(
+        \\data modify storage ns:poplar stack append value {}
+        \\execute store result storage ns:poplar stack[-1].s_i_down int 1 run scoreboard players get #i_down poplar.magic
+        \\data modify storage ns:poplar stack[-1].d_name_down set from storage magic:data name_down
+        \\function magic:down
+        \\execute store result score #i_down poplar.magic run data get storage ns:poplar stack[-1].s_i_down
+        \\data modify storage magic:data name_down set from storage ns:poplar stack[-1].d_name_down
+        \\data remove storage ns:poplar stack[-1]
+        \\
+    , try Compiler.renderForTest(arena.allocator(), program, "magic:poplar/down/if_0"));
+}
+
+test "a name with a namespace is never a builtin, and an mcfun is not known at build time" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    var compiler = try Compiler.compileForTest(arena.allocator(),
+        \\var $list = [];
+        \\var #n = 0;
+        \\mcfun main() { #n = ns:len($list); }
+        \\mcfun one() { return 1; }
+        \\mcfun range() { for (0..one()) |i| { /say {{i}}; } }
+    );
+    _ = try compiler.compile();
+
+    const errors = compiler.errors.items;
+    try std.testing.expectEqual(2, errors.len);
+    try std.testing.expectEqualStrings("unknown function 'len'", errors[0].message);
+    try std.testing.expectEqualStrings("mcfun 'one' runs in the game, so its result is not known when the pack is built", errors[1].message);
 }
 
 test "return values, mcfun calls as values and while" {

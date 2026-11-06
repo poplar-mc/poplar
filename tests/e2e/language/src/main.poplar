@@ -229,6 +229,10 @@ mcfun test() {
     $small = -0.25d;
     /say negative {{$small}};
     if ($small == -0.25d) { /say typed equal; }
+    // The game and the build count the same UTF-16 units.
+    $copy = "😀";
+    #x = len($copy);
+    /say emoji {{#x}} {{len("😀")}};
     if ($small == -0.25f) { /say wrong number type; }
 }
 

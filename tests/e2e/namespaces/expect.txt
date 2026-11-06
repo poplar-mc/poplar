@@ -8,3 +8,6 @@ combat reports 7
 magic heal 2
 clamp 20
 lucky
+level 2
+level 1
+level 0

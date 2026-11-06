@@ -38,7 +38,8 @@ pub fn evaluateCall(self: *Compiler, call: Ast.Call, env: *Environment) Compiler
         try self.addError("only named functions can be called", .{});
         return null;
     }
-    const name = call.callee.kind.identifier.name;
+    const identifier = call.callee.kind.identifier;
+    const name = identifier.name;
     if (Calls.isBuiltinCall(call, "text")) {
         if (call.args.len != 1) {
             try self.addError("'text' expects 1 argument, found {d}", .{call.args.len});
@@ -52,13 +53,14 @@ pub fn evaluateCall(self: *Compiler, call: Ast.Call, env: *Environment) Compiler
         switch (value) {
             .list => |elements| return .{ .number = @intCast(elements.len) },
             .compound => |entries| return .{ .number = @intCast(entries.len) },
-            .string => |text| return .{ .number = @intCast(std.unicode.utf8CountCodepoints(text) catch text.len) },
+            // The game counts UTF-16 units.
+            .string => |text| return .{ .number = @intCast(std.unicode.calcUtf16LeLen(text) catch text.len) },
             else => {},
         }
     }
-    if (self.functions.contains(name)) {
+    if (try Calls.calledKey(self, identifier) != null) {
         try self.addError("mcfun '{s}' runs in the game, so its result is not known when the pack is built", .{name});
-    } else if (Calls.isBuiltin(name)) {
+    } else if (identifier.namespace == null and Calls.isBuiltin(name)) {
         try self.addError("'{s}' changes data in the game, so it has no build-time value", .{name});
     } else {
         try self.addError("unknown function '{s}'", .{name});

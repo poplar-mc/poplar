@@ -49,7 +49,12 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "std",
         "schema",
+        "tools",
+        "tests",
+        "LICENSE",
+        "README.md",
         // For example...
         //"LICENSE",
         //"README.md",

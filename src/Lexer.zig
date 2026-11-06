@@ -452,9 +452,10 @@ fn readString(self: *Self) ?[]const u8 {
     self.readChar();
 
     while (self.ch != '"') : (self.readChar()) {
-        if (self.pos >= self.input.len) return null;
+        // A string is one line, because it ends up in a one-line command or in SNBT.
+        if (self.ch == '\n' or self.pos >= self.input.len) return null;
         // The escaped character cannot end the string. The parser decodes the escape.
-        if (self.ch == '\\') self.readChar();
+        if (self.ch == '\\' and self.peekChar() != '\n') self.readChar();
     }
 
     return self.input[start + 1 .. self.pos];
@@ -588,6 +589,15 @@ test "reads illegal characters as tokens" {
     try std.testing.expectEqualStrings("\\", l.nextToken().literal);
     try std.testing.expectEqual(.unclosed, l.nextToken().type);
     try std.testing.expectEqual(.eof, l.nextToken().type);
+}
+
+test "a string ends at the end of its line" {
+    var l = Self.init("\"a\nb");
+
+    try std.testing.expectEqual(.unclosed, l.nextToken().type);
+    const next = l.nextToken();
+    try std.testing.expectEqualStrings("b", next.literal);
+    try std.testing.expectEqual(2, next.line);
 }
 
 test "reads null keyword" {

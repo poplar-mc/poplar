@@ -72,3 +72,4 @@ macro stored .25
 macro stored [1,2]
 negative -.25
 typed equal
+emoji 2 2

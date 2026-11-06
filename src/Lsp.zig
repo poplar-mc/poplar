@@ -624,15 +624,34 @@ fn uriToPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
         }
         path.appendAssumeCapacity(encoded[index]);
     }
+    // `file:///c%3A/x` is `C:\x`. Editors differ in the case of the drive letter, and the compiler's paths have a capital.
+    if (path.items.len >= 3 and path.items[0] == '/' and isDrivePrefix(path.items[1..3])) {
+        const windows_path = path.items[1..];
+        windows_path[0] = std.ascii.toUpper(windows_path[0]);
+        std.mem.replaceScalar(u8, windows_path, '/', '\\');
+        return windows_path;
+    }
     return path.items;
+}
+
+fn isDrivePrefix(text: []const u8) bool {
+    return std.ascii.isAlphabetic(text[0]) and text[1] == ':';
 }
 
 fn pathToUri(arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     var uri: std.ArrayList(u8) = .empty;
     try uri.appendSlice(arena, "file://");
-    for (path) |byte| {
+    var rest = path;
+    const is_windows_path = path.len >= 2 and isDrivePrefix(path[0..2]);
+    if (is_windows_path) {
+        try uri.print(arena, "/{s}", .{path[0..2]});
+        rest = path[2..];
+    }
+    for (rest) |byte| {
         if (std.ascii.isAlphanumeric(byte) or std.mem.indexOfScalar(u8, "-._~/", byte) != null) {
             try uri.append(arena, byte);
+        } else if (byte == '\\' and is_windows_path) {
+            try uri.append(arena, '/');
         } else {
             try uri.print(arena, "%{X:0>2}", .{byte});
         }
@@ -654,6 +673,17 @@ test "finds the word under the cursor with its sigil" {
     try std.testing.expectEqualDeep(Word{ .kind = .data, .text = "stats.maxHp" }, wordAt(text, 38).?);
     try std.testing.expectEqualDeep(Word{ .kind = .name, .text = "clamp" }, wordAt(text, 46).?);
     try std.testing.expectEqualDeep(Word{ .kind = .score, .text = "hp" }, wordAt(text, 52).?);
+}
+
+test "converts Windows paths to URIs and back" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const windows_path = "C:\\My Packs\\src\\main.poplar";
+    try std.testing.expectEqualStrings("file:///C:/My%20Packs/src/main.poplar", try pathToUri(arena.allocator(), windows_path));
+    try std.testing.expectEqualStrings(windows_path, (try uriToPath(arena.allocator(), "file:///C:/My%20Packs/src/main.poplar")).?);
+    try std.testing.expectEqualStrings(windows_path, (try uriToPath(arena.allocator(), "file:///c%3A/My%20Packs/src/main.poplar")).?);
+    try std.testing.expectEqualStrings("/home/me/a b.poplar", (try uriToPath(arena.allocator(), "file:///home/me/a%20b.poplar")).?);
 }
 
 // Collects the messages that the server writes, instead of stdout.

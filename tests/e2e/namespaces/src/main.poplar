@@ -21,4 +21,5 @@ mcfun test() {
     combat:report();
     /say clamp {{ std:clamp() with {x: 30, low: 0, high: 20} }};
     if (predicate combat:isLucky) { /say lucky; }
+    magic:keepLocals();
 }
