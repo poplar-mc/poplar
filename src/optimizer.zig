@@ -281,15 +281,15 @@ fn mergeCopy(arena: std.mem.Allocator, definition: ir.Command, copy: ir.Command,
         .score_to_data => |store| {
             if (!store.score.eql(temp)) return null;
             const target: ir.StoreResult.Target = .{ .data = store.target };
-            return .{ .store_result = .{ .target = target, .run = try create(arena, definition) } };
+            return .{ .store_result = .{ .target = target, .run = try ir.createCommand(arena, definition) } };
         },
         .return_run => |run| {
             if (run.* != .score_get or !run.score_get.eql(temp)) return null;
-            return .{ .return_run = try create(arena, definition) };
+            return .{ .return_run = try ir.createCommand(arena, definition) };
         },
         .score_operation => |operation| {
             if (operation.op != .assign or !operation.source.eql(temp) or operation.target.eql(temp)) return null;
-            return .{ .store_result = .{ .target = .{ .score = operation.target }, .run = try create(arena, definition) } };
+            return .{ .store_result = .{ .target = .{ .score = operation.target }, .run = try ir.createCommand(arena, definition) } };
         },
         else => return null,
     }
@@ -314,9 +314,7 @@ fn mentionsInText(command: ir.Command, name: []const u8) bool {
             if (check.condition == .raw and std.mem.indexOf(u8, check.condition.raw, name) != null) break true;
         } else mentionsInText(execute.run.*, name),
         .execute_raw => |execute| std.mem.indexOf(u8, execute.subcommands, name) != null or mentionsInText(execute.run.*, name),
-        .store_result => |store| mentionsInText(store.run.*, name),
-        .return_run => |run| mentionsInText(run.*, name),
-        else => false,
+        else => if (runOf(command)) |run| mentionsInText(run.*, name) else false,
     };
 }
 
@@ -329,10 +327,7 @@ pub fn readsScore(command: ir.Command, score: ir.Score) bool {
         .execute => |execute| for (execute.checks) |check| {
             if (checkReads(check, score)) break true;
         } else readsScore(execute.run.*, score),
-        .execute_raw => |execute| readsScore(execute.run.*, score),
-        .store_result => |store| readsScore(store.run.*, score),
-        .return_run => |run| readsScore(run.*, score),
-        else => false,
+        else => if (runOf(command)) |run| readsScore(run.*, score) else false,
     };
 }
 
@@ -361,9 +356,7 @@ fn runsOtherCode(command: ir.Command) bool {
     return switch (command) {
         .function, .function_with, .macro, .raw, .execute_raw => true,
         .execute => |execute| checkedFunction(execute) != null or runsCheckedCode(execute) or runsOtherCode(execute.run.*),
-        .store_result => |store| runsOtherCode(store.run.*),
-        .return_run => |run| runsOtherCode(run.*),
-        else => false,
+        else => if (runOf(command)) |run| runsOtherCode(run.*) else false,
     };
 }
 
@@ -398,7 +391,7 @@ pub fn inlineSmallFunctions(arena: std.mem.Allocator, functions: []const ir.McFu
 
     var used: std.ArrayList(ir.McFunction) = .empty;
     for (result) |function| {
-        if (!isGenerated(function.name) or isCalled(result, function.name)) try used.append(arena, function);
+        if (!isGenerated(function.name) or callCount(result, function.name) > 0) try used.append(arena, function);
     }
     for (used.items) |*function| function.commands = try optimizeFunction(arena, function.name, function.commands);
     return used.toOwnedSlice(arena);
@@ -415,11 +408,11 @@ fn inlineCall(arena: std.mem.Allocator, functions: []const ir.McFunction, caller
                 const checks = try std.mem.concat(arena, ir.Check, &.{ execute.checks, run.execute.checks });
                 return .{ .execute = .{ .checks = checks, .run = run.execute.run } };
             }
-            return .{ .execute = .{ .checks = execute.checks, .run = try create(arena, run) } };
+            return .{ .execute = .{ .checks = execute.checks, .run = try ir.createCommand(arena, run) } };
         },
         .execute_raw => |execute| {
             const run = try inlineCall(arena, functions, caller, execute.run.*) orelse return null;
-            return .{ .execute_raw = .{ .subcommands = execute.subcommands, .run = try create(arena, run) } };
+            return .{ .execute_raw = .{ .subcommands = execute.subcommands, .run = try ir.createCommand(arena, run) } };
         },
         else => return null,
     }
@@ -546,7 +539,7 @@ fn withoutArguments(arena: std.mem.Allocator, command: ir.Command, needs: *const
     return command;
 }
 
-fn runOf(command: ir.Command) ?*const ir.Command {
+pub fn runOf(command: ir.Command) ?*const ir.Command {
     return switch (command) {
         .execute => |execute| execute.run,
         .execute_raw => |execute| execute.run,
@@ -557,8 +550,7 @@ fn runOf(command: ir.Command) ?*const ir.Command {
 }
 
 fn withRun(arena: std.mem.Allocator, command: ir.Command, run: ir.Command) std.mem.Allocator.Error!ir.Command {
-    const new_run = try arena.create(ir.Command);
-    new_run.* = run;
+    const new_run = try ir.createCommand(arena, run);
     return switch (command) {
         .execute => |execute| .{ .execute = .{ .checks = execute.checks, .run = new_run } },
         .execute_raw => |execute| .{ .execute_raw = .{ .subcommands = execute.subcommands, .run = new_run } },
@@ -568,24 +560,12 @@ fn withRun(arena: std.mem.Allocator, command: ir.Command, run: ir.Command) std.m
     };
 }
 
-fn isCalled(functions: []const ir.McFunction, name: []const u8) bool {
-    for (functions) |function| {
-        for (function.commands) |command| {
-            if (callsFunction(command, name)) return true;
-        }
-    }
-    return false;
-}
-
 fn callsFunction(command: ir.Command, name: []const u8) bool {
     return switch (command) {
         .function => |called| std.mem.eql(u8, called, name),
         .function_with => |call| std.mem.eql(u8, call.name, name),
         .execute => |execute| if (checkedFunction(execute)) |checked| std.mem.eql(u8, checked, name) or callsFunction(execute.run.*, name) else callsFunction(execute.run.*, name),
-        .execute_raw => |execute| callsFunction(execute.run.*, name),
-        .store_result => |store| callsFunction(store.run.*, name),
-        .return_run => |run| callsFunction(run.*, name),
-        else => false,
+        else => if (runOf(command)) |run| callsFunction(run.*, name) else false,
     };
 }
 
@@ -599,10 +579,7 @@ fn callsTempReader(command: ir.Command, temp: ir.Score) bool {
             if (checkedFunction(execute)) |checked| if (readsTempsOf(checked, temp)) return true;
             return callsTempReader(execute.run.*, temp);
         },
-        .execute_raw => |execute| return callsTempReader(execute.run.*, temp),
-        .store_result => |store| return callsTempReader(store.run.*, temp),
-        .return_run => |run| return callsTempReader(run.*, temp),
-        else => return false,
+        else => return if (runOf(command)) |run| callsTempReader(run.*, temp) else false,
     };
     return readsTempsOf(name, temp);
 }
@@ -672,12 +649,6 @@ fn isConstant(score: ir.Score) bool {
 
 fn isConstantOne(score: ir.Score) bool {
     return constantValue(score) == 1;
-}
-
-fn create(arena: std.mem.Allocator, command: ir.Command) std.mem.Allocator.Error!*const ir.Command {
-    const pointer = try arena.create(ir.Command);
-    pointer.* = command;
-    return pointer;
 }
 
 test "removes identities and inlines copies of temps" {

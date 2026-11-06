@@ -85,14 +85,8 @@ fn parseDeclaration(self: *Parser, declarations: *Declarations) Error!void {
 
 /// `import magic;`
 fn parseImport(self: *Parser) Error!ast.NamespaceName {
-    const position = tokenPosition(self.current);
-    if (self.peekIs(.string)) {
-        return self.fail("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/", .{});
-    }
-    try self.expectPeek(.identifier);
-    const name = try self.parseNamespaceName();
-    try self.expectPeek(.semicolon);
-    return .{ .name = name, .position = position };
+    if (self.peekIs(.string)) return self.fail("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/", .{});
+    return self.parseNamespaceStatement();
 }
 
 /// `namespace combat;`

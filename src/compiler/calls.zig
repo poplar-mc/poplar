@@ -4,6 +4,7 @@ const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
 const CommandTree = @import("../CommandTree.zig");
+const Config = @import("../Config.zig");
 const Environment = @import("../Environment.zig");
 const ir = @import("../ir.zig");
 const Lexer = @import("../Lexer.zig");
@@ -62,7 +63,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
 
     var is_inline = true;
     for (entries) |entry| {
-        if (values.containsRuntimeValue(compiler, entry.value, env) and entry.value.kind != .macro_key) is_inline = false;
+        if (values.containsRuntimeValue(entry.value) and entry.value.kind != .macro_key) is_inline = false;
     }
     if (is_inline) {
         var compound: std.ArrayList(u8) = .empty;
@@ -80,7 +81,7 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
     for (entries, entry_scores) |entry, *score| {
         score.* = null;
         const entry_value = entry.value;
-        if (!values.containsRuntimeValue(compiler, entry_value, env) or entry_value.kind == .macro_key) continue;
+        if (!values.containsRuntimeValue(entry_value) or entry_value.kind == .macro_key) continue;
         if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call)) continue;
         if (entry_value.kind == .list or entry_value.kind == .compound) continue;
 
@@ -100,12 +101,12 @@ pub fn compileMcfunCall(compiler: *Compiler, call: ast.Call, declaration: Compil
         const entry_value = entry.value;
         if (entry_score) |score| {
             try commands.append(compiler.arena, .{ .score_to_data = .{ .target = target, .score = score } });
-        } else if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call) and values.containsRuntimeValue(compiler, entry_value, env)) {
+        } else if (entry_value.kind == .call and data.isStringCall(entry_value.kind.call) and values.containsRuntimeValue(entry_value)) {
             try data.compileStringInto(compiler, target, entry_value.kind.call, env, commands);
         } else if (data.isDataIdentifier(entry_value)) {
             const source = try data.dataPathOf(compiler, entry_value.kind.identifier, env);
             try commands.append(compiler.arena, .{ .data_copy = .{ .target = target, .source = source } });
-        } else if ((entry_value.kind == .list or entry_value.kind == .compound) and values.containsRuntimeValue(compiler, entry_value, env)) {
+        } else if ((entry_value.kind == .list or entry_value.kind == .compound) and values.containsRuntimeValue(entry_value)) {
             try data.compileLiteralAssign(compiler, target, entry_value, env, commands);
         } else {
             const snbt = try argumentSnbt(compiler, entry.value, env);
@@ -282,7 +283,7 @@ fn collectStdIds(compiler: *Compiler, text: []const u8, calls: *std.StringArrayH
     var index: usize = 0;
     while (std.mem.indexOfPos(u8, text, index, prefix)) |start| {
         index = start + prefix.len;
-        if (start > 0 and minecraft_text.isNamespaceChar(text[start - 1])) continue;
+        if (start > 0 and Config.isResourceNameChar(text[start - 1])) continue;
         var end = index;
         while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) end += 1;
         const mcfun_key = try declarations.qualifiedKey(compiler, Compiler.std_namespace, text[index..end]);

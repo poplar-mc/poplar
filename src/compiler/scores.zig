@@ -35,7 +35,7 @@ fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target
 pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
-    if (!values.containsRuntimeValue(compiler, expression, env)) {
+    if (!values.containsRuntimeValue(expression)) {
         const value = try values.evaluate(compiler, expression, env);
         const number = try toScoreValue(compiler, value);
         return commands.append(compiler.arena, .{ .score_set = .{ .score = target, .value = number } });
@@ -90,7 +90,7 @@ pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast
 fn applyOperand(compiler: *Compiler, target: ir.Score, op: ir.Operator, operand: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.Error!void {
     const outer_position = compiler.enterExpression(operand);
     defer compiler.restorePosition(outer_position);
-    if (!values.containsRuntimeValue(compiler, operand, env)) {
+    if (!values.containsRuntimeValue(operand)) {
         const value = try values.evaluate(compiler, operand, env);
         const number = try toScoreValue(compiler, value);
 

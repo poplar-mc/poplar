@@ -45,17 +45,22 @@ pub const std_namespace = "std";
 /// `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the callback.
 /// `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run `/trigger <name>`.
 pub const Event = struct {
-    /// `onEvent` and `onDeath` count a criteria; the player events are fixed patterns (see `load.appendEventFunctions`).
-    pub const Kind = enum { criteria, trigger, first_join, join, respawn };
+    /// What starts the event. The player events are fixed patterns (see `load.appendEventFunctions`).
+    pub const Source = union(enum) {
+        /// `onEvent` and `onDeath` count a criteria.
+        criteria: []const u8,
+        /// The objective name of `onTrigger`. A trigger is disabled after each use, so `poplar/tick` enables it again.
+        trigger: []const u8,
+        first_join,
+        join,
+        respawn,
+    };
 
-    kind: Kind,
-    criteria: []const u8 = "",
+    source: Source,
     /// The IR name of the callback mcfun.
     callback: []const u8,
     /// The output namespace of the `load` that registered it. The objective is `<namespace>.event_<n>`.
     namespace: ?[]const u8,
-    /// The objective name of `onTrigger`. A trigger is disabled after each use, so `poplar/tick` enables it again.
-    trigger: ?[]const u8 = null,
 };
 
 pub const Value = Environment.Value;
@@ -131,9 +136,43 @@ pub const Condition = union(enum) {
     clauses: []const []const ir.Check,
 };
 
-pub const Operand = union(enum) {
-    number: i64,
-    score: ir.Score,
+pub const NamedDataFile = struct {
+    type_word: []const u8,
+    id: []const u8,
+    path: []const u8,
+    position: Position,
+};
+
+/// The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (null: the pack).
+pub const Scope = struct {
+    namespace: []const u8 = "ns",
+    imports: []const ast.NamespaceName = &.{},
+    output_namespace: ?[]const u8 = null,
+};
+
+/// What the compiler knows about the mcfun that it is compiling. Assigning a new one resets it all.
+pub const CurrentMcfun = struct {
+    /// As it appears in generated names (`ir.generatedFolder`): `heal`, or `std.clamp` for std.
+    folder: []const u8 = "",
+    /// The IR name (`combat:heal`), and the key with the source namespace (`combat:heal`, `std:clamp`).
+    name: []const u8 = "",
+    key: []const u8 = "",
+    temp_count: usize = 0,
+    generated_count: usize = 0,
+    /// The `$(name)` keys that it uses.
+    macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
+    /// `{a:"$(a)"}` for the macro arguments that it uses. Calls to its generated functions pass it on.
+    forwarded_args: ?[]const u8 = null,
+    /// The test function of the innermost `while`, for `break` and `continue`.
+    loop: ?[]const u8 = null,
+    /// True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
+    return_through_body: bool = false,
+    /// True in a namespace's `mcfun load`. Only there `onEvent` is allowed.
+    in_load: bool = false,
+    /// Removes each of its data locals. It runs at each exit, so no value is left for the next call.
+    cleanup: []const ir.Command = &.{},
+    /// The locals that are visible at the statement being compiled. A recursive call saves them.
+    live_locals: std.ArrayList(Environment.Local) = .empty,
 };
 
 arena: std.mem.Allocator,
@@ -244,13 +283,6 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
         try Diagnostic.recover(declarations.addDataFile(self, data_file));
     }
 }
-
-pub const NamedDataFile = struct {
-    type_word: []const u8,
-    id: []const u8,
-    path: []const u8,
-    position: Position,
-};
 
 pub fn compile(self: *Compiler) std.mem.Allocator.Error!ir.Program {
     self.poplar_namespaces = try std.mem.concat(self.arena, []const u8, &.{ &.{"self"}, self.namespace_imports.keys() });
@@ -405,7 +437,7 @@ pub fn compileJumpBody(self: *Compiler, body: []const ast.Statement, env: *Envir
         self.mcfun.return_through_body = outer_through_body;
     }
 
-    if (!containsReturn(body)) return self.compileBodyAsCommand(body, env, "execute");
+    if (!jumpsIn(body).has_return) return self.compileBodyAsCommand(body, env, "execute");
 
     var branch_env: Environment = .{ .outer = env, .runtime_branch = true };
     var body_commands: std.ArrayList(ir.Command) = .empty;
@@ -436,7 +468,7 @@ fn compileVarDecl(self: *Compiler, var_decl: ast.VarDecl, env: *Environment, com
         .data => return self.declareLocal(.data, var_decl, env, commands),
         .entity_data => return self.fail("entity data cannot be declared with 'var'. Set it: '@s.$path = ...;'", .{}),
     }
-    if (values.containsRuntimeValue(self, var_decl.value, env)) {
+    if (values.containsRuntimeValue(var_decl.value)) {
         return self.fail("'{s}' is a build-time constant, but this value only exists in the game. Use 'var #{s}' for a score or 'var ${s}' for data", .{ var_decl.target.name, var_decl.target.name, var_decl.target.name });
     }
 
@@ -459,7 +491,7 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     const key = try std.fmt.allocPrint(self.arena, "{c}{s}", .{ sigil, name });
     if (is_global or env.getLocal(kind, name) != null) return self.fail("'{s}' is already declared", .{key});
 
-    const generated_base = try std.fmt.allocPrint(self.arena, "{s}_{s}", .{ name, self.mcfun.folder });
+    const generated_base = try self.localKey(name);
     const generated_name = if (kind == .score) try std.fmt.allocPrint(self.arena, "#{s}", .{generated_base}) else generated_base;
 
     const origin: LocalOrigin = .{ .name = name, .owner = self.mcfun.folder };
@@ -491,6 +523,11 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     });
 }
 
+/// `#i` in `mcfun countdown` is `i_countdown`, with a `#` in front for a score.
+fn localKey(self: *Compiler, name: []const u8) std.mem.Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(self.arena, "{s}_{s}", .{ name, self.mcfun.folder });
+}
+
 /// `data remove` for each data local declared anywhere in the body. A failed `set from` keeps the old value, so
 /// without this a local could hold a value from an earlier call. `data remove` on a missing key fails without effect.
 /// A score local needs nothing: every score write (`set`, `operation`, `store result`) overwrites it, and a failure writes 0.
@@ -500,8 +537,7 @@ fn localCleanup(self: *Compiler, body: []const ast.Statement) std.mem.Allocator.
 
     var cleanup: std.ArrayList(ir.Command) = .empty;
     for (names.keys()) |name| {
-        const generated_name = try std.fmt.allocPrint(self.arena, "{s}_{s}", .{ name, self.mcfun.folder });
-        try cleanup.append(self.arena, .{ .data_remove = data.dataLocal(self, generated_name) });
+        try cleanup.append(self.arena, .{ .data_remove = data.dataLocal(self, try self.localKey(name)) });
     }
     return cleanup.toOwnedSlice(self.arena);
 }
@@ -612,7 +648,7 @@ fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, command
         },
     }
 
-    if (values.containsRuntimeValue(self, assign.value, env)) return self.fail("a runtime value cannot be stored in a compile-time variable", .{});
+    if (values.containsRuntimeValue(assign.value)) return self.fail("a runtime value cannot be stored in a compile-time variable", .{});
 
     const value = try values.evaluate(self, assign.value, env);
     switch (env.assign(assign.target.name, value)) {
@@ -624,65 +660,47 @@ fn compileAssign(self: *Compiler, assign: ast.Assign, env: *Environment, command
     }
 }
 
-fn ifContainsReturn(if_statement: ast.If) bool {
-    const else_body = if_statement.else_body orelse &.{};
-    return containsReturn(if_statement.then_body) or containsReturn(else_body);
+/// What a body can jump with. A `break` or `continue` in an inner `while` belongs to that loop, and `execute (...)` cannot
+/// have one. A `return` leaves every level.
+pub const Jumps = struct {
+    has_return: bool = false,
+    has_break: bool = false,
+    has_continue: bool = false,
+
+    fn merge(jumps: *Jumps, other: Jumps) void {
+        jumps.has_return = jumps.has_return or other.has_return;
+        jumps.has_break = jumps.has_break or other.has_break;
+        jumps.has_continue = jumps.has_continue or other.has_continue;
+    }
+
+    fn any(jumps: Jumps) bool {
+        return jumps.has_return or jumps.has_break or jumps.has_continue;
+    }
+};
+
+pub fn jumpsIn(body: []const ast.Statement) Jumps {
+    var jumps: Jumps = .{};
+    for (body) |statement| switch (statement.kind) {
+        .@"return" => jumps.has_return = true,
+        .@"break" => jumps.has_break = true,
+        .@"continue" => jumps.has_continue = true,
+        .@"if" => |if_statement| jumps.merge(jumpsInIf(if_statement)),
+        .@"for" => |loop| jumps.merge(jumpsIn(loop.body)),
+        .@"while" => |loop| jumps.has_return = jumps.has_return or jumpsIn(loop.body).has_return,
+        .execute => |execute| jumps.has_return = jumps.has_return or jumpsIn(execute.body).has_return,
+        else => {},
+    };
+    return jumps;
 }
 
-pub fn containsReturn(body: []const ast.Statement) bool {
-    for (body) |statement| {
-        const found = switch (statement.kind) {
-            .@"return" => true,
-            .@"if" => |if_statement| ifContainsReturn(if_statement),
-            .@"for" => |loop| containsReturn(loop.body),
-            .@"while" => |loop| containsReturn(loop.body),
-            .execute => |execute| containsReturn(execute.body),
-            else => false,
-        };
-        if (found) return true;
-    }
-    return false;
+fn jumpsInIf(if_statement: ast.If) Jumps {
+    var jumps = jumpsIn(if_statement.then_body);
+    jumps.merge(jumpsIn(if_statement.else_body orelse &.{}));
+    return jumps;
 }
 
 fn isJump(kind: ast.Statement.Kind) bool {
     return kind == .@"return" or kind == .@"break" or kind == .@"continue";
-}
-
-fn ifContainsJump(if_statement: ast.If) bool {
-    const else_body = if_statement.else_body orelse &.{};
-    return containsJump(if_statement.then_body) or containsJump(else_body);
-}
-
-/// `return`, `break` or `continue` of this loop level. A `break` in an inner `while` belongs to that loop.
-fn containsJump(body: []const ast.Statement) bool {
-    for (body) |statement| {
-        const found = switch (statement.kind) {
-            .@"return", .@"break", .@"continue" => true,
-            .@"if" => |if_statement| ifContainsJump(if_statement),
-            .@"for" => |loop| containsJump(loop.body),
-            .@"while" => |loop| containsReturn(loop.body),
-            .execute => |execute| containsReturn(execute.body),
-            else => false,
-        };
-        if (found) return true;
-    }
-    return false;
-}
-
-/// True if the body can leave this loop level with `break` or `return`.
-fn containsExit(body: []const ast.Statement) bool {
-    for (body) |statement| {
-        const found = switch (statement.kind) {
-            .@"return", .@"break" => true,
-            .@"if" => |if_statement| containsExit(if_statement.then_body) or containsExit(if_statement.else_body orelse &.{}),
-            .@"for" => |loop| containsExit(loop.body),
-            .@"while" => |loop| containsReturn(loop.body),
-            .execute => |execute| containsReturn(execute.body),
-            else => false,
-        };
-        if (found) return true;
-    }
-    return false;
 }
 
 /// True if the then body and every `else if` and `else` body end with `return`, `break` or `continue`.
@@ -718,7 +736,7 @@ fn compileIf(self: *Compiler, if_statement: ast.If, env: *Environment, commands:
         },
         .clauses => |clauses| {
             // Each returning branch returns from this function, so the branches go here directly, with no wrapper.
-            if (ifContainsJump(if_statement)) {
+            if (jumpsInIf(if_statement).any()) {
                 if (!branchesEndWithJump(if_statement)) {
                     return self.fail("if one branch of an 'if' contains 'return', 'break' or 'continue', every branch must end with one", .{});
                 }
@@ -818,9 +836,7 @@ pub fn createExpression(self: *Compiler, expression: ast.Expression) std.mem.All
 }
 
 pub fn createCommand(self: *Compiler, command: ir.Command) std.mem.Allocator.Error!*const ir.Command {
-    const pointer = try self.arena.create(ir.Command);
-    pointer.* = command;
-    return pointer;
+    return ir.createCommand(self.arena, command);
 }
 
 fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Error!void {
@@ -841,7 +857,7 @@ fn compileReturn(self: *Compiler, value: ?*const ast.Expression, env: *Environme
         return commands.append(self.arena, .{ .return_value = 0 });
     };
 
-    if (!values.containsRuntimeValue(self, expression, env)) {
+    if (!values.containsRuntimeValue(expression)) {
         const result = try values.evaluate(self, expression, env);
         const number = try scores.toScoreValue(self, result);
         try commands.appendSlice(self.arena, self.mcfun.cleanup);
@@ -887,6 +903,7 @@ fn returnRun(self: *Compiler, command: ir.Command) std.mem.Allocator.Error!ir.Co
 
 /// A loop is two functions: `while_<n>` tests the condition and runs `while_<n>_body`, which runs `while_<n>` again.
 fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *std.ArrayList(ir.Command)) Error!void {
+    const jumps = jumpsIn(loop.body);
     const test_name = try self.newGeneratedName("while");
     const body_name = try std.fmt.allocPrint(self.arena, "{s}_body", .{test_name});
 
@@ -896,15 +913,15 @@ fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *
     // `while (true)` runs the body with no check. It must be able to stop.
     const always: []const []const ir.Check = &.{&.{}};
     const clauses = switch (condition) {
-        .constant => |is_true| if (!is_true) return else if (!containsExit(loop.body)) {
+        .constant => |is_true| if (!is_true) return else if (!jumps.has_return and !jumps.has_break) {
             return self.fail("this 'while' never stops: add a 'break' or 'return', or use a score or data value in the condition", .{});
         } else always,
         .clauses => |clauses| clauses,
     };
 
-    const can_return = containsReturn(loop.body);
+    const can_return = jumps.has_return;
     // `continue` and a passed-on `return` use the result of the test, so then the test must always give one.
-    const reads_test_result = can_return or containsContinue(loop.body);
+    const reads_test_result = can_return or jumps.has_continue;
 
     // `return run` stops the next clause from running the body again, and passes a return of the body on.
     const call_body = calls.generatedCall(self, body_name);
@@ -942,20 +959,6 @@ fn compileWhile(self: *Compiler, loop: ast.While, env: *Environment, commands: *
     try commands.append(self.arena, .{ .execute = .{ .checks = checks, .run = pass_on } });
 }
 
-/// `continue` of this loop level.
-fn containsContinue(body: []const ast.Statement) bool {
-    for (body) |statement| {
-        const found = switch (statement.kind) {
-            .@"continue" => true,
-            .@"if" => |if_statement| containsContinue(if_statement.then_body) or containsContinue(if_statement.else_body orelse &.{}),
-            .@"for" => |loop| containsContinue(loop.body),
-            else => false,
-        };
-        if (found) return true;
-    }
-    return false;
-}
-
 fn compileFor(self: *Compiler, loop: ast.For, env: *Environment, commands: *std.ArrayList(ir.Command)) Error!void {
     const start, const end = try self.evaluateRange(loop, env);
 
@@ -984,38 +987,6 @@ fn evaluateRange(self: *Compiler, loop: ast.For, env: *Environment) Error!struct
     }
     return .{ start.number, end.number };
 }
-
-/// The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (null: the pack).
-pub const Scope = struct {
-    namespace: []const u8 = "ns",
-    imports: []const ast.NamespaceName = &.{},
-    output_namespace: ?[]const u8 = null,
-};
-
-/// What the compiler knows about the mcfun that it is compiling. Assigning a new one resets it all.
-pub const CurrentMcfun = struct {
-    /// As it appears in generated names (`ir.generatedFolder`): `heal`, or `std.clamp` for std.
-    folder: []const u8 = "",
-    /// The IR name (`combat:heal`), and the key with the source namespace (`combat:heal`, `std:clamp`).
-    name: []const u8 = "",
-    key: []const u8 = "",
-    temp_count: usize = 0,
-    generated_count: usize = 0,
-    /// The `$(name)` keys that it uses.
-    macro_keys: std.StringArrayHashMapUnmanaged(void) = .empty,
-    /// `{a:"$(a)"}` for the macro arguments that it uses. Calls to its generated functions pass it on.
-    forwarded_args: ?[]const u8 = null,
-    /// The test function of the innermost `while`, for `break` and `continue`.
-    loop: ?[]const u8 = null,
-    /// True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can pass it on.
-    return_through_body: bool = false,
-    /// True in a namespace's `mcfun load`. Only there `onEvent` is allowed.
-    in_load: bool = false,
-    /// Removes each of its data locals. It runs at each exit, so no value is left for the next call.
-    cleanup: []const ir.Command = &.{},
-    /// The locals that are visible at the statement being compiled. A recursive call saves them.
-    live_locals: std.ArrayList(Environment.Local) = .empty,
-};
 
 /// Errors inside an expression point to where it starts. Returns the outer position for `restorePosition`.
 pub fn enterExpression(self: *Compiler, expression: *const ast.Expression) Position {

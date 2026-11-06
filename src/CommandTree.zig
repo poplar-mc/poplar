@@ -1,4 +1,5 @@
 const std = @import("std");
+const Config = @import("Config.zig");
 
 const CommandTree = @This();
 
@@ -81,8 +82,7 @@ const Walk = struct {
             const found = text[problem.at..readBalanced(text, problem.at)];
             if (problem.unknown_in) |registry| {
                 const id = registryId(found).?;
-                const closest = closestId(registries.map.get(registry).?, id) orelse return std.fmt.allocPrint(arena, "unknown {s} '{s}'", .{ registry, id });
-                return std.fmt.allocPrint(arena, "unknown {s} '{s}'. Did you mean '{s}'?", .{ registry, id, closest });
+                return std.fmt.allocPrint(arena, "unknown {s} '{s}'{f}", .{ registry, id, Suggestion{ .closest = closestId(registries.map.get(registry).?, id) } });
             }
             if (problem.out_of_range) return std.fmt.allocPrint(arena, "{s} '{s}' is out of range", .{ problem.expected, found });
             if (found.len == 0) return std.fmt.allocPrint(arena, "expected {s}, found end of command", .{problem.expected});
@@ -337,6 +337,15 @@ fn registryId(word: []const u8) ?[]const u8 {
     return id[separator + 1 ..];
 }
 
+/// `. Did you mean 'x'?` at the end of a message, or nothing when there is no close match.
+pub const Suggestion = struct {
+    closest: ?[]const u8,
+
+    pub fn format(self: Suggestion, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.closest) |closest| try writer.print(". Did you mean '{s}'?", .{closest});
+    }
+};
+
 /// The id with the smallest edit distance, if it is 3 or less.
 pub fn closestId(ids: []const []const u8, id: []const u8) ?[]const u8 {
     var best: ?[]const u8 = null;
@@ -408,10 +417,9 @@ fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, sele
         for (selector_options) |option| known = known or eql(option, key);
         if (!known) {
             // Option names are short, so only a near match is worth suggesting.
-            if (closestId(&selector_options, key)) |closest| {
-                if (editDistance(key, closest).? <= 2) return .{ .message = try std.fmt.allocPrint(arena, "unknown selector option '{s}'. Did you mean '{s}'?", .{ key, closest }), .at = pos };
-            }
-            return .{ .message = try std.fmt.allocPrint(arena, "unknown selector option '{s}'", .{key}), .at = pos };
+            const closest = closestId(&selector_options, key);
+            const is_near = closest != null and editDistance(key, closest.?).? <= 2;
+            return .{ .message = try std.fmt.allocPrint(arena, "unknown selector option '{s}'{f}", .{ key, Suggestion{ .closest = if (is_near) closest else null } }), .at = pos };
         }
 
         var value_start = separator + 1;
@@ -429,8 +437,7 @@ fn selectorFailure(arena: std.mem.Allocator, registries: *const Registries, sele
         for (ids) |known_id| {
             if (eql(known_id, id)) break;
         } else {
-            const closest = closestId(ids, id) orelse return .{ .message = try std.fmt.allocPrint(arena, "unknown entity_type '{s}'", .{id}), .at = value_start };
-            return .{ .message = try std.fmt.allocPrint(arena, "unknown entity_type '{s}'. Did you mean '{s}'?", .{ id, closest }), .at = value_start };
+            return .{ .message = try std.fmt.allocPrint(arena, "unknown entity_type '{s}'{f}", .{ id, Suggestion{ .closest = closestId(ids, id) } }), .at = value_start };
         }
     }
     return null;
@@ -509,8 +516,7 @@ fn isResourceLocation(word: []const u8, poplar_namespaces: []const []const u8) b
     }
 
     for (location) |ch| {
-        const valid = std.ascii.isLower(ch) or std.ascii.isDigit(ch) or std.mem.indexOfScalar(u8, "_-.:/", ch) != null;
-        if (!valid) return false;
+        if (!Config.isResourceNameChar(ch) and ch != ':' and ch != '/') return false;
     }
     return true;
 }

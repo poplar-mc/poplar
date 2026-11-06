@@ -10,10 +10,15 @@ const minecraft_text = @import("minecraft_text.zig");
 const scores = @import("scores.zig");
 const values = @import("values.zig");
 
+const Operand = union(enum) {
+    number: i64,
+    score: ir.Score,
+};
+
 pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, negated: bool, setup: *std.ArrayList(ir.Command)) Compiler.Error!Compiler.Condition {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
-    if (!values.containsRuntimeValue(compiler, expression, env)) {
+    if (!values.containsRuntimeValue(expression)) {
         const value = try values.evaluate(compiler, expression, env);
         if (value != .boolean) {
             return compiler.fail("a condition must be a comparison, a data path, true or false, found {s}", .{@tagName(value)});
@@ -86,7 +91,7 @@ fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment, neg
     const check_negated = negated != (infix.op == .not_equal);
     const op = compareOperator(infix.op);
 
-    if ((infix.op == .equal or infix.op == .not_equal) and isNbtFilterComparison(compiler, infix.left, infix.right, env)) {
+    if ((infix.op == .equal or infix.op == .not_equal) and isNbtFilterComparison(infix.left, infix.right)) {
         if (data.isDataIdentifier(infix.left)) return dataComparison(compiler, infix.left, infix.right, env, check_negated);
         if (data.isDataIdentifier(infix.right)) return dataComparison(compiler, infix.right, infix.left, env, check_negated);
     }
@@ -112,7 +117,7 @@ fn lowerComparison(compiler: *Compiler, infix: ast.Infix, env: *Environment, neg
 fn dataComparison(compiler: *Compiler, data_side: *const ast.Expression, other: *const ast.Expression, env: *Environment, negated: bool) Compiler.Error!Compiler.Condition {
     const outer_position = compiler.enterExpression(other);
     defer compiler.restorePosition(outer_position);
-    if (values.containsRuntimeValue(compiler, other, env)) {
+    if (values.containsRuntimeValue(other)) {
         return compiler.fail("comparing two runtime values that are not numbers is not supported yet", .{});
     }
     const value = try values.evaluate(compiler, other, env);
@@ -120,10 +125,10 @@ fn dataComparison(compiler: *Compiler, data_side: *const ast.Expression, other: 
 }
 
 /// True when one side is data and the other is a compile-time value that is not a plain int.
-fn isNbtFilterComparison(compiler: *Compiler, left: *const ast.Expression, right: *const ast.Expression, env: *Environment) bool {
+fn isNbtFilterComparison(left: *const ast.Expression, right: *const ast.Expression) bool {
     if (!data.isDataIdentifier(left) and !data.isDataIdentifier(right)) return false;
     for ([_]*const ast.Expression{ left, right }) |side| {
-        if (data.isDataIdentifier(side) or values.containsRuntimeValue(compiler, side, env)) continue;
+        if (data.isDataIdentifier(side) or values.containsRuntimeValue(side)) continue;
         switch (side.kind) {
             .string, .boolean, .list, .compound, .typed_number => return true,
             .prefix => |prefix| if (prefix.operand.kind == .typed_number) return true,
@@ -133,10 +138,10 @@ fn isNbtFilterComparison(compiler: *Compiler, left: *const ast.Expression, right
     return false;
 }
 
-fn lowerOperand(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, setup: *std.ArrayList(ir.Command)) Compiler.Error!Compiler.Operand {
+fn lowerOperand(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, setup: *std.ArrayList(ir.Command)) Compiler.Error!Operand {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
-    if (!values.containsRuntimeValue(compiler, expression, env)) {
+    if (!values.containsRuntimeValue(expression)) {
         const value = try values.evaluate(compiler, expression, env);
         if (value == .typed_number) {
             return compiler.fail("a score holds whole numbers with no suffix, so it cannot be compared with '{s}'", .{value.typed_number.text});

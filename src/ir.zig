@@ -62,6 +62,12 @@ pub const Command = union(enum) {
     return_macro_argument: []const u8,
 };
 
+pub fn createCommand(arena: std.mem.Allocator, command: Command) std.mem.Allocator.Error!*const Command {
+    const pointer = try arena.create(Command);
+    pointer.* = command;
+    return pointer;
+}
+
 pub const StoreResult = struct {
     pub const Target = union(enum) {
         score: Score,
@@ -78,7 +84,19 @@ pub const StoreResult = struct {
 /// `macro` is `<ns>:poplar macro`: the macro arguments and the inserted values for one macro helper. An empty key is the whole compound.
 /// `poplar` is the root of `<ns>:poplar`, where the string helpers keep their scratch value.
 /// `std` is `<pack>:std`, the `$` variables of the standard library, apart from the pack's own `<pack>:data`.
-pub const Storage = enum { data, args, frame, macro, poplar, std };
+pub const Storage = enum {
+    data,
+    args,
+    frame,
+    macro,
+    poplar,
+    std,
+
+    /// The path of the storage that holds `$` variables: `<ns>:data` or `<pack>:std`.
+    pub fn variablesName(storage: Storage) []const u8 {
+        return if (storage == .std) "std" else "data";
+    }
+};
 
 /// A place for NBT: a key in one of Poplar's storages, or a path in the NBT of one entity.
 pub const DataPath = struct {

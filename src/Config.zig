@@ -128,10 +128,13 @@ pub fn isValidResourceName(name: []const u8) bool {
     if (name.len == 0) return false;
 
     for (name) |ch| {
-        const is_valid = std.ascii.isLower(ch) or std.ascii.isDigit(ch) or ch == '_' or ch == '.' or ch == '-';
-        if (!is_valid) return false;
+        if (!isResourceNameChar(ch)) return false;
     }
     return true;
+}
+
+pub fn isResourceNameChar(ch: u8) bool {
+    return std.ascii.isLower(ch) or std.ascii.isDigit(ch) or ch == '_' or ch == '.' or ch == '-';
 }
 
 fn failWithoutPosition(arena: std.mem.Allocator, problem: *Problem, comptime format: []const u8, args: anytype) ParseError {

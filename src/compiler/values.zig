@@ -7,24 +7,24 @@ const Environment = @import("../Environment.zig");
 const calls = @import("calls.zig");
 const data = @import("data.zig");
 
-pub fn containsRuntimeValue(compiler: *const Compiler, expression: *const ast.Expression, env: *const Environment) bool {
+pub fn containsRuntimeValue(expression: *const ast.Expression) bool {
     return switch (expression.kind) {
         .identifier => |identifier| identifier.kind != .compile_time,
         .minecraft_check, .macro_key => true,
-        .prefix => |prefix| containsRuntimeValue(compiler, prefix.operand, env),
-        .infix => |infix| containsRuntimeValue(compiler, infix.left, env) or containsRuntimeValue(compiler, infix.right, env),
+        .prefix => |prefix| containsRuntimeValue(prefix.operand),
+        .infix => |infix| containsRuntimeValue(infix.left) or containsRuntimeValue(infix.right),
         .list => |elements| for (elements) |element| {
-            if (containsRuntimeValue(compiler, element, env)) break true;
+            if (containsRuntimeValue(element)) break true;
         } else false,
         .compound => |entries| for (entries) |entry| {
-            if (containsRuntimeValue(compiler, entry.value, env)) break true;
+            if (containsRuntimeValue(entry.value)) break true;
         } else false,
         // An mcfun runs in the game. `text(#hp)` only names the score, so it is known when the pack is built.
         .call => |call| {
             if (calls.isBuiltinCall(call, "text")) return false;
             if (!calls.isBuiltinCall(call, "len") and !data.isStringCall(call) and !data.isStringTest(call)) return true;
             for (call.args) |arg| {
-                if (containsRuntimeValue(compiler, arg, env)) return true;
+                if (containsRuntimeValue(arg)) return true;
             }
             return false;
         },

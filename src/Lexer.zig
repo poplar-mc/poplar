@@ -89,22 +89,7 @@ fn readToken(self: *Lexer) Token {
         ':' => tok = self.newToken(.colon, ":"),
         '$', '#' => {
             if (self.ch == '$' and self.peekChar() == '(') return self.readMacroKey();
-            const tag: Token.Tag = if (self.ch == '#') .score_identifier else .data_identifier;
-            if (isLetter(self.peekChar())) {
-                self.readChar();
-                // `#magic:mana` and `$magic:item.count` name a variable of another namespace.
-                const start = self.pos;
-                while (isLetter(self.ch) or std.ascii.isDigit(self.ch) or self.ch == '.') self.readChar();
-                if (self.ch == ':' and isLetter(self.peekChar())) {
-                    self.readChar();
-                } else {
-                    self.read_pos = start;
-                    self.readChar();
-                }
-                if (tag == .data_identifier) return self.readDataPathFrom(start);
-                _ = self.readIdentifier();
-                return self.newToken(tag, self.input[start..self.pos]);
-            }
+            if (isLetter(self.peekChar())) return self.readVariable();
             tok = self.newToken(.illegal, self.input[self.pos .. self.pos + 1]);
         },
         '-' => tok = self.newToken(.minus, "-"),
@@ -254,35 +239,40 @@ fn readSelector(self: *Lexer) Token {
     return self.newToken(.selector, self.input[self.token_start..self.pos]);
 }
 
+/// Reads `#mana` or `$item.count`. `#magic:mana` and `$magic:item.count` name a variable of another namespace.
+fn readVariable(self: *Lexer) Token {
+    const tag: Token.Tag = if (self.ch == '#') .score_identifier else .data_identifier;
+    self.readChar();
+    const start = self.pos;
+    while (isLetter(self.ch) or std.ascii.isDigit(self.ch) or self.ch == '.') self.readChar();
+    if (self.ch == ':' and isLetter(self.peekChar())) {
+        self.readChar();
+    } else {
+        self.read_pos = start;
+        self.readChar();
+    }
+    if (tag == .data_identifier) return self.readDataPath(.data_identifier, start);
+    _ = self.readIdentifier();
+    return self.newToken(tag, self.input[start..self.pos]);
+}
+
 /// Reads `.$Inventory[0].count` after a selector. The literal is the NBT path without `.$`.
 fn readEntityDataPath(self: *Lexer) Token {
     self.readChar();
     self.readChar();
-    return self.readDataPath(.entity_data);
+    return self.readDataPath(.entity_data, self.pos);
 }
 
 /// Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not followed
 /// by a key ends the path, so `$a..` is still a range.
-fn readDataPath(self: *Lexer, tag: Token.Tag) Token {
-    return self.readDataPathAt(tag, self.pos);
-}
-
-fn readDataPathFrom(self: *Lexer, start: usize) Token {
-    return self.readDataPathAt(.data_identifier, start);
-}
-
 /// `start` is where the token text starts, which can be before the current character (a `ns:` prefix).
-fn readDataPathAt(self: *Lexer, tag: Token.Tag, start: usize) Token {
+fn readDataPath(self: *Lexer, tag: Token.Tag, start: usize) Token {
     var depth: usize = 0;
     var quote: ?u8 = null;
 
     while (self.ch != '\n' and self.ch != '\x00') : (self.readChar()) {
-        if (quote) |q| {
-            if (self.ch == '\\') {
-                self.readChar();
-            } else if (self.ch == q) {
-                quote = null;
-            }
+        if (quote != null) {
+            self.readInQuote(&quote);
             continue;
         }
 
@@ -332,12 +322,8 @@ fn readConditionText(self: *Lexer) []const u8 {
     var depth: usize = 0;
     var quote: ?u8 = null;
     while (self.ch != '\n' and self.ch != '\x00') : (self.readChar()) {
-        if (quote) |q| {
-            if (self.ch == '\\') {
-                self.readChar();
-            } else if (self.ch == q) {
-                quote = null;
-            }
+        if (quote != null) {
+            self.readInQuote(&quote);
             continue;
         }
         switch (self.ch) {
@@ -367,23 +353,19 @@ fn readJsonBody(self: *Lexer) Token {
     const start_line = self.line;
     const start_column = self.token_start - self.line_start + 1;
     var depth: usize = 0;
-    var in_string = false;
+    var quote: ?u8 = null;
 
     while (self.ch != '\x00') : (self.readChar()) {
         if (self.ch == '\n') {
             self.line += 1;
             self.line_start = self.pos + 1;
         }
-        if (in_string) {
-            if (self.ch == '\\') {
-                self.readChar();
-            } else if (self.ch == '"') {
-                in_string = false;
-            }
+        if (quote != null) {
+            self.readInQuote(&quote);
             continue;
         }
         switch (self.ch) {
-            '"' => in_string = true,
+            '"' => quote = '"',
             '{', '[' => depth += 1,
             '}', ']' => {
                 depth -|= 1;
@@ -398,6 +380,15 @@ fn readJsonBody(self: *Lexer) Token {
     return .{ .tag = .unclosed, .literal = "}", .line = start_line, .column = start_column };
 }
 
+/// One character inside a quote: an escape skips the next character, and the quote's own character closes it.
+fn readInQuote(self: *Lexer, quote: *?u8) void {
+    if (self.ch == '\\') {
+        self.readChar();
+    } else if (self.ch == quote.*.?) {
+        quote.* = null;
+    }
+}
+
 /// Reads up to `end` outside quotes and brackets, or up to the end of the line.
 /// Returns null if a quote is still open.
 fn readBalanced(self: *Lexer, end: u8) ?[]const u8 {
@@ -406,12 +397,8 @@ fn readBalanced(self: *Lexer, end: u8) ?[]const u8 {
     var quote: ?u8 = null;
 
     while (self.ch != '\n' and self.ch != '\x00') : (self.readChar()) {
-        if (quote) |q| {
-            if (self.ch == '\\') {
-                self.readChar();
-            } else if (self.ch == q) {
-                quote = null;
-            }
+        if (quote != null) {
+            self.readInQuote(&quote);
             continue;
         }
 

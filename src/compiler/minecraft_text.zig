@@ -4,6 +4,7 @@ const std = @import("std");
 const Compiler = @import("../Compiler.zig");
 const ast = @import("../ast.zig");
 const CommandTree = @import("../CommandTree.zig");
+const Config = @import("../Config.zig");
 const Environment = @import("../Environment.zig");
 const ir = @import("../ir.zig");
 const datapack_writer = @import("../datapack_writer.zig");
@@ -81,7 +82,7 @@ pub fn compileExecute(compiler: *Compiler, execute: ast.Execute, env: *Environme
     var subcommands = try buildCommandText(compiler, execute.subcommands, env);
     subcommands.text = try checkMinecraftText(compiler, execute.subcommands, subcommands, execute.subcommands_column, "execute ", " run say x");
 
-    const can_return = Compiler.containsReturn(execute.body);
+    const can_return = Compiler.jumpsIn(execute.body).has_return;
     if (can_return) {
         if (compiler.mcfun.forwarded_args != null) return compiler.fail("'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet", .{});
         if (subcommands.is_macro) return compiler.fail("'return' inside 'execute (...)' with a data insert is not supported yet", .{});
@@ -121,7 +122,7 @@ pub fn buildCommandText(compiler: *Compiler, parts: []const ast.CommandPart, env
                     uses_macro_keys = true;
                     continue;
                 }
-                if (values.containsRuntimeValue(compiler, expression, env)) {
+                if (values.containsRuntimeValue(expression)) {
                     const insert = try runtimeInsert(compiler, expression, env, inserts.items);
                     try text.print(compiler.arena, "$({s})", .{insert.macro_name});
                     is_macro = true;
@@ -237,7 +238,7 @@ pub fn checkMinecraftText(compiler: *Compiler, parts: []const ast.CommandPart, b
     for (ids) |text_id| {
         const start = text_id.at - prefix.len;
         var colon = start;
-        while (colon < built.text.len and isNamespaceChar(built.text[colon])) colon += 1;
+        while (colon < built.text.len and Config.isResourceNameChar(built.text[colon])) colon += 1;
         if (colon >= built.text.len or built.text[colon] != ':') {
             if (text_id.can_be_pack_name) try checkBareName(compiler, parts, built, column, start);
             continue;
@@ -290,10 +291,6 @@ fn idBefore(_: void, a: CommandTree.Id, b: CommandTree.Id) bool {
     return a.at < b.at;
 }
 
-pub fn isNamespaceChar(ch: u8) bool {
-    return std.ascii.isLower(ch) or std.ascii.isDigit(ch) or ch == '_' or ch == '.' or ch == '-';
-}
-
 fn isIdChar(ch: u8) bool {
     return std.ascii.isAlphanumeric(ch) or std.mem.indexOfScalar(u8, "_-./", ch) != null;
 }
@@ -344,7 +341,7 @@ fn unknownIdMessage(compiler: *Compiler, written: []const u8, namespace: []const
         return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is a file name. Use the name from the source: '{s}:{s}'", .{ written, name, written, declared });
     }
     const names = try declaredNames(compiler, namespace);
-    return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, declarations.Suggestion{ .closest = CommandTree.closestId(names, name) } });
+    return std.fmt.allocPrint(compiler.arena, "'{s}:{s}' is not a data file or mcfun of namespace '{s}'{f}", .{ written, name, namespace, CommandTree.Suggestion{ .closest = CommandTree.closestId(names, name) } });
 }
 
 test "a bare name from this pack is an error where it can only be a function or a data file" {

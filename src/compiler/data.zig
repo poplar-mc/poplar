@@ -17,7 +17,7 @@ pub fn compileDataAssign(compiler: *Compiler, target: ir.DataPath, expression: *
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
 
-    if (!values.containsRuntimeValue(compiler, expression, env)) {
+    if (!values.containsRuntimeValue(expression)) {
         const value = try values.evaluate(compiler, expression, env);
         if (value == .null) return compiler.fail("data cannot be set to null", .{});
         return commands.append(compiler.arena, .{ .data_set = .{ .target = target, .snbt = try values.valueToSnbt(compiler, value) } });
@@ -73,7 +73,7 @@ pub fn compileLiteralAssign(compiler: *Compiler, target: ir.DataPath, expression
 
 /// The literal as a value, with `0` in the place of each runtime part.
 fn literalTemplate(compiler: *Compiler, expression: *const ast.Expression, path: []const u8, env: *Environment, parts: *std.ArrayList(LiteralPart)) Compiler.Error!Compiler.Value {
-    if (!values.containsRuntimeValue(compiler, expression, env)) return try values.evaluate(compiler, expression, env);
+    if (!values.containsRuntimeValue(expression)) return try values.evaluate(compiler, expression, env);
 
     switch (expression.kind) {
         .list => |elements| {
@@ -151,15 +151,13 @@ pub fn textComponent(compiler: *Compiler, argument: *const ast.Expression, env: 
         switch (identifier.kind) {
             .score => {
                 const score = try scores.resolveScore(compiler, identifier, env);
-                // A local score is in Poplar's objective `poplar.<ns>`, a global one in `<ns>.<name>`.
-                const score_namespace = score.namespace orelse compiler.pack_namespace;
-                const objective = if (score.objective) |name| try std.fmt.allocPrint(compiler.arena, "{s}.{s}", .{ score_namespace, name }) else try std.fmt.allocPrint(compiler.arena, "poplar.{s}", .{score_namespace});
+                const objective = try std.fmt.allocPrint(compiler.arena, "{f}", .{datapack_writer.objectiveText(score.namespace orelse compiler.pack_namespace, score.objective)});
                 const holder: Compiler.Value = .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{ .{ .key = "name", .value = .{ .string = score.holder } }, .{ .key = "objective", .value = .{ .string = objective } } }) };
                 return .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{.{ .key = "score", .value = holder }}) };
             },
             .data => {
                 const path = try dataPath(compiler, identifier, env);
-                const storage = try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ path.namespace orelse compiler.pack_namespace, if (path.holder.storage == .std) "std" else "data" });
+                const storage = try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ path.namespace orelse compiler.pack_namespace, path.holder.storage.variablesName() });
                 return .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{ .{ .key = "storage", .value = .{ .string = storage } }, .{ .key = "nbt", .value = .{ .string = path.path } } }) };
             },
             .entity_data => return .{ .compound = try compiler.arena.dupe(Compiler.Value.Entry, &.{ .{ .key = "entity", .value = .{ .string = identifier.selector.? } }, .{ .key = "nbt", .value = .{ .string = identifier.name } } }) },
@@ -196,7 +194,7 @@ pub fn compileListBuiltin(compiler: *Compiler, name: []const u8, call: ast.Call,
     };
     const value = call.args[arity - 1];
 
-    if (!values.containsRuntimeValue(compiler, value, env)) {
+    if (!values.containsRuntimeValue(value)) {
         const constant = try values.evaluate(compiler, value, env);
         const snbt = try values.valueToSnbt(compiler, constant);
         return commands.append(compiler.arena, .{ .data_add = .{ .list = list, .position = position, .source = .{ .snbt = snbt } } });
@@ -280,7 +278,7 @@ fn stringSource(compiler: *Compiler, argument: *const ast.Expression, env: *Envi
 }
 
 fn constantIndex(compiler: *Compiler, expression: *const ast.Expression, env: *Environment) Compiler.Error!i32 {
-    if (values.containsRuntimeValue(compiler, expression, env)) {
+    if (values.containsRuntimeValue(expression)) {
         const outer_position = compiler.enterExpression(expression);
         defer compiler.restorePosition(outer_position);
         return compiler.fail("the bounds of 'slice' must be constant integers", .{});
@@ -312,7 +310,7 @@ pub fn stringTest(compiler: *Compiler, call: ast.Call, env: *Environment, negate
 fn constantString(compiler: *Compiler, expression: *const ast.Expression, env: *Environment, builtin: []const u8) Compiler.Error![]const u8 {
     const outer_position = compiler.enterExpression(expression);
     defer compiler.restorePosition(outer_position);
-    if (!values.containsRuntimeValue(compiler, expression, env)) {
+    if (!values.containsRuntimeValue(expression)) {
         const value = try values.evaluate(compiler, expression, env);
         if (value == .string) return value.string;
     }

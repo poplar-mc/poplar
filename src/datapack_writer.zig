@@ -241,7 +241,7 @@ pub fn renderCommand(text: *std.ArrayList(u8), arena: std.mem.Allocator, namespa
             try text.print(arena, "function {f}", .{functionId(namespace, call.name)});
             switch (call.arguments) {
                 .compound => |compound| try text.print(arena, " {s}", .{compound}),
-                .data_storage => |storage| try text.print(arena, " with storage {s}:{s}", .{ storage.namespace orelse namespace, if (storage.kind == .std) "std" else "data" }),
+                .data_storage => |storage| try text.print(arena, " with storage {s}:{s}", .{ storage.namespace orelse namespace, storage.kind.variablesName() }),
                 .args_storage => try text.print(arena, " with storage {s}:poplar args", .{namespace}),
                 .macro_storage => try text.print(arena, " with storage {s}:poplar macro", .{namespace}),
                 .data_path => |path| try text.print(arena, " with {f}", .{dataPathText(namespace, path)}),
@@ -399,7 +399,7 @@ const ObjectiveText = struct {
     }
 };
 
-fn objectiveText(namespace: []const u8, objective: ?[]const u8) ObjectiveText {
+pub fn objectiveText(namespace: []const u8, objective: ?[]const u8) ObjectiveText {
     return .{ .namespace = namespace, .objective = objective };
 }
 

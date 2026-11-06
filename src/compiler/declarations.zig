@@ -53,18 +53,15 @@ pub fn isImported(compiler: *const Compiler, namespace: []const u8) bool {
     return false;
 }
 
+/// A resource name with no `-`, because `namespace x;` is Poplar code, where `-` is the minus sign.
 pub fn isValidNamespace(name: []const u8) bool {
-    if (name.len == 0) return false;
-    for (name) |ch| {
-        if (!std.ascii.isLower(ch) and !std.ascii.isDigit(ch) and ch != '_' and ch != '.') return false;
-    }
-    return true;
+    return Config.isValidResourceName(name) and std.mem.indexOfScalar(u8, name, '-') == null;
 }
 
 pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Error!void {
     const folder = data_folders.folders.get(data_file.type_word) orelse
         try data_folders.tagFolder(compiler.arena, data_file.type_word, &compiler.command_tree.registries.map) orelse
-        return compiler.fail("unknown data file type '{s}'{f}", .{ data_file.type_word, Suggestion{ .closest = CommandTree.closestId(data_folders.folders.keys(), data_file.type_word) } });
+        return compiler.fail("unknown data file type '{s}'{f}", .{ data_file.type_word, CommandTree.Suggestion{ .closest = CommandTree.closestId(data_folders.folders.keys(), data_file.type_word) } });
 
     const own_namespace = compiler.scope.output_namespace orelse compiler.pack_namespace;
     const namespace: []const u8, const file_path: []const u8 = switch (data_file.name) {
@@ -148,14 +145,6 @@ fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) std.mem.Alloc
         .column = if (json_line == 1) data_file.json_position.column + column - 1 else column,
     };
 }
-
-pub const Suggestion = struct {
-    closest: ?[]const u8,
-
-    pub fn format(self: Suggestion, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        if (self.closest) |closest| try writer.print(". Did you mean '{s}'?", .{closest});
-    }
-};
 
 /// A name that the project and std both define is reported in the project file, where it can be renamed.
 /// Otherwise the later definition is reported.
