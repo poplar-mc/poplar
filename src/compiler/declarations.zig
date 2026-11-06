@@ -6,6 +6,7 @@ const ast = @import("../ast.zig");
 const CommandTree = @import("../CommandTree.zig");
 const data_folders = @import("../data_folders.zig");
 const Config = @import("../Config.zig");
+const Diagnostic = @import("../Diagnostic.zig");
 const Environment = @import("../Environment.zig");
 const Lexer = @import("../Lexer.zig");
 const Parser = @import("../Parser.zig");
@@ -93,7 +94,7 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
     if (is_hook_tag) return compiler.addError("Poplar writes the minecraft:{s} function tag. Use 'mcfun {s}'", .{ file_path, file_path });
 
     const full_path = try std.fmt.allocPrint(compiler.arena, "data/{s}/{s}/{s}.json", .{ namespace, folder, file_path });
-    const location = try std.fmt.allocPrint(compiler.arena, "{s}:{d}", .{ compiler.position.path, data_file.line });
+    const location = try std.fmt.allocPrint(compiler.arena, "{s}:{d}", .{ compiler.path, data_file.position.line });
     const path_entry = try compiler.data_file_paths.getOrPut(compiler.arena, full_path);
     if (path_entry.found_existing) return compiler.addError("{s} '{s}:{s}' is already declared at {s}", .{ data_file.type_word, namespace, file_path, path_entry.value_ptr.* });
     path_entry.value_ptr.* = location;
@@ -111,12 +112,11 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
         const id = try std.fmt.allocPrint(compiler.arena, "{s}:{s}", .{ namespace, file_path });
         const entry = try compiler.named_data_files.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, data_file.name.identifier));
         if (entry.found_existing) return compiler.addError("'{s}' is already the name of another data file", .{data_file.name.identifier});
-        entry.value_ptr.* = .{ .type_word = data_file.type_word, .id = id, .path = compiler.position.path, .line = data_file.line };
+        entry.value_ptr.* = .{ .type_word = data_file.type_word, .id = id, .path = compiler.path, .position = data_file.position };
     }
 
     if (try jsonErrorPosition(compiler, data_file)) |position| {
-        compiler.position.line = position.line;
-        compiler.position.column = position.column;
+        compiler.position = position;
         return compiler.addError("invalid JSON in {s} '{s}'", .{ data_file.type_word, file_path });
     }
 
@@ -128,10 +128,8 @@ pub fn addDataFile(compiler: *Compiler, data_file: ast.DataFile) Compiler.Compil
     });
 }
 
-pub const JsonPosition = struct { line: usize, column: usize };
-
 /// Where the JSON body stops being valid, as a line and column in the source file.
-fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?JsonPosition {
+fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.CompileError!?Diagnostic.Position {
     var scanner: std.json.Scanner = .initCompleteInput(compiler.arena, data_file.json);
     defer scanner.deinit();
     var diagnostics: std.json.Diagnostics = .{};
@@ -147,8 +145,8 @@ fn jsonErrorPosition(compiler: *Compiler, data_file: ast.DataFile) Compiler.Comp
     const json_line: usize = @intCast(diagnostics.getLine());
     const column: usize = @intCast(diagnostics.getColumn());
     return .{
-        .line = data_file.json_line + json_line - 1,
-        .column = if (json_line == 1) data_file.json_column + column - 1 else column,
+        .line = data_file.json_position.line + json_line - 1,
+        .column = if (json_line == 1) data_file.json_position.column + column - 1 else column,
     };
 }
 
@@ -164,13 +162,12 @@ pub const Suggestion = struct {
 /// Otherwise the later definition is reported.
 pub fn addDuplicateError(compiler: *Compiler, existing: Compiler.McfunDeclaration, later: Compiler.McfunDeclaration) Compiler.CompileError!void {
     const project_side, const other = if (existing.origin != .std and later.origin == .std) .{ existing, later } else .{ later, existing };
-    compiler.position.path = project_side.path;
-    compiler.position.line = project_side.mcfun.line;
-    compiler.position.column = null;
+    compiler.path = project_side.path;
+    compiler.position = project_side.mcfun.position;
     if (other.origin == .std and project_side.origin != .std) {
-        return compiler.addError("function '{s}' is already defined in {s}:{d}. Rename yours", .{ later.mcfun.name, other.path, other.mcfun.line });
+        return compiler.addError("function '{s}' is already defined in {s}:{d}. Rename yours", .{ later.mcfun.name, other.path, other.mcfun.position.line });
     }
-    try compiler.addError("function '{s}' is already defined at {s}:{d}", .{ later.mcfun.name, other.path, other.mcfun.line });
+    try compiler.addError("function '{s}' is already defined at {s}:{d}", .{ later.mcfun.name, other.path, other.mcfun.position.line });
 }
 
 pub fn addGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!void {
@@ -189,12 +186,12 @@ pub fn addGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!v
     const entry = try compiler.globals.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
-        return compiler.addError("score '#{s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.line });
+        return compiler.addError("score '#{s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.position.line });
     }
 
     entry.value_ptr.* = .{
-        .path = compiler.position.path,
-        .line = compiler.position.line,
+        .path = compiler.path,
+        .position = compiler.position,
         .initial_value = initial_value,
         .name = decl.target.name,
         .output_namespace = compiler.scope.output_namespace,
@@ -213,12 +210,12 @@ fn addDataGlobal(compiler: *Compiler, decl: ast.VarDecl) Compiler.CompileError!v
     const entry = try compiler.data_globals.getOrPut(compiler.arena, try qualifiedKey(compiler, compiler.scope.namespace, decl.target.name));
     if (entry.found_existing) {
         const existing = entry.value_ptr.*;
-        return compiler.addError("data '${s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.line });
+        return compiler.addError("data '${s}' is already declared at {s}:{d}", .{ decl.target.name, existing.path, existing.position.line });
     }
 
     entry.value_ptr.* = .{
-        .path = compiler.position.path,
-        .line = compiler.position.line,
+        .path = compiler.path,
+        .position = compiler.position,
         .initial_snbt = initial_snbt,
         .name = decl.target.name,
         .output_namespace = compiler.scope.output_namespace,
@@ -272,7 +269,7 @@ test "data files go to their folder, and self: names them in commands" {
     try std.testing.expectEqual(3, errors.len);
     try std.testing.expectEqualStrings("unknown data file type 'recpie'. Did you mean 'recipe'?", errors[0].message);
     try std.testing.expectEqualStrings("invalid JSON in recipe 'b'", errors[1].message);
-    try std.testing.expectEqual(6, errors[1].line);
+    try std.testing.expectEqual(6, errors[1].position.?.line);
     try std.testing.expectEqualStrings("recipe 'ns:b' is already declared at main.poplar:5", errors[2].message);
 
     try std.testing.expectEqualStrings("execute if predicate ns:is_sneaking run say hi", program.functions[0].commands[0].raw);

@@ -377,7 +377,7 @@ test "a bare name from this pack is an error where it can only be a function or 
     try std.testing.expectEqual(7, errors.len);
     try std.testing.expectEqualStrings("'isMissing' cannot be an id, because an id has no capital letters. To name something in this pack, write 'self:isMissing'", errors[6].message);
     try std.testing.expectEqualStrings("'isVehicle' is in this pack, but with no namespace it means 'minecraft:isVehicle'. Write 'self:isVehicle'", errors[0].message);
-    try std.testing.expectEqual(27, errors[0].column);
+    try std.testing.expectEqual(27, errors[0].position.?.column);
     try std.testing.expectEqualStrings("'is_vehicle' is in this pack, but with no namespace it means 'minecraft:is_vehicle'. Write 'self:isVehicle'", errors[1].message);
     try std.testing.expectEqualStrings("'speed' is in this pack, but with no namespace it means 'minecraft:speed'. Write 'self:speed'", errors[3].message);
     try std.testing.expectEqualStrings("'greeters' is in this pack, but with no namespace it means 'minecraft:greeters'. Write 'self:greeters'", errors[4].message);
@@ -399,8 +399,8 @@ test "inserts compile-time and runtime values into commands" {
     const program = try compiler.compile();
 
     try std.testing.expectEqual(1, compiler.errors.items.len);
-    try std.testing.expectEqual(7, compiler.errors.items[0].line);
-    try std.testing.expectEqual(38, compiler.errors.items[0].column);
+    try std.testing.expectEqual(7, compiler.errors.items[0].position.?.line);
+    try std.testing.expectEqual(38, compiler.errors.items[0].position.?.column);
 
     // The macro key `hp` has the name `hp`, so the score gets `hp_2`. The same score again uses it again.
     try std.testing.expectEqualStrings(

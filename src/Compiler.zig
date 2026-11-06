@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const CommandTree = @import("CommandTree.zig");
+const Diagnostic = @import("Diagnostic.zig");
 const Config = @import("Config.zig");
 const Environment = @import("Environment.zig");
 const ir = @import("ir.zig");
@@ -20,15 +21,9 @@ const values = @import("compiler/values.zig");
 pub const builtin_names = calls.builtin_names;
 
 const Compiler = @This();
+const Position = Diagnostic.Position;
 
 pub const CompileError = std.mem.Allocator.Error;
-
-pub const Error = struct {
-    path: []const u8,
-    line: usize,
-    column: ?usize = null,
-    message: []const u8,
-};
 
 pub const McfunDeclaration = struct {
     path: []const u8,
@@ -70,7 +65,7 @@ pub const global_holder = "#global";
 
 pub const GlobalScore = struct {
     path: []const u8,
-    line: usize,
+    position: Position,
     initial_value: i32,
     name: []const u8,
     /// Null for the pack namespace.
@@ -116,13 +111,12 @@ pub const LocalVariable = struct {
     name: []const u8,
     local: Environment.Local,
     path: []const u8,
-    line: usize,
-    column: ?usize,
+    position: Position,
 };
 
 pub const GlobalData = struct {
     path: []const u8,
-    line: usize,
+    position: Position,
     /// The initial value as SNBT: `20`, `20f`, `{hp:20}`.
     initial_snbt: []const u8,
     name: []const u8,
@@ -148,12 +142,13 @@ mcfuns: std.StringArrayHashMapUnmanaged(McfunDeclaration) = .empty,
 globals: std.StringArrayHashMapUnmanaged(GlobalScore) = .empty,
 data_globals: std.StringArrayHashMapUnmanaged(GlobalData) = .empty,
 constants: std.AutoArrayHashMapUnmanaged(i32, void) = .empty,
-errors: std.ArrayList(Error) = .empty,
+errors: std.ArrayList(Diagnostic) = .empty,
 generated: std.ArrayList(ir.McFunction) = .empty,
 temp_count: usize = 0,
 generated_count: usize = 0,
 /// Where the compiler is: the source position for errors, the namespace, and the mcfun.
-position: SourcePosition = .{},
+path: []const u8 = "",
+position: Position = .{ .line = 0, .column = 0 },
 scope: Scope = .{},
 mcfun: CurrentMcfun = .{},
 /// The imports of each namespace, from all its files. They decide the order of the `load` and `tick` functions.
@@ -206,12 +201,11 @@ pub fn init(arena: std.mem.Allocator, command_tree: *const CommandTree) Compiler
 /// `mcfun load` and `mcfun tick` of each namespace are run by the game. A program without a `namespace` line
 /// (in tests) is in the pack namespace.
 pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origin: Origin) CompileError!void {
-    self.position.path = path;
+    self.path = path;
     self.scope = self.scopeOf(if (program.namespace) |namespace| namespace.name else self.pack_namespace, program.imports);
     try self.file_namespaces.put(self.arena, path, self.scope.namespace);
     if (program.namespace) |namespace| {
-        self.position.line = namespace.line;
-        self.position.column = namespace.column;
+        self.position = namespace.position;
         if (!declarations.isValidNamespace(namespace.name)) return self.addError("namespace '{s}' must only use a-z, 0-9, '_' and '.'", .{namespace.name});
         if (origin == .project and std.mem.eql(u8, namespace.name, std_namespace)) return self.addError("the namespace 'std' belongs to the standard library", .{});
     }
@@ -219,8 +213,7 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
     const imports = try self.namespace_imports.getOrPut(self.arena, self.scope.namespace);
     if (!imports.found_existing) imports.value_ptr.* = .empty;
     for (program.imports) |import| {
-        self.position.line = import.line;
-        self.position.column = import.column;
+        self.position = import.position;
         if (std.mem.eql(u8, import.name, self.scope.namespace)) {
             try self.addError("a file does not import its own namespace '{s}'", .{import.name});
             continue;
@@ -235,7 +228,7 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
         }
 
         if (calls.isBuiltin(mcfun.name)) {
-            self.position.line = mcfun.line;
+            self.position = mcfun.position;
             try self.addError("'{s}' is a built-in function, so it cannot be defined", .{mcfun.name});
             continue;
         }
@@ -258,16 +251,12 @@ pub fn addProgram(self: *Compiler, path: []const u8, program: ast.Program, origi
     }
 
     for (program.globals) |global| {
-        self.position.path = path;
-        self.position.line = global.line;
-        self.position.column = global.column;
+        self.position = global.position;
         try declarations.addGlobal(self, global.decl);
     }
 
     for (program.data_files) |data_file| {
-        self.position.path = path;
-        self.position.line = data_file.line;
-        self.position.column = data_file.column;
+        self.position = data_file.position;
         try declarations.addDataFile(self, data_file);
     }
 }
@@ -276,7 +265,7 @@ pub const NamedDataFile = struct {
     type_word: []const u8,
     id: []const u8,
     path: []const u8,
-    line: usize,
+    position: Position,
 };
 
 pub fn compile(self: *Compiler) CompileError!ir.Program {
@@ -291,9 +280,8 @@ pub fn compile(self: *Compiler) CompileError!ir.Program {
         // `import std;` costs nothing for the std mcfuns that the project never calls.
         if (declaration.origin == .std and !used.contains(mcfun_key)) continue;
 
-        self.position.path = declaration.path;
-        self.position.line = mcfun.line;
-        self.position.column = null;
+        self.path = declaration.path;
+        self.position = mcfun.position;
         self.scope = self.scopeOf(declaration.namespace, declaration.imports);
 
         // The file name is the snake_case of the name (`playerDied` → `player_died`), so both must be valid and unique.
@@ -383,9 +371,8 @@ fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environment,
         if (isJump(statement.kind) and index + 1 < body.len) {
             const next = body[index + 1];
             return self.errors.append(self.arena, .{
-                .path = self.position.path,
-                .line = next.line,
-                .column = next.column,
+                .path = self.path,
+                .position = next.position,
                 .message = "code after 'return', 'break' or 'continue' is never run",
             });
         }
@@ -393,19 +380,13 @@ fn compileBlock(self: *Compiler, body: []const ast.Statement, env: *Environment,
 }
 
 fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment, commands: *std.ArrayList(ir.Command)) CompileError!void {
-    const outer_line = self.position.line;
-    const outer_column = self.position.column;
-    self.position.line = statement.line;
-    self.position.column = statement.column;
-    defer {
-        self.position.line = outer_line;
-        self.position.column = outer_column;
-    }
+    const outer_position = self.position;
+    self.position = statement.position;
+    defer self.position = outer_position;
 
     switch (statement.kind) {
         .expression => |expression| {
-            const outer_position = self.enterExpression(expression);
-            defer self.restorePosition(outer_position);
+            self.position = expression.position;
             switch (expression.kind) {
                 .call => |call| try calls.compileCall(self, call, env, commands),
                 else => try self.addError("only calls can be used as statements", .{}),
@@ -425,7 +406,7 @@ fn compileStatement(self: *Compiler, statement: ast.Statement, env: *Environment
         },
         .@"while" => |loop| try self.compileWhile(loop, env, commands),
         .@"if" => |if_statement| try self.compileIf(if_statement, env, commands),
-        .command => |command| try minecraft_text.compileCommand(self, command, statement.column + 1, env, commands),
+        .command => |command| try minecraft_text.compileCommand(self, command, statement.position.column + 1, env, commands),
         .execute => |execute| try minecraft_text.compileExecute(self, execute, env, commands),
     }
 }
@@ -519,13 +500,12 @@ fn declareLocal(self: *Compiler, kind: Environment.Local.Kind, var_decl: ast.Var
     _ = try env.declare(self.arena, key, .{ .local = local });
     try self.live_locals.append(self.arena, local);
     for (self.locals.items) |existing| {
-        if (existing.line == self.position.line and existing.column == self.position.column and std.mem.eql(u8, existing.path, self.position.path)) break;
+        if (std.meta.eql(existing.position, self.position) and std.mem.eql(u8, existing.path, self.path)) break;
     } else try self.locals.append(self.arena, .{
         .name = name,
         .local = local,
-        .path = self.position.path,
-        .line = self.position.line,
-        .column = self.position.column,
+        .path = self.path,
+        .position = self.position,
     });
 }
 
@@ -822,8 +802,7 @@ fn appendBranches(
     if (else_body.len == 1 and else_body[0].kind == .@"if") {
         const else_if = else_body[0].kind.@"if";
         // The rest of the chain belongs to this `else if`. `compileStatement` restores the position after the chain.
-        self.position.line = else_body[0].line;
-        self.position.column = else_body[0].column;
+        self.position = else_body[0].position;
         self.temp_count = 0;
         var else_setup: std.ArrayList(ir.Command) = .empty;
         const else_condition = try conditions.lowerCondition(self, else_if.condition, env, false, &else_setup) orelse return;
@@ -1034,12 +1013,6 @@ fn evaluateRange(self: *Compiler, loop: ast.For, env: *Environment) CompileError
     return .{ start.number, end.number };
 }
 
-pub const SourcePosition = struct {
-    path: []const u8 = "",
-    line: usize = 0,
-    column: ?usize = null,
-};
-
 /// The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (null: the pack).
 pub const Scope = struct {
     namespace: []const u8 = "ns",
@@ -1056,37 +1029,24 @@ pub const CurrentMcfun = struct {
 };
 
 /// Errors inside an expression point to where it starts. Returns the outer position for `restorePosition`.
-pub fn enterExpression(self: *Compiler, expression: *const ast.Expression) SourcePosition {
-    const outer: SourcePosition = .{ .path = self.position.path, .line = self.position.line, .column = self.position.column };
-    self.position.line = expression.line;
-    self.position.column = expression.column;
+pub fn enterExpression(self: *Compiler, expression: *const ast.Expression) Position {
+    const outer = self.position;
+    self.position = expression.position;
     return outer;
 }
 
-pub fn restorePosition(self: *Compiler, position: SourcePosition) void {
-    self.position.path = position.path;
-    self.position.line = position.line;
-    self.position.column = position.column;
+pub fn restorePosition(self: *Compiler, position: Position) void {
+    self.position = position;
 }
 
 pub fn addError(self: *Compiler, comptime format: []const u8, args: anytype) CompileError!void {
     const message = try std.fmt.allocPrint(self.arena, format, args);
-    try self.errors.append(self.arena, .{
-        .path = self.position.path,
-        .line = self.position.line,
-        .column = self.position.column,
-        .message = message,
-    });
+    try self.errors.append(self.arena, .{ .path = self.path, .position = self.position, .message = message });
 }
 
 pub fn addErrorAt(self: *Compiler, column: usize, comptime format: []const u8, args: anytype) CompileError!void {
     const message = try std.fmt.allocPrint(self.arena, format, args);
-    try self.errors.append(self.arena, .{
-        .path = self.position.path,
-        .line = self.position.line,
-        .column = column,
-        .message = message,
-    });
+    try self.errors.append(self.arena, .{ .path = self.path, .position = .{ .line = self.position.line, .column = column }, .message = message });
 }
 
 pub fn compileForTest(arena: std.mem.Allocator, source: []const u8) !Compiler {
@@ -1180,10 +1140,10 @@ test "errors point to their expression" {
 
     const errors = compiler.errors.items;
     try std.testing.expectEqual(3, errors.len);
-    try std.testing.expectEqual(3, errors[0].line);
-    try std.testing.expectEqual(5, errors[0].column);
-    try std.testing.expectEqual(6, errors[1].line);
-    try std.testing.expectEqual(13, errors[1].column);
+    try std.testing.expectEqual(3, errors[0].position.?.line);
+    try std.testing.expectEqual(5, errors[0].position.?.column);
+    try std.testing.expectEqual(6, errors[1].position.?.line);
+    try std.testing.expectEqual(13, errors[1].position.?.column);
     try std.testing.expectEqualStrings("'copy' is a build-time constant, but this value only exists in the game. Use 'var #copy' for a score or 'var $copy' for data", errors[2].message);
 }
 
@@ -1261,11 +1221,11 @@ test "return errors" {
     const errors = compiler.errors.items;
     try std.testing.expectEqual(4, errors.len);
     try std.testing.expectEqualStrings("if one branch of an 'if' contains 'return', 'break' or 'continue', every branch must end with one", errors[0].message);
-    try std.testing.expectEqual(3, errors[0].line);
+    try std.testing.expectEqual(3, errors[0].position.?.line);
     try std.testing.expectEqualStrings("'break' must be inside a 'while' (not in 'execute (...)')", errors[1].message);
     try std.testing.expectEqualStrings("this 'while' never stops: add a 'break' or 'return', or use a score or data value in the condition", errors[2].message);
     try std.testing.expectEqualStrings("code after 'return', 'break' or 'continue' is never run", errors[3].message);
-    try std.testing.expectEqual(10, errors[3].line);
+    try std.testing.expectEqual(10, errors[3].position.?.line);
 }
 
 test "locals are set on every call, saved around a recursive call, and data locals are removed at each exit" {

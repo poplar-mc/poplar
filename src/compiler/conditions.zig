@@ -38,7 +38,7 @@ pub fn lowerCondition(compiler: *Compiler, expression: *const ast.Expression, en
             else => {},
         },
         .call => |call| if (data.isStringTest(call)) return data.stringTest(compiler, call, env, negated, setup),
-        .minecraft_check => |parts| return minecraftCheck(compiler, parts, expression.column, env, negated),
+        .minecraft_check => |parts| return minecraftCheck(compiler, parts, expression.position.column, env, negated),
         // `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs `== true`.
         .identifier => |identifier| if (identifier.kind == .data or identifier.kind == .entity_data) {
             const path = try data.dataPathOf(compiler, identifier, env) orelse return null;
@@ -277,7 +277,7 @@ test "Minecraft checks in conditions mix with score checks" {
     const program = try compiler.compile();
     try std.testing.expectEqual(1, compiler.errors.items.len);
     try std.testing.expectEqualStrings("unknown block 'stoen'. Did you mean 'stone'?", compiler.errors.items[0].message);
-    try std.testing.expectEqual(21, compiler.errors.items[0].column);
+    try std.testing.expectEqual(21, compiler.errors.items[0].position.?.column);
 
     try std.testing.expectEqualStrings(
         \\execute if block ~ ~-1 ~ #minecraft:logs if score #global ns.mana matches 6.. run say log

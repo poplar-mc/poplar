@@ -1,4 +1,5 @@
 const std = @import("std");
+const Position = @import("Diagnostic.zig").Position;
 
 pub const Program = struct {
     /// `namespace combat;`, the first statement of every file. Null when it is missing.
@@ -12,14 +13,12 @@ pub const Program = struct {
 /// `import magic;` or `namespace magic;`: a namespace name and where it is written.
 pub const NamespaceName = struct {
     name: []const u8,
-    line: usize,
-    column: usize,
+    position: Position,
 };
 
 pub const Global = struct {
     decl: VarDecl,
-    line: usize,
-    column: usize,
+    position: Position,
 };
 
 /// `predicate isSneaking { json }`: a JSON file in the pack.
@@ -34,16 +33,15 @@ pub const DataFile = struct {
     type_word: []const u8,
     name: Name,
     json: []const u8,
-    line: usize,
-    column: usize,
-    json_line: usize,
-    json_column: usize,
+    position: Position,
+    json_position: Position,
 };
 
 pub const Mcfun = struct {
     name: []const u8,
     body: []const Statement,
-    line: usize,
+    /// Where the name is written.
+    position: Position,
 };
 
 pub const Statement = struct {
@@ -61,8 +59,7 @@ pub const Statement = struct {
         expression: *Expression,
     };
 
-    line: usize,
-    column: usize,
+    position: Position,
     kind: Kind,
 };
 
@@ -161,8 +158,7 @@ pub const CommandPart = struct {
 
 /// An expression and where it starts. An infix or a call starts at its left side.
 pub const Expression = struct {
-    line: usize,
-    column: usize,
+    position: Position,
     kind: Kind,
 
     pub const Kind = union(enum) {

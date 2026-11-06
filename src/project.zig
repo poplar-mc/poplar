@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const CommandTree = @import("CommandTree.zig");
 const Compiler = @import("Compiler.zig");
 const Config = @import("Config.zig");
+const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Parser = @import("Parser.zig");
 const datapack_writer = @import("datapack_writer.zig");
@@ -40,14 +41,6 @@ const SourceFile = struct {
     path: []const u8,
 };
 
-/// An error in the user's files. A line of 0 means that it has no position in a file.
-pub const Diagnostic = struct {
-    path: []const u8,
-    line: usize,
-    column: ?usize,
-    message: []const u8,
-};
-
 pub const Options = struct {
     /// The folder of the standard library, which `import std;` loads.
     std_path: []const u8,
@@ -74,7 +67,7 @@ pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, opt
     const cwd = std.Io.Dir.cwd();
 
     const project_real_path = cwd.realPathFileAlloc(io, project_path, arena) catch |err| switch (err) {
-        error.FileNotFound => return onlyDiagnostic(arena, "", 0, null, try std.fmt.allocPrint(arena, "the project folder {s} does not exist", .{project_path})),
+        error.FileNotFound => return onlyDiagnostic(arena, "", null, try std.fmt.allocPrint(arena, "the project folder {s} does not exist", .{project_path})),
         else => return err,
     };
 
@@ -83,12 +76,12 @@ pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, opt
 
     var problem: Config.Problem = .{};
     const config = Config.load(arena, io, project_dir, std.fs.path.basename(project_real_path), &problem) catch |err| switch (err) {
-        error.InvalidConfig => return onlyDiagnostic(arena, Config.file_name, problem.line, if (problem.line == 0) null else problem.column, problem.message),
+        error.InvalidConfig => return onlyDiagnostic(arena, Config.file_name, problem.position, problem.message),
         else => return err,
     };
 
     var src_dir = project_dir.openDir(io, "src", .{}) catch |err| switch (err) {
-        error.FileNotFound => return onlyDiagnostic(arena, "", 0, null, try std.fmt.allocPrint(arena, "the folder {s} is not a Poplar project: it has no src/ folder", .{project_path})),
+        error.FileNotFound => return onlyDiagnostic(arena, "", null, try std.fmt.allocPrint(arena, "the folder {s} is not a Poplar project: it has no src/ folder", .{project_path})),
         else => return err,
     };
     defer src_dir.close(io);
@@ -124,7 +117,7 @@ pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, opt
 
     const ir_program = try compiler.compile();
     if (compiler.errors.items.len > 0) {
-        for (compiler.errors.items) |err| try diagnostics.append(arena, .{ .path = err.path, .line = err.line, .column = err.column, .message = err.message });
+        try diagnostics.appendSlice(arena, compiler.errors.items);
         result.diagnostics = diagnostics.items;
         return result;
     }
@@ -148,8 +141,8 @@ pub fn build(arena: std.mem.Allocator, io: std.Io, project_path: []const u8, opt
     return result;
 }
 
-fn onlyDiagnostic(arena: std.mem.Allocator, path: []const u8, line: usize, column: ?usize, message: []const u8) !Result {
-    return .{ .diagnostics = try arena.dupe(Diagnostic, &.{.{ .path = path, .line = line, .column = column, .message = message }}) };
+fn onlyDiagnostic(arena: std.mem.Allocator, path: []const u8, position: ?Diagnostic.Position, message: []const u8) !Result {
+    return .{ .diagnostics = try arena.dupe(Diagnostic, &.{.{ .path = path, .position = position, .message = message }}) };
 }
 
 /// Where `zig build` installs the standard library: `lib/poplar/std` next to the `bin` folder of the binary.
@@ -187,7 +180,7 @@ const Loader = struct {
         var programs: std.ArrayList(LoadedProgram) = .empty;
         const project_files = try sourceFiles(arena, loader.io, loader.src_dir, .project);
         if (project_files.len == 0) {
-            try loader.addError("", 0, null, "the src/ folder has no .poplar files", .{});
+            try loader.addError("", null, "the src/ folder has no .poplar files", .{});
             return false;
         }
         for (project_files) |file| {
@@ -210,7 +203,7 @@ const Loader = struct {
                     if (try loader.parse(file, &has_errors)) |program| try programs.append(arena, program);
                 }
             } else {
-                try loader.addError("", 0, null, "cannot find the standard library at '{s}'", .{loader.std_path});
+                try loader.addError("", null, "cannot find the standard library at '{s}'", .{loader.std_path});
                 has_errors = true;
             }
         }
@@ -218,7 +211,7 @@ const Loader = struct {
         for (programs.items) |loaded| {
             for (loaded.program.imports) |import| {
                 if (namespaces.contains(import.name)) continue;
-                try loader.addError(loaded.display_path, import.line, import.column, "no file has 'namespace {s};'", .{import.name});
+                try loader.addError(loaded.display_path, import.position, "no file has 'namespace {s};'", .{import.name});
                 has_errors = true;
             }
             try loader.compiler.addProgram(loaded.display_path, loaded.program, loaded.origin);
@@ -242,12 +235,12 @@ const Loader = struct {
 
         var parser = try Parser.init(arena, Lexer.init(input));
         const program = try parser.parseProgram();
-        for (parser.errors.items) |err| try loader.diagnostics.append(arena, .{ .path = display_path, .line = err.line, .column = err.column, .message = err.message });
+        for (parser.errors.items) |err| try loader.diagnostics.append(arena, .{ .path = display_path, .position = err.position, .message = err.message });
         if (parser.errors.items.len > 0) has_errors.* = true;
 
         if (program.namespace == null) {
             // A broken `namespace` line already has its own error.
-            if (parser.errors.items.len == 0) try loader.addError(display_path, 1, 1, "a file must start with 'namespace <name>;'", .{});
+            if (parser.errors.items.len == 0) try loader.addError(display_path, .{ .line = 1, .column = 1 }, "a file must start with 'namespace <name>;'", .{});
             has_errors.* = true;
             return null;
         }
@@ -284,9 +277,9 @@ const Loader = struct {
         return true;
     }
 
-    fn addError(loader: *Loader, path: []const u8, line: usize, column: ?usize, comptime format: []const u8, args: anytype) !void {
+    fn addError(loader: *Loader, path: []const u8, position: ?Diagnostic.Position, comptime format: []const u8, args: anytype) !void {
         const message = try std.fmt.allocPrint(loader.arena, format, args);
-        try loader.diagnostics.append(loader.arena, .{ .path = path, .line = line, .column = column, .message = message });
+        try loader.diagnostics.append(loader.arena, .{ .path = path, .position = position, .message = message });
     }
 };
 

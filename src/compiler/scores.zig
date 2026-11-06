@@ -29,7 +29,7 @@ fn swappedInPlace(compiler: *Compiler, expression: *const ast.Expression, target
     const infix = expression.kind.infix;
     if (infix.op != .add and infix.op != .multiply) return null;
     if (infix.right.kind != .identifier or !referencesScore(infix.right, target) or referencesScore(infix.left, target)) return null;
-    return try compiler.createExpression(.{ .line = expression.line, .column = expression.column, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
+    return try compiler.createExpression(.{ .position = expression.position, .kind = .{ .infix = .{ .op = infix.op, .left = infix.right, .right = infix.left } } });
 }
 
 pub fn compileInto(compiler: *Compiler, target: ir.Score, expression: *const ast.Expression, env: *Environment, commands: *std.ArrayList(ir.Command)) Compiler.CompileError!void {
@@ -334,5 +334,5 @@ test "entity score errors" {
     try std.testing.expectEqual(2, errors.len);
     try std.testing.expectEqualStrings("'@a.#mana' needs a selector for one entity (@s, @p, @r, @n or limit=1)", errors[0].message);
     try std.testing.expectEqualStrings("expected a subcommand, found 'az'", errors[1].message);
-    try std.testing.expectEqual(14, errors[1].column);
+    try std.testing.expectEqual(14, errors[1].position.?.column);
 }

@@ -2,16 +2,11 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const Lexer = @import("Lexer.zig");
 const Token = @import("Token.zig");
+const Diagnostic = @import("Diagnostic.zig");
 
 const Parser = @This();
 
 pub const ParseError = std.mem.Allocator.Error;
-
-pub const Error = struct {
-    line: usize,
-    column: ?usize = null,
-    message: []const u8,
-};
 
 const Precedence = enum {
     lowest,
@@ -29,7 +24,7 @@ arena: std.mem.Allocator,
 lexer: Lexer,
 current: Token = undefined,
 peek: Token = undefined,
-errors: std.ArrayList(Error) = .empty,
+errors: std.ArrayList(Diagnostic) = .empty,
 /// What the end of the input is called in a message. An insert has its own.
 end_of_input: []const u8 = "end of file",
 
@@ -62,10 +57,9 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
                 try self.skipToDeclaration();
             }
         } else if (self.currentIs(.@"var")) {
-            const line = self.current.line;
-            const column = self.current.column;
+            const position = tokenPosition(self.current);
             if (try self.parseVarStatement()) |kind| {
-                try globals.append(self.arena, .{ .decl = kind.var_decl, .line = line, .column = column });
+                try globals.append(self.arena, .{ .decl = kind.var_decl, .position = position });
             } else {
                 try self.skipToDeclaration();
             }
@@ -94,8 +88,7 @@ pub fn parseProgram(self: *Parser) ParseError!ast.Program {
 
 /// `import magic;`
 fn parseImport(self: *Parser) ParseError!?ast.NamespaceName {
-    const line = self.current.line;
-    const column = self.current.column;
+    const position = tokenPosition(self.current);
     if (self.peekIs(.string)) {
         try self.addError("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/", .{});
         return null;
@@ -103,17 +96,16 @@ fn parseImport(self: *Parser) ParseError!?ast.NamespaceName {
     if (!try self.expectPeek(.identifier)) return null;
     const name = try self.parseNamespaceName() orelse return null;
     if (!try self.expectPeek(.semicolon)) return null;
-    return .{ .name = name, .line = line, .column = column };
+    return .{ .name = name, .position = position };
 }
 
 /// `namespace combat;`
 fn parseNamespaceStatement(self: *Parser) ParseError!?ast.NamespaceName {
-    const line = self.current.line;
-    const column = self.current.column;
+    const position = tokenPosition(self.current);
     if (!try self.expectPeek(.identifier)) return null;
     const name = try self.parseNamespaceName() orelse return null;
     if (!try self.expectPeek(.semicolon)) return null;
-    return .{ .name = name, .line = line, .column = column };
+    return .{ .name = name, .position = position };
 }
 
 /// `bs.math`: identifiers joined by `.`, starting at the current token.
@@ -131,8 +123,7 @@ fn parseNamespaceName(self: *Parser) ParseError!?[]const u8 {
 /// `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie" { ... }`. The Compiler checks the type word.
 fn parseDataFile(self: *Parser) ParseError!?ast.DataFile {
     const type_word = self.current.literal;
-    const line = self.current.line;
-    const column = self.current.column;
+    const position = tokenPosition(self.current);
 
     try self.nextToken();
     const name: ast.DataFile.Name = switch (self.current.tag) {
@@ -157,10 +148,8 @@ fn parseDataFile(self: *Parser) ParseError!?ast.DataFile {
         .type_word = type_word,
         .name = name,
         .json = self.current.literal,
-        .line = line,
-        .column = column,
-        .json_line = self.current.line,
-        .json_column = self.current.column,
+        .position = position,
+        .json_position = tokenPosition(self.current),
     };
 }
 
@@ -169,10 +158,9 @@ fn parseMcfun(self: *Parser) ParseError!?ast.Mcfun {
         try self.addError("expected 'import', 'var', 'mcfun' or a data file, found {s}", .{try self.describe(self.current)});
         return null;
     }
-    const line = self.current.line;
-
     if (!try self.expectPeek(.identifier)) return null;
     const name = self.current.literal;
+    const position = tokenPosition(self.current);
 
     if (!try self.expectPeek(.left_paren)) return null;
     if (!self.peekIs(.right_paren)) {
@@ -188,7 +176,7 @@ fn parseMcfun(self: *Parser) ParseError!?ast.Mcfun {
     return .{
         .name = name,
         .body = body,
-        .line = line,
+        .position = position,
     };
 }
 
@@ -257,11 +245,10 @@ fn skipToDeclaration(self: *Parser) ParseError!void {
 }
 
 fn parseStatement(self: *Parser) ParseError!?ast.Statement {
-    const line = self.current.line;
-    const column = self.current.column;
+    const position = tokenPosition(self.current);
     const kind = try self.parseStatementKind() orelse return null;
 
-    return .{ .line = line, .column = column, .kind = kind };
+    return .{ .position = position, .kind = kind };
 }
 
 fn parseStatementKind(self: *Parser) ParseError!?ast.Statement.Kind {
@@ -517,7 +504,7 @@ fn parsePrefix(self: *Parser) ParseError!?*ast.Expression {
         },
     };
 
-    return try self.createExpression(start.line, start.column, kind);
+    return try self.createExpression(tokenPosition(start), kind);
 }
 
 fn parseNumber(self: *Parser) ParseError!?ast.Expression.Kind {
@@ -586,7 +573,7 @@ fn parseInfix(self: *Parser, left: *ast.Expression) ParseError!?*ast.Expression 
 
     const right = try self.parseExpression(precedence) orelse return null;
 
-    return try self.createExpression(left.line, left.column, .{ .infix = .{ .op = op, .left = left, .right = right } });
+    return try self.createExpression(left.position, .{ .infix = .{ .op = op, .left = left, .right = right } });
 }
 
 /// `[1, 2, 3]`
@@ -653,16 +640,16 @@ fn parseCallExpression(self: *Parser, callee: *ast.Expression) ParseError!?*ast.
             .{ .value = try self.parseExpression(.call) orelse return null };
     }
 
-    return try self.createExpression(callee.line, callee.column, .{ .call = .{
+    return try self.createExpression(callee.position, .{ .call = .{
         .callee = callee,
         .args = try args.toOwnedSlice(self.arena),
         .with = with,
     } });
 }
 
-fn createExpression(self: *Parser, line: usize, column: usize, kind: ast.Expression.Kind) ParseError!*ast.Expression {
+fn createExpression(self: *Parser, position: Diagnostic.Position, kind: ast.Expression.Kind) ParseError!*ast.Expression {
     const expression = try self.arena.create(ast.Expression);
-    expression.* = .{ .line = line, .column = column, .kind = kind };
+    expression.* = .{ .position = position, .kind = kind };
     return expression;
 }
 
@@ -679,7 +666,7 @@ fn nextToken(self: *Parser) ParseError!void {
             "unterminated string"
         else
             try std.fmt.allocPrint(self.arena, "missing '{s}'", .{literal});
-        try self.appendError(.{ .line = self.peek.line, .column = self.peek.column, .message = message });
+        try self.appendError(.{ .path = "", .position = tokenPosition(self.peek), .message = message });
         self.peek = self.lexer.nextToken();
     }
 }
@@ -811,15 +798,19 @@ fn precedenceOf(tag: Token.Tag) Precedence {
 
 fn addError(self: *Parser, comptime format: []const u8, args: anytype) ParseError!void {
     const message = try std.fmt.allocPrint(self.arena, format, args);
-    try self.appendError(.{ .line = self.current.line, .column = self.current.column, .message = message });
+    try self.appendError(.{ .path = "", .position = tokenPosition(self.current), .message = message });
 }
 
 /// Only the first error on a line is kept. Later ones on that line are usually caused by it.
-fn appendError(self: *Parser, err: Error) ParseError!void {
+fn appendError(self: *Parser, err: Diagnostic) ParseError!void {
     if (self.errors.getLastOrNull()) |last| {
-        if (last.line == err.line) return;
+        if (last.position.?.line == err.position.?.line) return;
     }
     try self.errors.append(self.arena, err);
+}
+
+fn tokenPosition(token: Token) Diagnostic.Position {
+    return .{ .line = token.line, .column = token.column };
 }
 
 fn describe(self: *const Parser, token: Token) ParseError![]const u8 {
@@ -829,7 +820,7 @@ fn describe(self: *const Parser, token: Token) ParseError![]const u8 {
 
 const TestResult = struct {
     program: ast.Program,
-    errors: []const Error,
+    errors: []const Diagnostic,
 };
 
 fn parseForTest(arena: std.mem.Allocator, source: []const u8) !TestResult {
@@ -840,7 +831,7 @@ fn parseForTest(arena: std.mem.Allocator, source: []const u8) !TestResult {
 
 fn parseValidForTest(arena: std.mem.Allocator, source: []const u8) !ast.Program {
     const result = try parseForTest(arena, source);
-    for (result.errors) |err| std.debug.print("line {d}: {s}\n", .{ err.line, err.message });
+    for (result.errors) |err| std.debug.print("line {d}: {s}\n", .{ err.position.?.line, err.message });
     try std.testing.expectEqual(0, result.errors.len);
     return result.program;
 }
@@ -864,7 +855,7 @@ test "parse hello.poplar" {
 
     const function = program.mcfuns[0];
     try std.testing.expectEqualStrings("hello", function.name);
-    try std.testing.expectEqual(2, function.line);
+    try std.testing.expectEqual(2, function.position.line);
 
     const call = function.body[0].kind.expression.kind.call;
     try std.testing.expectEqualStrings("say", call.callee.kind.identifier.name);
@@ -899,12 +890,12 @@ test "an expression in an insert has its position in the file" {
     const command_insert = body[0].kind.command.parts[1].content.insert;
     const execute_insert = body[1].kind.execute.subcommands[1].content.insert;
     const check_insert = body[2].kind.@"if".condition.kind.minecraft_check[1].content.insert;
-    try std.testing.expectEqual(2, command_insert.line);
-    try std.testing.expectEqual(14, command_insert.column);
-    try std.testing.expectEqual(3, execute_insert.line);
-    try std.testing.expectEqual(20, execute_insert.column);
-    try std.testing.expectEqual(4, check_insert.line);
-    try std.testing.expectEqual(19, check_insert.column);
+    try std.testing.expectEqual(2, command_insert.position.line);
+    try std.testing.expectEqual(14, command_insert.position.column);
+    try std.testing.expectEqual(3, execute_insert.position.line);
+    try std.testing.expectEqual(20, execute_insert.position.column);
+    try std.testing.expectEqual(4, check_insert.position.line);
+    try std.testing.expectEqual(19, check_insert.position.column);
 }
 
 test "SNBT numbers keep their text and type, and a range still works" {
@@ -1011,7 +1002,7 @@ test "missing semicolon reports line" {
     );
 
     try std.testing.expectEqual(1, result.errors.len);
-    try std.testing.expectEqual(2, result.errors[0].line);
+    try std.testing.expectEqual(2, result.errors[0].position.?.line);
     try std.testing.expectEqualStrings("expected ';', found '}'", result.errors[0].message);
 }
 
@@ -1027,10 +1018,10 @@ test "errors have a column, also in an insert, and name the end of the insert" {
     );
 
     try std.testing.expectEqualStrings("expected an expression, found the end of '{{...}}'", result.errors[0].message);
-    try std.testing.expectEqual(2, result.errors[0].line);
-    try std.testing.expectEqual(17, result.errors[0].column);
+    try std.testing.expectEqual(2, result.errors[0].position.?.line);
+    try std.testing.expectEqual(17, result.errors[0].position.?.column);
     try std.testing.expectEqualStrings("expected '=', found '5'", result.errors[1].message);
-    try std.testing.expectEqual(9, result.errors[1].column);
+    try std.testing.expectEqual(9, result.errors[1].position.?.column);
 }
 
 test "after a broken declaration, its body is skipped and the next declaration is read" {

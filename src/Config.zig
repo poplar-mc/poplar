@@ -1,4 +1,5 @@
 const std = @import("std");
+const Diagnostic = @import("Diagnostic.zig");
 
 const Config = @This();
 
@@ -20,10 +21,9 @@ pub const file_name = "poplar.json";
 
 pub const ParseError = error{InvalidConfig} || std.mem.Allocator.Error;
 
-/// Where and why `poplar.json` is invalid. Line 0 means the problem has no position in the file.
+/// Where and why `poplar.json` is invalid.
 pub const Problem = struct {
-    line: usize = 0,
-    column: usize = 0,
+    position: ?Diagnostic.Position = null,
     message: []const u8 = "",
 };
 
@@ -201,8 +201,7 @@ const FieldReader = struct {
 
     fn fail(reader: *FieldReader, comptime format: []const u8, args: anytype) ParseError {
         reader.problem.* = .{
-            .line = reader.diagnostics.getLine(),
-            .column = reader.diagnostics.getColumn(),
+            .position = .{ .line = reader.diagnostics.getLine(), .column = reader.diagnostics.getColumn() },
             .message = try std.fmt.allocPrint(reader.arena, format, args),
         };
         return error.InvalidConfig;
@@ -238,7 +237,7 @@ test "parses poplar.json" {
     try std.testing.expect(std.mem.startsWith(u8, problem.message, "unknown field 'zip'"));
 
     try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\n  \"nmae\": \"x\"\n}", "hello", latest, &problem));
-    try std.testing.expectEqual(2, problem.line);
+    try std.testing.expectEqual(2, problem.position.?.line);
     try std.testing.expect(std.mem.startsWith(u8, problem.message, "unknown field 'nmae'"));
 
     try std.testing.expectError(error.InvalidConfig, parse(arena.allocator(), "{\"minFormat\": 80}", "hello", latest, &problem));

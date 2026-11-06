@@ -2,7 +2,7 @@
 //! and not when NO_COLOR is set (https://no-color.org).
 
 const std = @import("std");
-const project = @import("../project.zig");
+const Diagnostic = @import("../Diagnostic.zig");
 
 const Output = @This();
 
@@ -50,19 +50,15 @@ pub fn warning(self: Output, comptime format: []const u8, args: anytype) void {
 }
 
 /// `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position.
-pub fn diagnostics(self: Output, list: []const project.Diagnostic) void {
+pub fn diagnostics(self: Output, list: []const Diagnostic) void {
     for (list) |diagnostic| {
         const message: Capitalized = .{ .text = diagnostic.message };
-        if (diagnostic.line == 0) {
-            if (diagnostic.path.len == 0) {
-                self.failure("{f}", .{message});
-            } else {
-                self.failure("{s}{s}{s}  {f}", .{ self.bold(), diagnostic.path, self.reset(), message });
-            }
-        } else if (diagnostic.column) |column| {
-            self.failure("{s}{s}:{d}:{d}{s}  {f}", .{ self.bold(), diagnostic.path, diagnostic.line, column, self.reset(), message });
+        if (diagnostic.position) |position| {
+            self.failure("{s}{s}:{d}:{d}{s}  {f}", .{ self.bold(), diagnostic.path, position.line, position.column, self.reset(), message });
+        } else if (diagnostic.path.len > 0) {
+            self.failure("{s}{s}{s}  {f}", .{ self.bold(), diagnostic.path, self.reset(), message });
         } else {
-            self.failure("{s}{s}:{d}{s}  {f}", .{ self.bold(), diagnostic.path, diagnostic.line, self.reset(), message });
+            self.failure("{f}", .{message});
         }
     }
 }

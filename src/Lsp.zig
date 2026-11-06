@@ -6,6 +6,7 @@ const ast = @import("ast.zig");
 const CommandTree = @import("CommandTree.zig");
 const Compiler = @import("Compiler.zig");
 const Config = @import("Config.zig");
+const Diagnostic = @import("Diagnostic.zig");
 const data_folders = @import("data_folders.zig");
 const Environment = @import("Environment.zig");
 const project = @import("project.zig");
@@ -219,20 +220,21 @@ pub fn @"textDocument/definition"(self: *Lsp, arena: std.mem.Allocator, params: 
     const local = if (local_kind != null and word.namespace == null) try findLocal(arena, compiler, place, local_kind.?, Compiler.pathRoot(word.text)) else null;
     const key = try wordKey(arena, compiler, place, word, Compiler.pathRoot(word.text));
 
-    const display_path: []const u8, const line: usize = if (local) |found| .{ found.path, found.line } else switch (word.kind) {
-        .score => if (compiler.globals.get(key)) |global| .{ global.path, global.line } else return null,
-        .data => if (compiler.data_globals.get(key)) |global| .{ global.path, global.line } else return null,
+    const display_path: []const u8, const declared_at: Diagnostic.Position = if (local) |found| .{ found.path, found.position } else switch (word.kind) {
+        .score => if (compiler.globals.get(key)) |global| .{ global.path, global.position } else return null,
+        .data => if (compiler.data_globals.get(key)) |global| .{ global.path, global.position } else return null,
         .entity_data => return null,
         .name => if (compiler.mcfuns.get(key)) |declaration|
-            .{ declaration.path, declaration.mcfun.line }
+            .{ declaration.path, declaration.mcfun.position }
         else if (compiler.named_data_files.get(key)) |data_file|
-            .{ data_file.path, data_file.line }
+            .{ data_file.path, data_file.position }
         else
             return null,
     };
-    const position: lsp.types.Position = .{ .line = @intCast(line -| 1), .character = 0 };
+    const definition_path = try analysis.absolutePath(display_path);
+    const position = diagnosticRange(try self.textOf(arena, definition_path), declared_at, self.offset_encoding).start;
     return .{ .definition = .{ .location = .{
-        .uri = try pathToUri(arena, try analysis.absolutePath(display_path)),
+        .uri = try pathToUri(arena, definition_path),
         .range = .{ .start = position, .end = position },
     } } };
 }
@@ -311,7 +313,7 @@ fn check(self: *Lsp, arena: std.mem.Allocator, uri: []const u8) !void {
         const text = try self.textOf(arena, path);
         const entry = try by_uri.getOrPutValue(arena, try pathToUri(arena, path), .empty);
         try entry.value_ptr.append(arena, .{
-            .range = diagnosticRange(text, diagnostic.line, diagnostic.column, self.offset_encoding),
+            .range = diagnosticRange(text, diagnostic.position, self.offset_encoding),
             .severity = .Error,
             .source = "poplar",
             .message = .{ .string = diagnostic.message },
@@ -485,8 +487,8 @@ fn placeOf(arena: std.mem.Allocator, analysis: *const Analysis, uri: []const u8,
 fn enclosingMcfun(compiler: *const Compiler, place: Place) ?[]const u8 {
     var nearest: ?*const ast.Mcfun = null;
     for (compiler.mcfuns.values()) |declaration| {
-        if (!std.mem.eql(u8, declaration.path, place.path) or declaration.mcfun.line > place.line) continue;
-        if (nearest == null or declaration.mcfun.line > nearest.?.line) nearest = declaration.mcfun;
+        if (!std.mem.eql(u8, declaration.path, place.path) or declaration.mcfun.position.line > place.line) continue;
+        if (nearest == null or declaration.mcfun.position.line > nearest.?.position.line) nearest = declaration.mcfun;
     }
     return if (nearest) |mcfun| mcfun.name else null;
 }
@@ -496,7 +498,7 @@ fn findLocal(arena: std.mem.Allocator, compiler: *const Compiler, place: Place, 
     var found: ?Compiler.LocalVariable = null;
     for (try visibleLocals(arena, compiler, place, kind)) |local| {
         if (!std.mem.eql(u8, local.name, name)) continue;
-        if (found == null or local.line > found.?.line) found = local;
+        if (found == null or local.position.line > found.?.position.line) found = local;
     }
     return found;
 }
@@ -506,7 +508,7 @@ fn visibleLocals(arena: std.mem.Allocator, compiler: *const Compiler, place: Pla
     const owner = enclosingMcfun(compiler, place) orelse return &.{};
     var visible: std.ArrayList(Compiler.LocalVariable) = .empty;
     for (compiler.locals.items) |local| {
-        if (local.local.kind != kind or local.line > place.line) continue;
+        if (local.local.kind != kind or local.position.line > place.line) continue;
         if (!std.mem.eql(u8, local.local.owner, owner) or !std.mem.eql(u8, local.path, place.path)) continue;
         try visible.append(arena, local);
     }
@@ -547,7 +549,7 @@ fn describe(self: *Lsp, arena: std.mem.Allocator, analysis: *Analysis, word: Wor
             }
             const declaration = compiler.mcfuns.get(key) orelse return null;
             const source = try self.textOf(arena, try analysis.absolutePath(declaration.path));
-            const doc = try docComment(arena, source, declaration.mcfun.line);
+            const doc = try docComment(arena, source, declaration.mcfun.position.line);
             return try std.fmt.allocPrint(arena, "```poplar\n{s}\n```\n{s}", .{ try signature(arena, declaration.mcfun), doc });
         },
         .entity_data => unreachable,
@@ -579,29 +581,22 @@ fn docComment(arena: std.mem.Allocator, source: []const u8, line: usize) ![]cons
     return std.mem.join(arena, "\n", lines.items);
 }
 
-/// Poplar lines and columns start at 1 and count bytes. The range ends at the end of the word at the start,
-/// or covers the line when there is no column.
-fn diagnosticRange(text: []const u8, line: usize, column: ?usize, encoding: lsp.offsets.Encoding) lsp.types.Range {
-    if (line == 0) return .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
+/// Poplar lines and columns start at 1 and count bytes. The range ends at the end of the word at the start.
+fn diagnosticRange(text: []const u8, position: ?Diagnostic.Position, encoding: lsp.offsets.Encoding) lsp.types.Range {
+    const at = position orelse return .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
 
     var line_start: usize = 0;
     var current_line: usize = 1;
-    while (current_line < line) : (current_line += 1) {
+    while (current_line < at.line) : (current_line += 1) {
         const newline = std.mem.indexOfScalarPos(u8, text, line_start, '\n') orelse break;
         line_start = newline + 1;
     }
     const line_end = std.mem.indexOfScalarPos(u8, text, line_start, '\n') orelse text.len;
 
-    var start = line_start;
-    var end = line_end;
-    if (column) |byte_column| {
-        start = @min(line_start + byte_column -| 1, line_end);
-        end = start;
-        if (end < line_end and !isNameChar(text[end])) end += 1;
-        while (end < line_end and isNameChar(text[end])) end += 1;
-    } else {
-        while (start < line_end and std.ascii.isWhitespace(text[start])) start += 1;
-    }
+    const start = @min(line_start + at.column -| 1, line_end);
+    var end = start;
+    if (end < line_end and !isNameChar(text[end])) end += 1;
+    while (end < line_end and isNameChar(text[end])) end += 1;
     return .{
         .start = lsp.offsets.indexToPosition(text, start, encoding),
         .end = lsp.offsets.indexToPosition(text, end, encoding),
@@ -661,7 +656,7 @@ fn pathToUri(arena: std.mem.Allocator, path: []const u8) ![]const u8 {
 
 test "converts a byte column to a UTF-16 range that ends at the end of the word" {
     const text = "var #é = 1;\n  /say ünknown #hp;\n";
-    const range = diagnosticRange(text, 2, 17, .@"utf-16");
+    const range = diagnosticRange(text, .{ .line = 2, .column = 17 }, .@"utf-16");
     try std.testing.expectEqual(lsp.types.Position{ .line = 1, .character = 15 }, range.start);
     try std.testing.expectEqual(lsp.types.Position{ .line = 1, .character = 18 }, range.end);
 }
