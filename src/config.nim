@@ -1,7 +1,7 @@
 ## Reads `poplar.json` and gives the defaults. The default pack format comes from mcmeta `version.json`.
 
-import std/[json, math, options, os, sets, strformat, strutils, unicode]
-import diagnostic
+import std/[json, math, options, os, sets, strformat, strutils]
+import diagnostic, json_scanner
 
 type
   PackFormat* = object
@@ -20,28 +20,9 @@ type
     ## Where and why `poplar.json` is invalid. None when the problem has no position in the file.
     position*: Option[Position]
 
-  JsonTokenKind = enum
-    jtObjectBegin, jtObjectEnd, jtArrayBegin, jtArrayEnd, jtString, jtNumber, jtTrue, jtFalse, jtNull
-
-  JsonToken = object
-    kind: JsonTokenKind
-    ## The decoded text of a string, or a number as written.
-    text: string
-
-  ScannerState = enum
-    ssValue, ssPostValue, ssObjectStart, ssObjectPostComma, ssArrayStart
-
   FieldReader = object
-    ## Reads the fields one token at a time, so that each problem has the line and column of its field: the column
-    ## after the last byte that was read.
-    text: string
-    cursor: int
-    line: int
-    lineStart: int
-    ## `{` and `[` that are open.
-    stack: seq[char]
-    state: ScannerState
-    stringIsObjectKey: bool
+    ## Reads the fields one token at a time, so that each problem has the line and column of its field.
+    scanner: JsonScanner
 
 const fileName* = "poplar.json"
 
@@ -124,169 +105,18 @@ func jsonNumber(text: string): string =
   let number = parseFloat(text)
   if number.classify in {fcInf, fcNegInf}: text else: decimalText(number)
 
-# ---- the token reader
+# ---- the field reader
 
 proc fail(reader: FieldReader, message: string) {.noreturn.} =
-  let position = Position(line: reader.line, column: reader.cursor - reader.lineStart)
+  let position = Position(line: reader.scanner.line, column: reader.scanner.column)
   raise (ref ConfigError)(msg: message, position: some(position))
 
-proc skipWhitespace(reader: var FieldReader) =
-  while reader.cursor < reader.text.len and reader.text[reader.cursor] in {' ', '\t', '\r', '\n'}:
-    if reader.text[reader.cursor] == '\n':
-      inc reader.line
-      reader.lineStart = reader.cursor
-    inc reader.cursor
-
-proc expectByte(reader: FieldReader): char =
-  if reader.cursor >= reader.text.len: reader.fail("invalid JSON")
-  reader.text[reader.cursor]
-
-proc take(reader: var FieldReader, allowed: set[char]): char =
-  ## The byte at the cursor, which must be in `allowed`.
-  result = reader.expectByte()
-  if result notin allowed: reader.fail("invalid JSON")
-  inc reader.cursor
-
-proc takeDigits(reader: var FieldReader) =
-  while reader.cursor < reader.text.len and reader.text[reader.cursor].isDigit: inc reader.cursor
-
-proc readHexDigits(reader: var FieldReader, allowed: openArray[set[char]]): int =
-  for digits in allowed: result = result * 16 + parseHexInt($reader.take(digits))
-
-proc readEscape(reader: var FieldReader, output: var string) =
-  case reader.take({'"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'})
-  of 'b': output.add '\b'
-  of 'f': output.add '\f'
-  of 'n': output.add '\n'
-  of 'r': output.add '\r'
-  of 't': output.add '\t'
-  of 'u':
-    let unit = reader.readHexDigits([HexDigits, HexDigits, HexDigits, HexDigits])
-    case unit
-    of 0xD800 .. 0xDBFF:
-      discard reader.take({'\\'})
-      discard reader.take({'u'})
-      let low = reader.readHexDigits([{'D', 'd'}, {'C' .. 'F', 'c' .. 'f'}, HexDigits, HexDigits])
-      output.add $Rune(0x10000 + (unit - 0xD800) shl 10 + (low - 0xDC00))
-    of 0xDC00 .. 0xDFFF: reader.fail("invalid JSON")
-    else: output.add $Rune(unit)
-  else: output.add reader.text[reader.cursor - 1]
-
-proc readUtf8(reader: var FieldReader, output: var string) =
-  ## One UTF-8 character, checked byte by byte for overlong forms, surrogates and code points past U+10FFFF.
-  const continuation = {'\x80' .. '\xBF'}
-  let lead = reader.text[reader.cursor]
-  let following = case lead
-    of '\xC2' .. '\xDF': @[continuation]
-    of '\xE0': @[{'\xA0' .. '\xBF'}, continuation]
-    of '\xE1' .. '\xEC', '\xEE' .. '\xEF': @[continuation, continuation]
-    of '\xED': @[{'\x80' .. '\x9F'}, continuation]
-    of '\xF0': @[{'\x90' .. '\xBF'}, continuation, continuation]
-    of '\xF1' .. '\xF3': @[continuation, continuation, continuation]
-    of '\xF4': @[{'\x80' .. '\x8F'}, continuation, continuation]
-    else: reader.fail("invalid JSON")
-  output.add lead
-  inc reader.cursor
-  for allowed in following: output.add reader.take(allowed)
-
-proc readStringToken(reader: var FieldReader): JsonToken =
-  inc reader.cursor
-  result = JsonToken(kind: jtString)
-  while true:
-    let ch = reader.expectByte()
-    case ch
-    of '\0' .. '\x1F': reader.fail("invalid JSON")
-    of '"':
-      inc reader.cursor
-      break
-    of '\\':
-      inc reader.cursor
-      reader.readEscape(result.text)
-    of '\x80' .. '\xFF': reader.readUtf8(result.text)
-    else:
-      result.text.add ch
-      inc reader.cursor
-  reader.state = ssPostValue
-
-proc readNumberToken(reader: var FieldReader): JsonToken =
-  let start = reader.cursor
-  if reader.text[reader.cursor] == '-': inc reader.cursor
-  if reader.take({'0' .. '9'}) != '0': reader.takeDigits()
-  if reader.cursor < reader.text.len and reader.text[reader.cursor] == '.':
-    inc reader.cursor
-    discard reader.take({'0' .. '9'})
-    reader.takeDigits()
-  if reader.cursor < reader.text.len and reader.text[reader.cursor] in {'e', 'E'}:
-    inc reader.cursor
-    if reader.take({'0' .. '9', '+', '-'}) in {'+', '-'}: discard reader.take({'0' .. '9'})
-    reader.takeDigits()
-  reader.state = ssPostValue
-  JsonToken(kind: jtNumber, text: reader.text[start ..< reader.cursor])
-
-proc readLiteral(reader: var FieldReader, word: string, kind: JsonTokenKind): JsonToken =
-  for letter in word: discard reader.take({letter})
-  reader.state = ssPostValue
-  JsonToken(kind: kind)
-
 proc next(reader: var FieldReader): JsonToken =
-  ## The next token, checked against the JSON grammar.
-  while true:
-    case reader.state
-    of ssValue:
-      reader.skipWhitespace()
-      case reader.expectByte()
-      of '{':
-        reader.stack.add '{'
-        inc reader.cursor
-        reader.state = ssObjectStart
-        return JsonToken(kind: jtObjectBegin)
-      of '[':
-        reader.stack.add '['
-        inc reader.cursor
-        reader.state = ssArrayStart
-        return JsonToken(kind: jtArrayBegin)
-      of '"': return reader.readStringToken()
-      of '-', '0' .. '9': return reader.readNumberToken()
-      of 't': return reader.readLiteral("true", jtTrue)
-      of 'f': return reader.readLiteral("false", jtFalse)
-      of 'n': return reader.readLiteral("null", jtNull)
-      else: reader.fail("invalid JSON")
-    of ssPostValue:
-      reader.skipWhitespace()
-      let ch = reader.expectByte()
-      if reader.stack.len == 0: reader.fail("invalid JSON")
-      if reader.stringIsObjectKey:
-        reader.stringIsObjectKey = false
-        discard reader.take({':'})
-        reader.state = ssValue
-        continue
-      case ch
-      of '}', ']':
-        if reader.stack.pop() != (if ch == '}': '{' else: '['): reader.fail("invalid JSON")
-        inc reader.cursor
-        return JsonToken(kind: if ch == '}': jtObjectEnd else: jtArrayEnd)
-      of ',':
-        reader.state = if reader.stack[^1] == '{': ssObjectPostComma else: ssValue
-        inc reader.cursor
-      else: reader.fail("invalid JSON")
-    of ssObjectStart, ssObjectPostComma:
-      reader.skipWhitespace()
-      if reader.expectByte() == '}' and reader.state == ssObjectStart:
-        inc reader.cursor
-        discard reader.stack.pop()
-        reader.state = ssPostValue
-        return JsonToken(kind: jtObjectEnd)
-      if reader.expectByte() != '"': reader.fail("invalid JSON")
-      reader.stringIsObjectKey = true
-      return reader.readStringToken()
-    of ssArrayStart:
-      reader.skipWhitespace()
-      if reader.expectByte() == ']':
-        inc reader.cursor
-        discard reader.stack.pop()
-        reader.state = ssPostValue
-        return JsonToken(kind: jtArrayEnd)
-      reader.state = ssValue
+  try:
+    reader.scanner.next()
+  except JsonSyntaxError:
+    reader.fail("invalid JSON")
+
 
 proc readString(reader: var FieldReader, field: string): string =
   let token = reader.next()
@@ -350,7 +180,7 @@ proc writeValue(reader: var FieldReader, token: JsonToken, output: var string) =
       element = reader.next()
       inc count
     output.add ']'
-  of jtObjectEnd, jtArrayEnd: raiseAssert "the scanner does not give an end token in place of a value"
+  of jtObjectEnd, jtArrayEnd, jtEndOfDocument: raiseAssert "the scanner does not give an end token in place of a value"
 
 proc readJson(reader: var FieldReader): string =
   ## Any JSON value, for example a text component. It is written to pack.mcmeta in compact form.
@@ -364,8 +194,8 @@ proc validate(config: Config, hasNamespace: bool): Config =
   if not isValidResourceName(config.namespace):
     if hasNamespace:
       failWithoutPosition(&"\"namespace\" '{config.namespace}' must only use a-z, 0-9, '_', '.' and '-'")
-    failWithoutPosition(&"the project folder name '{config.namespace}' is not a valid namespace. Set \"namespace\" in " &
-                        "poplar.json (a-z, 0-9, '_', '.' and '-')")
+    failWithoutPosition(&"the project folder name '{config.namespace}' is not a valid namespace. Set " &
+                        "\"namespace\" in poplar.json (a-z, 0-9, '_', '.' and '-')")
   if config.minFormat < oldestFormat:
     failWithoutPosition(&"\"minFormat\" must be at least {oldestFormat.major} (Minecraft 1.21.9)")
   if config.maxFormat < config.minFormat:
@@ -374,7 +204,7 @@ proc validate(config: Config, hasNamespace: bool): Config =
 
 proc parseConfig*(json, folderName: string, latest = latestFormat): Config =
   ## Raises `ConfigError` with the message and position of the first problem.
-  var reader = FieldReader(text: json, line: 1, lineStart: -1)
+  var reader = FieldReader(scanner: initJsonScanner(json))
   var zipName, namespace, description = none(string)
   var minFormat, maxFormat = none(PackFormat)
 
