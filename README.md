@@ -40,23 +40,36 @@ Then `poplar new my_pack` makes a project, and `poplar build` writes the datapac
 ## Repository
 | Folder | What it is |
 |---|---|
-| `src/` | The compiler and the language server (Zig 0.17.0) |
+| `src/` | The compiler and the language server (Nim 2.4) |
 | `std/` | The standard library, written in Poplar |
 | `tests/e2e/` | Projects that the end-to-end test runs on a real Minecraft server |
-| `schema/`, `tools/` | The `poplar.json` schema, and the test harness |
+| `mcmeta/` | The Minecraft data that the compiler embeds, from [misode/mcmeta](https://github.com/misode/mcmeta) |
+| `schema/`, `tools/` | The `poplar.json` schema, the test harness, and the script that updates `mcmeta/` |
 | `install.sh`, `install.ps1` | The install scripts |
 | `.github/workflows/release.yml` | Builds the release archives when a release is published |
 | `examples/` | Example Poplar projects |
 
 ## Build from source
+You need [Nim 2.4](https://nim-lang.org/install.html).
+
 ```sh
-zig build test                                  # unit tests
-zig build run -- build examples/hello           # compile a project
-zig build -Doptimize=ReleaseSafe -p ~/.local    # install `poplar` and its std on the PATH
+nimble test                                       # unit tests
+nimble build                                      # build bin/poplar
+POPLAR_STD=std bin/poplar build examples/deaths   # compile a project with the std of this checkout
+nimble e2e --accept-eula                          # run tests/e2e on a Minecraft server
+```
+
+`nimble e2e` needs Java, and `--accept-eula` means that you accept the [Minecraft EULA](https://aka.ms/MinecraftEULA).
+
+To install `poplar` and its std on the PATH:
+
+```sh
+nim c -d:release -o:$HOME/.local/bin/poplar src/poplar.nim
+mkdir -p ~/.local/lib/poplar && cp -r std ~/.local/lib/poplar/
 ```
 
 ## Releases
-Publish a release on GitHub with a tag such as `v0.1.0`. The release workflow then builds Poplar for Linux, macOS and Windows (x86_64 and arm64) and attaches `poplar-<os>-<arch>.tar.gz` (or `.zip` on Windows) to it. The install scripts always take the latest release. Set the version in `build.zig.zon` to match the tag, because `poplar --version` prints it.
+Publish a release on GitHub with a tag such as `v0.1.0`. The release workflow then builds Poplar for Linux, macOS and Windows (x86_64 and arm64) and attaches `poplar-<os>-<arch>.tar.gz` (or `.zip` on Windows) to it. The install scripts always take the latest release. Set the version in `poplar.nimble` to match the tag, because `poplar --version` prints it.
 
 ## Editor
 `poplar lsp` is the language server. The Gram (Zed) extension and the grammars are in [poplar-editor-extensions](https://github.com/poplar-mc/poplar-editor-extensions).
