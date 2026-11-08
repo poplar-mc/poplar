@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Writes tests/e2e/datafiles/src/main.poplar: one data file of each type, from the smallest vanilla file.
 
-    python3 tools/gen_datafiles_test.py zig-pkg/<mcmeta package>            the test
-    python3 tools/gen_datafiles_test.py zig-pkg/<mcmeta package> --missing  every tag also names a missing file
+    python3 tools/gen_datafiles_test.py <mcmeta checkout>            the test
+    python3 tools/gen_datafiles_test.py <mcmeta checkout> --missing  every tag also names a missing file
 
 Run it at the top of the repo after a Minecraft update. With --missing the server must fail to start, with an error for every
 type; a type without an error is in the wrong folder. The server stops at the first stage that fails, so a few types
@@ -18,7 +18,7 @@ mcmeta = Path(sys.argv[1])
 missing = "--missing" in sys.argv
 compiler = Path(__file__).resolve().parent.parent
 
-pairs = re.findall(r'\.\{ "(\w+)", "([\w/]+)" \}', (compiler / "src/DataFile.zig").read_text())
+pairs = re.findall(r'"(\w+)": "([\w/]+)",', (compiler / "src/data_folders.nim").read_text())
 # Vanilla has no item modifier. A special recipe such as repair_item is one object in the game, so a copy is an error.
 own = {
     "predicate": {"type": "minecraft:random_chance", "chance": 1.0},
