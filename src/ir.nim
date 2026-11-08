@@ -9,8 +9,7 @@ type
   Program* = object
     functions*: seq[McFunction]
     load*: Option[McFunction]
-    ## The functions of the `minecraft:tick` tag, in order.
-    tick*: seq[string]
+    tick*: seq[string] ## The functions of the `minecraft:tick` tag, in order.
     dataFiles*: seq[DataFile]
 
   DataFile* = object
@@ -25,10 +24,11 @@ type
     commands*: seq[Command]
 
   Command* = object
+    ## `FramePushCommand` adds a frame to `<ns>:poplar stack`, to hold the temps that a recursive call would
+    ## overwrite. `FramePopCommand` removes it, and `StackClearCommand` empties the stack.
     case
     of RawCommand: raw*: string
-    ## The writer adds the namespace to this mcfun name.
-    of FunctionCommand: function*: string
+    of FunctionCommand: function*: string ## The writer adds the namespace to this mcfun name.
     of AddObjectiveCommand: objective*: Objective
     of ScoreSetCommand, ScoreSetIfUnsetCommand, ScoreAddCommand, ScoreRemoveCommand: scoreValue*: ScoreValue
     of ScoreSetMacroArgumentCommand: scoreMacroArgument*: ScoreMacroArgument
@@ -36,25 +36,23 @@ type
     of DataSetCommand, DataSetIfUnsetCommand: dataValue*: DataValue
     of DataCopyCommand: dataCopy*: DataCopy
     of DataSetStringCommand: dataSetString*: DataSetString
-    ## `data modify ... append|prepend|insert <i> value|from ...`
-    of DataAddCommand: dataAdd*: DataAdd
+    of DataAddCommand:
+      dataAdd*: DataAdd ## `data modify ... append|prepend|insert <i> value|from ...`
     of DataRemoveCommand, DataGetCommand: dataPath*: DataPath
     of ScoreToDataCommand: scoreToData*: ScoreToData
     of DataToScoreCommand: dataToScore*: DataToScore
     of FunctionWithCommand: functionWith*: FunctionWith
-    ## The text of a macro line, with `$(key)` in it.
-    of MacroCommand: macroLine*: string
-    ## A frame on `<ns>:poplar stack` holds the temps that a recursive call would overwrite.
+    of MacroCommand: macroLine*: string ## The text of a macro line, with `$(key)` in it.
     of FramePushCommand, FramePopCommand, StackClearCommand: discard
     of ExecuteCommand: execute*: Execute
     of ExecuteRawCommand: executeRaw*: ExecuteRaw
-    ## `execute store result score <score> run <command>`
-    of StoreResultCommand: storeResult*: StoreResult
+    of StoreResultCommand:
+      storeResult*: StoreResult ## `execute store result score <score> run <command>`
     of ScoreGetCommand: score*: Score
     of ReturnRunCommand: returnRun*: ref Command
     of ReturnValueCommand: returnValue*: int32
-    ## `return $(key)`, which returns the value of a macro argument.
-    of ReturnMacroArgumentCommand: returnMacroArgument*: string
+    of ReturnMacroArgumentCommand:
+      returnMacroArgument*: string ## `return $(key)`, which returns the value of a macro argument.
 
   StoreResultTarget* = object
     case
@@ -78,15 +76,13 @@ type
   DataPathHolder* = object
     case
     of StorageHolder: storage*: Storage
-    ## A selector for one entity.
-    of EntityHolder: entity*: string
+    of EntityHolder: entity*: string ## A selector for one entity.
 
   DataPath* = object
     ## A place for NBT: a key in one of Poplar's storages, or a path in the NBT of one entity.
     holder*: DataPathHolder
     path*: string
-    ## The namespace of the `<ns>:data` storage.
-    namespace*: Option[string]
+    namespace*: Option[string] ## The namespace of the `<ns>:data` storage.
 
   DataValue* = object
     target*: DataPath
@@ -138,12 +134,12 @@ type
   FunctionWithArguments* = object
     case
     of CompoundArguments: compound*: string
-    ## `with storage <ns>:data` or `<pack>:std`, where whole `$` variables are read as they are.
-    of DataStorageArguments: dataStorage*: DataStorage
-    ## `with storage ns:data player` or `with entity @s SelectedItem`.
-    of DataPathArguments: dataPath*: DataPath
-    ## `with entity @s` or `with block ~ ~ ~`, as written.
-    of RawArguments: raw*: string
+    of DataStorageArguments:
+      dataStorage*: DataStorage
+        ## `with storage <ns>:data` or `<pack>:std`, where whole `$` variables are read as they are.
+    of DataPathArguments:
+      dataPath*: DataPath ## `with storage ns:data player` or `with entity @s SelectedItem`.
+    of RawArguments: raw*: string ## `with entity @s` or `with block ~ ~ ~`, as written.
     of ArgsStorageArguments, MacroStorageArguments: discard
 
   FunctionWith* = object
@@ -157,30 +153,29 @@ type
     name*: Option[string]
 
   ScoreTemp* = object
-    ## The mcfun as it appears in generated names (`generatedFolder`).
-    folder*: string
+    folder*: string ## The mcfun as it appears in generated names (`generatedFolder`).
     index*: int
 
   ScoreKind* = object
-    ## - `GlobalScore`: a score that any function can read: a global, or the result of a body on its way out.
-    ## - `TempScore`: a value during one statement. Only the mcfun and its generated functions read it.
-    ## - `ConstantScore`: a number that `poplar/load` sets, for math with a fixed value.
-    ## - `LocalScore`: a local variable. The owner is its mcfun (`combat:heal`), and only that mcfun and its generated
-    ##   functions read it.
+    ## `GlobalScore` is a score that any function can read:
+    ## a global, or the result of a body on its way out.
     case
     of GlobalScore: discard
-    of TempScore: temp*: ScoreTemp
-    of ConstantScore: constant*: int32
-    of LocalScore: owner*: string
+    of TempScore:
+      temp*: ScoreTemp
+        ## A value during one statement. Only the mcfun and its generated functions read it.
+    of ConstantScore: constant*: int32 ## A number that `poplar/load` sets, for math with a fixed value.
+    of LocalScore:
+      owner*: string
+        ## A local variable. The owner is its mcfun (`combat:heal`), and only that mcfun and its
+        ## generated functions read it.
 
   Score* = object
     ## A holder is a fake player (`#hp`, `#poplar.c1`) or a selector (`@s`).
     holder*: string
     objective*: Option[string]
-    ## The objective is `<namespace>` or `<namespace>.<objective>`.
-    namespace*: Option[string]
-    ## Not part of `eql`.
-    kind*: ScoreKind
+    namespace*: Option[string] ## The objective is `<namespace>` or `<namespace>.<objective>`.
+    kind*: ScoreKind ## Not compared by `eql`.
 
   ScoreValue* = object
     score*: Score
@@ -207,13 +202,15 @@ type
     case
     of MatchesTest: matches*: Matches
     of CompareTest: compare*: Compare
-    ## `if data storage ns:data stats.bonus` passes when the path exists. The path can also be an NBT filter:
-    ## `{name:"Steve"}`.
-    of DataTest: dataPath*: DataPath
-    ## `if function ns:<name>` runs the function and passes when it returns a value that is not 0.
-    of FunctionReturnsTest: function*: string
-    ## A Minecraft check as the user wrote it, such as `block ~ ~-1 ~ stone`.
-    of RawTest: raw*: string
+    of DataTest:
+      dataPath*: DataPath
+        ## `if data storage ns:data stats.bonus` passes when the path exists. The path can also be
+        ## an NBT filter: `{name:"Steve"}`.
+    of FunctionReturnsTest:
+      function*: string
+        ## `if function ns:<name>` runs the function and passes when its return value is not 0.
+    of RawTest:
+      raw*: string ## A Minecraft check as the user wrote it, such as `block ~ ~-1 ~ stone`.
 
   Check* = object
     ## A negated check is written as `unless`.

@@ -18,11 +18,9 @@ type
     path*: string
     mcfun*: Mcfun
     origin*: Origin
-    ## The namespace of the file, and the namespaces it imports.
-    namespace*: string
+    namespace*: string ## The namespace of the file, and the namespaces it imports.
     imports*: seq[NamespaceName]
-    ## The name in the IR: `combat:heal`, or `heal` in the pack namespace.
-    irName*: string
+    irName*: string ## The name in the IR: `combat:heal`, or `heal` in the pack namespace.
 
   EventKind = enum
     ekCriteria, ekTrigger, ekFirstJoin, ekJoin, ekRespawn
@@ -37,50 +35,47 @@ type
     of FirstJoinSource, JoinSource, RespawnSource: discard
 
   FoundMcfun = object
-    ## `combat:heal`, the key in `mcfuns` and `mcfunCalls`.
-    key: string
+    key: string ## `combat:heal`, the key in `mcfuns` and `mcfunCalls`.
     declaration: McfunDeclaration
 
   Event* = object
-    ## `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`, and `poplar/tick` runs the
-    ## callback. `onTrigger(name, callback)` is the same with a `trigger` objective called `name`, so players can run
-    ## `/trigger <name>`.
+    ## `onEvent(criteria, callback)`: the game counts the criteria in `<ns>.event_<n>`,
+    ## and `poplar/tick` runs the callback. `onTrigger(name, callback)` is the same
+    ## with a `trigger` objective called `name`, so players can run `/trigger <name>`.
     source*: EventSource
-    ## The IR name of the callback mcfun.
-    callback*: string
-    ## The output namespace of the `load` that registered it. The objective is `<namespace>.event_<n>`.
+    callback*: string ## The IR name of the callback mcfun.
     namespace*: Option[string]
+      ## The output namespace of the `load` that registered
+      ## it. The objective is `<namespace>.event_<n>`.
 
   GlobalScore* = object
     path*: string
     position*: Position
     initialValue*: int32
     name*: string
-    ## None for the pack namespace.
-    outputNamespace*: Option[string]
+    outputNamespace*: Option[string] ## None for the pack namespace.
 
   InsertSource* = object
     case
     of DataSource: path*: DataPath
-    ## A score, math or a value call, computed just before the helper is called.
-    of ValueSource: expression*: Expression
+    of ValueSource:
+      expression*: Expression
+        ## A score, math or a value call, computed just before the helper is called.
 
   Insert* = object
-    ## A runtime value in `{{...}}`: `{{$stats.hp}}` is `$(stats_hp)` in the macro line. A macro argument is a
-    ## top-level key, so any value that is not a whole `$` var is copied into `<ns>:poplar macro` under its name
-    ## first.
+    ## A runtime value in `{{...}}`: `{{$stats.hp}}` is `$(stats_hp)` in the
+    ## macro line. A macro argument is a top-level key, so any value that is not
+    ## a whole `$` var is copied into `<ns>:poplar macro` under its name first.
     macroName*: string
     source*: InsertSource
 
   CommandText* = object
     text*: string
-    ## Where each part starts in `text`, for mapping errors back to the source.
     textStarts*: seq[int]
-    ## True if a `{{$x}}` insert makes the text a macro line for a helper function.
-    isMacro*: bool
+      ## Where each part starts in `text`, for mapping errors back to the source.
+    isMacro*: bool ## True if a `{{$x}}` insert makes the text a macro line for a helper function.
     usesMacroKeys*: bool
-    ## The runtime values that the text uses, each one time.
-    inserts*: seq[Insert]
+    inserts*: seq[Insert] ## The runtime values that the text uses, each one time.
 
   LocalOrigin = object
     name, owner: string
@@ -94,11 +89,9 @@ type
   GlobalData* = object
     path*: string
     position*: Position
-    ## The initial value as SNBT: `20`, `20f`, `{hp:20}`.
-    initialSnbt*: string
+    initialSnbt*: string ## The initial value as SNBT: `20`, `20f`, `{hp:20}`.
     name*: string
-    ## None for the pack namespace.
-    outputNamespace*: Option[string]
+    outputNamespace*: Option[string] ## None for the pack namespace.
     storage*: Storage
 
   Condition* = object
@@ -114,34 +107,34 @@ type
     position*: Position
 
   Scope* = object
-    ## The namespace of the file or mcfun being compiled, the namespaces it imports, and where its files go (none:
-    ## the pack).
+    ## The namespace of the file or mcfun being compiled, the
+    ## namespaces it imports, and where its files go (none: the pack).
     namespace*: string = "ns"
     imports*: seq[NamespaceName]
     outputNamespace*: Option[string]
 
   CurrentMcfun* = object
-    ## What the compiler knows about the mcfun that it is compiling. Assigning a new one resets it all. The folder is
-    ## the mcfun as it appears in generated names (`generatedFolder`): `heal`, or `std.clamp` for std.
+    ## What the compiler knows about the mcfun that it is compiling. Assigning a new one resets it all.
     folder*: string
-    ## The IR name (`combat:heal`), and the key with the source namespace (`combat:heal`, `std:clamp`).
+      ## The mcfun as it appears in generated names (`generatedFolder`): `heal`, or `std.clamp` for std.
     name*, key*: string
+      ## The IR name (`combat:heal`), and the key with the
+      ## source namespace (`combat:heal`, `std:clamp`).
     tempCount*, generatedCount*: int
-    ## The `$(name)` keys that it uses.
-    macroKeys*: OrderedSet[string]
-    ## `{a:"$(a)"}` for the macro arguments that it uses. Calls to its generated functions pass it on.
+    macroKeys*: OrderedSet[string] ## The `$(name)` keys that it uses.
     forwardedArgs*: Option[string]
-    ## The test function of the innermost `while`, for `break` and `continue`.
-    loop*: Option[string]
-    ## True in a `while` or `execute (...)` body. There `return` stores the value and returns 1, so the caller can
-    ## pass it on.
+      ## `{a:"$(a)"}` for the macro arguments that it uses.
+      ## Calls to its generated functions pass it on.
+    loop*: Option[string] ## The test function of the innermost `while`, for `break` and `continue`.
     returnThroughBody*: bool
-    ## True in a namespace's `mcfun load`. Only there `onEvent` is allowed.
-    inLoad*: bool
-    ## Removes each of its data locals. It runs at each exit, so no value is left for the next call.
+      ## True in a `while` or `execute (...)` body. There `return` stores the value and returns 1,
+      ## so the caller can pass it on.
+    inLoad*: bool ## True in a namespace's `mcfun load`. Only there `onEvent` is allowed.
     cleanup*: seq[Command]
-    ## The locals that are visible at the statement being compiled. A recursive call saves them.
+      ## Removes each of its data locals. It runs at each
+      ## exit, so no value is left for the next call.
     liveLocals*: seq[Local]
+      ## The locals that are visible at the statement being compiled. A recursive call saves them.
 
   Compiler* = ref object
     commandTree*: CommandTree
@@ -151,39 +144,41 @@ type
     constants: seq[int32]
     errors*: seq[Diagnostic]
     generated: seq[McFunction]
-    ## Where the compiler is: the source position for errors, the namespace, and the mcfun.
     path: string
+      ## Where the compiler is: this file, `position` for errors, `scope` and `mcfun`.
     position: Position
     scope: Scope
     mcfun: CurrentMcfun
-    ## The imports of each namespace, from all its files. They decide the order of the `load` and `tick` functions.
     namespaceImports*: OrderedTable[string, OrderedSet[string]]
-    ## The namespaces with an `mcfun load` or `mcfun tick`.
+      ## The imports of each namespace, from all its files. They
+      ## decide the order of the `load` and `tick` functions.
     loadNamespaces, tickNamespaces: OrderedSet[string]
-    ## For each mcfun, the mcfuns that its body calls.
-    mcfunCalls: Table[string, OrderedSet[string]]
-    ## Set when a recursive call saves temps, so that `poplar/load` clears the stack.
+      ## The namespaces with an `mcfun load` or `mcfun tick`.
+    mcfunCalls: Table[string, OrderedSet[string]] ## For each mcfun, the mcfuns that its body calls.
     usesStack: bool
-    ## The namespace of the pack. `text(#hp)` writes it into a text component.
+      ## Set when a recursive call saves temps, so that `poplar/load` clears the stack.
     packNamespace*: string = "ns"
+      ## The namespace of the pack. `text(#hp)` writes it into a text component.
     events: seq[Event]
-    ## `#i_countdown` → where it comes from, so two different locals cannot get the same generated name.
     localNames: Table[string, LocalOrigin]
-    ## Every local declaration, for the language server.
-    locals*: seq[LocalVariable]
+      ## `#i_countdown` → where it comes from, so two
+      ## different locals cannot get the same generated name.
+    locals*: seq[LocalVariable] ## Every local declaration, for the language server.
     dataFiles: seq[DataFile]
-    ## `data/<ns>/<folder>/<path>.json` → where it is declared, so two declarations cannot write one file.
     dataFilePaths: Table[string, string]
-    ## The file path of each data file of a namespace, by its source name: `combat:isSitting` → `is_sitting`,
-    ## `combat:checks/never` → itself. `self:name` and `ns:name` in Minecraft text look names up here and in
-    ## `mcfuns`.
+      ## `data/<ns>/<folder>/<path>.json` → where it is
+      ## declared, so two declarations cannot write one file.
     dataFileNames*: OrderedTable[string, string]
-    ## `self`, `std` and the namespaces of the project's files: the ones whose ids in commands can be Poplar names.
+      ## The file path of each data file of a namespace, by its source name: `combat:isSitting` →
+      ## `is_sitting`, `combat:checks/never` → itself. `self:name` and `ns:name` in Minecraft text
+      ## look names up here and in `mcfuns`.
     poplarNamespaces: seq[string] = @["self"]
-    ## The namespace of each source file (by its display path), for the language server.
+      ## `self`, `std` and the namespaces of the project's files: the ones whose ids in commands can
+      ## be Poplar names.
     fileNamespaces*: Table[string, string]
-    ## The data files with an identifier name, for the language server.
+      ## The namespace of each source file (by its display path), for the language server.
     namedDataFiles*: OrderedTable[string, NamedDataFile]
+      ## The data files with an identifier name, for the language server.
 
 const globalHolder* = "#global"
   ## The holder of the global value of each `#var`. A `#` holder is hidden from the sidebar.
@@ -713,8 +708,8 @@ proc compileReturn(compiler: Compiler, value: Expression, env: Environment, comm
   commands.add ReturnRunCommand(returnRun: createCommand(read.get))
 
 proc compileWhile(compiler: Compiler, whileLoop: While, env: Environment, commands: var seq[Command]) =
-  ## A loop is two functions: `while_<n>` tests the condition and runs `while_<n>_body`, which runs `while_<n>`
-  ## again.
+  ## A loop is two functions: `while_<n>` tests the condition
+  ## and runs `while_<n>_body`, which runs `while_<n>` again.
   let jumps = jumpsIn(whileLoop.body)
   let testName = compiler.newGeneratedName("while")
   let bodyName = testName & "_body"

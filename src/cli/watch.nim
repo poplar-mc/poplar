@@ -12,11 +12,10 @@ type
     ## `--world`: after each build, the pack is copied into `<world>/datapacks/`. Minecraft does not follow symbolic
     ## links unless they are allowed in `allowed_symlinks.txt`, so it is a copy.
     datapacksPath: string
-    ## Where the world came from, such as ` (POPLAR_WORLD from .env)`, or empty for `--world`.
     source: string
+      ## Where the world came from, such as ` (POPLAR_WORLD from .env)`, or empty for `--world`.
     copiedBefore: bool
-    ## Set after an error, so that it is printed one time.
-    failed: bool
+    failed: bool ## Set after an error, so that it is printed one time.
 
   World = object
     path, source: string

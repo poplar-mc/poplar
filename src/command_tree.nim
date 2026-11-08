@@ -12,8 +12,7 @@ type
 
   Properties* = object
     min*, max*: Option[float]
-    ## The `type` of a `brigadier:string`: `word`, `phrase` or `greedy`.
-    kind*: Option[string]
+    kind*: Option[string] ## The `type` of a `brigadier:string`: `word`, `phrase` or `greedy`.
     registry*: Option[string]
 
   Node* = ref object
@@ -30,18 +29,20 @@ type
 
   Id* = object
     at*: int
-    ## True where the id names a function or a data file (`function`, `predicate`, a tag). False for other ids, such
-    ## as a storage or a bossbar, which are not declared in Poplar.
     namesDeclaration*: bool
-    ## True where a bare name can only be a mistake for a pack's own name: a function or a data file. False where the
-    ## compiler knows the vanilla ids, so `speed` in `effect give @s speed` is the effect, even with an `mcfun speed`.
+      ## True where the id names a function or a data file (`function`, `predicate`, a tag). False
+      ## for other ids, such as a storage or a bossbar, which are not declared in Poplar.
     canBePackName*: bool
+      ## True where a bare name can only be a mistake for a pack's own name: a function or a data
+      ## file. False where the compiler knows the vanilla ids, so `speed` in `effect give @s speed`
+      ## is the effect, even with an `mcfun speed`.
 
   Checked* = object
     failure*: Option[Failure]
-    ## Each id in an id position (after a `#`), such as `self:heal` in `function self:heal` or `magic:undead` in
-    ## `@e[type=#magic:undead]`. Text arguments, such as the message of `say`, have none.
     ids*: seq[Id]
+      ## Each id in an id position (after a `#`), such as `self:heal` in
+      ## `function self:heal` or `magic:undead` in `@e[type=#magic:undead]`.
+      ## Text arguments, such as the message of `say`, have none.
 
   CommandTree* = ref object
     root*: Node
@@ -51,18 +52,17 @@ type
     at: int
     expected: string
     outOfRange: bool
-    ## A finished message, for a problem inside an argument.
-    message: Option[string]
-    ## The registry when the id is not in it.
-    unknownIn: Option[string]
+    message: Option[string] ## A finished message, for a problem inside an argument.
+    unknownIn: Option[string] ## The registry when the id is not in it.
 
   Walk = object
     tree: CommandTree
     text: string
     poplarNamespaces: seq[string]
     furthest: Option[Problem]
-    ## Only filled on the path that matches, because each argument adds its ids after the rest matched.
     ids: seq[Id]
+      ## Only filled on the path that matches, because each
+      ## argument adds its ids after the rest matched.
 
 const commandsJson = staticRead("../mcmeta/commands.json")
 const registriesJson = staticRead("../mcmeta/registries.json")
@@ -269,8 +269,8 @@ func optionEnd(selector: string, start, close: int): int =
   close
 
 func selectorFailure(registries: Registries, selector: string): Option[Failure] =
-  ## What the game rejects inside `@e[...]`, where it would refuse the whole function. `at` is an offset in
-  ## `selector`.
+  ## What the game rejects inside `@e[...]`, where it would
+  ## refuse the whole function. `at` is an offset in `selector`.
   if selector.len < 4 or selector[0] != '@' or selector[2] != '[': return none(Failure)
   let close = selector.len - 1
 

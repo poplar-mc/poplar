@@ -25,8 +25,7 @@ type
     ## A local is a global with a generated name: `#i_countdown` for a score, `i_countdown` in `<ns>:data` for data.
     kind*: LocalKind
     generatedName*: string
-    ## The mcfun that the local belongs to.
-    owner*: string
+    owner*: string ## The mcfun that the local belongs to.
 
   AssignResult* = enum
     arAssigned, arNotFound, arCrossesRuntimeBranch
@@ -36,8 +35,8 @@ type
     scoreLocals: Table[string, Local]
     dataLocals: Table[string, Local]
     outer*: Environment
-    ## True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
     runtimeBranch*: bool
+      ## True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
 
 func get*(environment: Environment, name: string): Option[Value] =
   if name in environment.store: return some(environment.store[name])

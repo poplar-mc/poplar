@@ -161,8 +161,8 @@ proc constantIndex(compiler: Compiler, expression: Expression, env: Environment)
   compiler.toScoreValue(evaluate(compiler, expression, env))
 
 proc stringSource(compiler: Compiler, argument: Expression, env: Environment, commands: var seq[Command]): DataPath =
-  ## The data that a string helper reads: a `$` path, entity data, or another string helper (through the scratch
-  ## value).
+  ## The data that a string helper reads: a `$` path, entity
+  ## data, or another string helper (through the scratch value).
   if isDataIdentifier(argument): return compiler.dataPathOf(identifierOf(argument).get, env)
   let call = callOf(argument)
   if call.isSome and isStringCall(call.get):

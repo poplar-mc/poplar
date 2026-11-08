@@ -14,8 +14,7 @@ type
     lexer: Lexer
     current, peek: Token
     errors*: seq[Diagnostic]
-    ## What the end of the input is called in a message. An insert has its own.
-    endOfInput: string
+    endOfInput: string ## What the end of the input is called in a message. An insert has its own.
 
   Declarations = object
     imports: seq[NamespaceName]
@@ -504,8 +503,8 @@ proc parseImport(parser: var Parser): NamespaceName =
   parser.parseNamespaceStatement()
 
 proc parseDataFile(parser: var Parser): DataFile =
-  ## `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie" { ... }`. The Compiler checks the type
-  ## word.
+  ## `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie"
+  ## { ... }`. The Compiler checks the type word.
   let typeWord = parser.current.literal
   let position = tokenPosition(parser.current)
 

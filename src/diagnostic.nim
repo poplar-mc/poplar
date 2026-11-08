@@ -9,8 +9,8 @@ type
 
   Diagnostic* = object
     path*: string
-    ## None when the error is not about one place in a file, such as a missing folder.
     position*: Option[Position]
+      ## None when the error is not about one place in a file, such as a missing folder.
     message*: string
 
   ReportedError* = object of CatchableError

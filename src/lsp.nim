@@ -20,10 +20,10 @@ type
 
   Word = object
     kind: WordKind
-    ## Without the sigil. A data path goes up to the end of the part under the cursor: `stats.maxHp`.
     text: string
-    ## `magic` in `magic:heal` or `#magic:mana`.
-    namespace: Option[string]
+      ## Without the sigil. A data path goes up to the
+      ## end of the part under the cursor: `stats.maxHp`.
+    namespace: Option[string] ## `magic` in `magic:heal` or `#magic:mana`.
 
   Place = object
     ## The cursor in the compiler's terms: a display path such as `src/main.poplar`, and a line that starts at 1.
@@ -36,14 +36,12 @@ type
   LanguageServer* = ref object
     stdPath: string
     encoding: Encoding
-    ## URI → the text in the editor, which can be unsaved.
-    documents: Table[string, string]
-    ## URI → the project root, for each file that has diagnostics in the editor now.
+    documents: Table[string, string] ## URI → the text in the editor, which can be unsaved.
     published: OrderedTable[string, string]
+      ## URI → the project root, for each file that has diagnostics in the editor now.
     commandTree: CommandTree
     analysis: Analysis
-    ## Sends a notification to the editor.
-    notify: proc (meth: string, params: JsonNode)
+    notify: proc (meth: string, params: JsonNode) ## Sends a notification to the editor.
 
 const builtins = [
   Builtin(name: "append", signature: "append($list, value)", doc: "Adds a value at the end of a list."),

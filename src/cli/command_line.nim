@@ -9,12 +9,10 @@ type
 
   Flag* = object
     name*: string
-    ## One letter, or empty.
-    shortcut*: string
+    shortcut*: string ## One letter, or empty.
     description*: string
     kind*: FlagKind
-    ## `true` or `false` for a bool flag.
-    default*: string
+    default*: string ## `true` or `false` for a bool flag.
     persistent: bool
 
   PositionalArg* = object
@@ -29,8 +27,7 @@ type
 
   Command* = ref object
     name*, description*: string
-    ## Shown under the description of the help page, as `v0.6.0`.
-    version*: string
+    version*: string ## Shown under the description of the help page, as `v0.6.0`.
     flags: seq[Flag]
     positionalArgs: seq[PositionalArg]
     commands: seq[Command]

@@ -12,12 +12,15 @@ type
     line*: int
     lineStart, tokenStart: int
     previousTag: Option[TokenTag]
-    ## The number of `{` that are open, so that a `{` or `[` at the top level after a name starts a data file body.
     braceDepth: int
-    ## The open `(` of an `if` or `while` condition, counted from its first `(`. Zero outside a condition.
+      ## The number of `{` that are open, so that a `{` or `[` at the top level after a name starts
+      ## a data file body.
     conditionParenDepth: int
-    ## Added to the column of each token on the first line: the column where a `{{...}}` insert starts in its file.
+      ## The open `(` of an `if` or `while` condition, counted
+      ## from its first `(`. Zero outside a condition.
     firstLineColumn*: int
+      ## Added to the column of each token on the first line: the column where a `{{...}}` insert
+      ## starts in its file.
 
 const conditionWords = ["biome", "block", "blocks", "data", "dimension", "entity", "function", "items", "loaded",
                         "predicate", "score", "slots", "stopwatch"]
@@ -234,8 +237,8 @@ proc readConditionText(lexer: var Lexer): string =
   lexer.input[start ..< lexer.pos].strip(leading = false, chars = {' '})
 
 proc readJsonBody(lexer: var Lexer): Token =
-  ## Reads `{ ... }` or `[ ... ]` over many lines, to the bracket that closes the first one. Braces in JSON strings do
-  ## not count.
+  ## Reads `{ ... }` or `[ ... ]` over many lines, to the bracket
+  ## that closes the first one. Braces in JSON strings do not count.
   let start = lexer.pos
   let startLine = lexer.line
   let startColumn = lexer.tokenStart - lexer.lineStart + 1

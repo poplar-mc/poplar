@@ -20,10 +20,10 @@ type
   Identifier* = object
     name*: string
     kind*: IdentifierKind
-    ## `magic` in `magic:heal()` or `#magic:mana`. None means the namespace of the file.
     namespace*: Option[string]
-    ## Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
+      ## `magic` in `magic:heal()` or `#magic:mana`. None means the namespace of the file.
     selector*: Option[string]
+      ## Only set for an entity score or entity data, for example `@s` in `@s.$mana`.
 
   PrefixOperator* = enum poNegate, poNot
 
@@ -47,12 +47,13 @@ type
     of CallExpression: call*: Call
     of ListExpression: elements*: seq[Expression]
     of CompoundExpression: entries*: seq[Entry]
-    ## `@a` on its own, as a value: `actionBar(@a, "hi")`.
-    of SelectorExpression: selector*: string
-    ## `block ~ ~-1 ~ stone` in a condition: the text after `execute if`, with `{{...}}` inserts.
-    of MinecraftCheck: parts*: seq[CommandPart]
-    ## `$(name)`: a macro argument of the mcfun, known when the call starts.
-    of MacroKey: key*: string
+    of SelectorExpression: selector*: string ## `@a` on its own, as a value: `actionBar(@a, "hi")`.
+    of MinecraftCheck:
+      parts*: seq[CommandPart]
+        ## `block ~ ~-1 ~ stone` in a condition: the text
+        ## after `execute if`, with `{{...}}` inserts.
+    of MacroKey:
+      key*: string ## `$(name)`: a macro argument of the mcfun, known when the call starts.
 
   Entry* = object
     ## One `key: value` of a compound literal.
@@ -71,8 +72,7 @@ type
     ## `f() with {name: "Steve"}`, `f() with $player` or `f() with entity @s`.
     case
     of WithValue: value*: Expression
-    ## `entity @s` or `block ~ ~ ~`, as it is written.
-    of WithRaw: raw*: string
+    of WithRaw: raw*: string ## `entity @s` or `block ~ ~ ~`, as it is written.
 
   Call* = object
     callee*: Expression
@@ -80,8 +80,7 @@ type
     with*: Option[With]
 
   CommandPart* = object
-    ## `offset` is where the part starts in the command text.
-    offset*: int
+    offset*: int ## Where the part starts in the command text.
     case
     of TextPart: text*: string
     of InsertPart: insert*: Expression
@@ -122,8 +121,7 @@ type
     case
     of VarDeclStatement: varDecl*: VarDecl
     of AssignStatement: assign*: Assign
-    ## Nil for a `return;` with no value.
-    of ReturnStatement: returned*: Expression
+    of ReturnStatement: returned*: Expression ## Nil for a `return;` with no value.
     of BreakStatement, ContinueStatement: discard
     of IfStatement: ifStatement*: If
     of ForStatement: forLoop*: For
@@ -159,12 +157,11 @@ type
   Mcfun* = object
     name*: string
     body*: seq[Statement]
-    ## Where the name is written.
-    position*: Position
+    position*: Position ## Where the name is written.
 
   Program* = object
-    ## `namespace combat;`, the first statement of every file. None when it is missing.
     namespace*: Option[NamespaceName]
+      ## `namespace combat;`, the first statement of every file. None when it is missing.
     imports*: seq[NamespaceName]
     mcfuns*: seq[Mcfun]
     globals*: seq[Global]

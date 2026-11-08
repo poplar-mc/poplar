@@ -12,8 +12,7 @@ type
   Lookup* = object
     kind*: LookupKind
     value*: string
-    ## The 1-based number of a line that is not `KEY=VALUE`.
-    line*: int
+    line*: int ## The 1-based number of a line that is not `KEY=VALUE`.
 
 func unquote(value: string): string =
   if value.len >= 2 and value[0] in {'"', '\''} and value[^1] == value[0]: value[1 ..< value.len - 1] else: value

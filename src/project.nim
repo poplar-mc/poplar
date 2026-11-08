@@ -11,20 +11,18 @@ type
     moWrite, moCheck
 
   Summary* = object
-    ## `zipName`, the name of the pack.
-    name*: string
+    name*: string ## `zipName`, the name of the pack.
     functionCount*: int
-    ## `poplar-out/<zipName>`, or none for `moCheck`.
-    packPath*, zipPath*: Option[string]
+    packPath*, zipPath*: Option[string] ## `poplar-out/<zipName>`, or none for `moCheck`.
 
   Options* = object
-    ## The folder of the standard library, which `import std;` loads.
-    stdPath*: string
+    stdPath*: string ## The folder of the standard library, which `import std;` loads.
     mode*: Mode
-    ## Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
     overlay*: Table[string, string]
-    ## The language server loads the command tree one time and passes it in. Nil loads it.
+      ## Absolute path → the text of a file that is open in an editor. It is read instead of the
+      ## file on disk.
     commandTree*: CommandTree
+      ## The language server loads the command tree one time and passes it in. Nil loads it.
 
   LoadedProgram = object
     origin: Origin
@@ -32,13 +30,13 @@ type
     program: Program
 
   Result* = object
-    ## None when there were errors.
-    summary*: Option[Summary]
+    summary*: Option[Summary] ## None when there were errors.
     diagnostics*: seq[Diagnostic]
-    ## Nil when the build stopped before the compiler ran (no project, or a bad poplar.json).
     compiler*: Compiler
-    ## Display path (`src/main.poplar`, `std/math.poplar`) → absolute path, for every file that was read.
+      ## Nil when the build stopped before the compiler ran (no project, or a bad poplar.json).
     files*: OrderedTable[string, string]
+      ## Display path (`src/main.poplar`, `std/math.poplar`)
+      ## → absolute path, for every file that was read.
 
   SourceFile = object
     ## A file to load. The path is relative to the folder of its origin.
@@ -50,8 +48,8 @@ type
     srcPath: string
     stdPath: string
     overlay: Table[string, string]
-    ## Set when a file imports `std`, so projects without it do not need the folder.
     stdRealPath: Option[string]
+      ## Set when a file imports `std`, so projects without it do not need the folder.
     compiler: Compiler
     diagnostics: seq[Diagnostic]
     files: OrderedTable[string, string]

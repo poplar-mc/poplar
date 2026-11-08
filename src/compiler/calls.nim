@@ -29,8 +29,8 @@ proc argumentSnbt(compiler: Compiler, arg: Expression, env: Environment): string
   valueToSnbt(value)
 
 func setsData(body: seq[Statement], name: string): bool =
-  ## True if a statement assigns `$name`, or a raw command names it. A raw command is not read, so any mention
-  ## counts.
+  ## True if a statement assigns `$name`, or a raw command names
+  ## it. A raw command is not read, so any mention counts.
   for statement in body:
     case statement
     of AssignStatement(assign):
@@ -174,8 +174,8 @@ proc compileMcfunCall(compiler: Compiler, call: Call, declaration: McfunDeclarat
   FunctionWithCommand(functionWith: FunctionWith(name: declaration.irName, arguments: arguments))
 
 proc generatedCall(compiler: Compiler, name: string): Command =
-  ## Calls a generated function. In an mcfun that uses macro arguments, they are passed on, because the body can use
-  ## them.
+  ## Calls a generated function. In an mcfun that uses macro
+  ## arguments, they are passed on, because the body can use them.
   if compiler.mcfun.forwardedArgs.isNone: return FunctionCommand(function: name)
   let arguments = CompoundArguments(compound: compiler.mcfun.forwardedArgs.get)
   FunctionWithCommand(functionWith: FunctionWith(name: name, arguments: arguments))
@@ -283,8 +283,8 @@ proc collectExpressionCalls(compiler: Compiler, expression: Expression, calls: v
   else: discard
 
 proc collectCalls(compiler: Compiler, body: seq[Statement], calls: var OrderedSet[string]) =
-  ## Finds the mcfun calls in a body. This can find calls that a compile-time branch removes later. That only adds
-  ## saves.
+  ## Finds the mcfun calls in a body. This can find calls that
+  ## a compile-time branch removes later. That only adds saves.
   for statement in body:
     case statement
     of VarDeclStatement(varDecl): compiler.collectExpressionCalls(varDecl.value, calls)

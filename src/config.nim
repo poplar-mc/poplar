@@ -9,16 +9,15 @@ type
     minor*: int
 
   Config* = object
-    ## The name of the built pack: `poplar-out/<name>/` and `poplar-out/<name>.zip`.
     zipName*: string
+      ## The name of the built pack: `poplar-out/<name>/` and `poplar-out/<name>.zip`.
     namespace*: string
-    ## A JSON text component, already written as JSON.
-    description*: string
+    description*: string ## A JSON text component, already written as JSON.
     minFormat*, maxFormat*: PackFormat
 
   ConfigError* = object of CatchableError
-    ## Where and why `poplar.json` is invalid. None when the problem has no position in the file.
     position*: Option[Position]
+      ## Where and why `poplar.json` is invalid. None when the problem has no position in the file.
 
   FieldReader = object
     ## Reads the fields one token at a time, so that each problem has the line and column of its field.

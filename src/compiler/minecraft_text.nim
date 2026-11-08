@@ -120,8 +120,8 @@ func sourceOffset(parts: seq[CommandPart], textStarts: seq[int], at: int): int =
     of InsertPart: result = part.offset
 
 proc idOf(compiler: Compiler, namespace, name: string): Option[string] =
-  ## `combat:healPlayer` → `combat:heal_player`, `std:clamp` → `<pack>:std/clamp`, `combat:isSitting` →
-  ## `combat:is_sitting`.
+  ## `combat:healPlayer` → `combat:heal_player`, `std:clamp` →
+  ## `<pack>:std/clamp`, `combat:isSitting` → `combat:is_sitting`.
   let output = compiler.outputNamespace(namespace).get(compiler.packNamespace)
   let nameKey = qualifiedKey(namespace, name)
   if nameKey in compiler.dataFileNames: return some(output & ":" & compiler.dataFileNames[nameKey])

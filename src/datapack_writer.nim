@@ -234,8 +234,8 @@ proc addInt[T: uint16 | uint32](bytes: var string, value: T) =
   for index in 0 ..< sizeof(T): bytes.add char((value shr (8 * index)) and 0xFF)
 
 proc addEntryHeader(bytes: var string, crc, size: uint32, nameLength: uint16) =
-  ## The fields that the local header and the central directory header share, from "version needed" to "name
-  ## length".
+  ## The fields that the local header and the central directory
+  ## header share, from "version needed" to "name length".
   bytes.addInt zipVersion
   bytes.addInt 0'u16 # flags
   bytes.addInt 0'u16 # method: stored

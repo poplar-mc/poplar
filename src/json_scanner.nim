@@ -9,8 +9,7 @@ type
 
   JsonToken* = object
     kind*: JsonTokenKind
-    ## The decoded text of a string, or a number as written.
-    text*: string
+    text*: string ## The decoded text of a string, or a number as written.
 
   JsonSyntaxError* = object of CatchableError
 
@@ -22,8 +21,7 @@ type
     cursor: int
     line: int
     lineStart: int
-    ## `{` and `[` that are open.
-    stack: seq[char]
+    stack: seq[char] ## `{` and `[` that are open.
     state: ScannerState
     stringIsObjectKey: bool
 

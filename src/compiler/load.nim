@@ -19,8 +19,8 @@ proc hookNames(compiler: Compiler, namespaces: OrderedSet[string], hook: string)
     if namespace in namespaces: result.add compiler.functionName(namespace, hook)
 
 proc reachableFromProject(compiler: Compiler): HashSet[string] =
-  ## The mcfuns that a project mcfun can call, directly or through others. Event callbacks count as calls from
-  ## `load`.
+  ## The mcfuns that a project mcfun can call, directly or
+  ## through others. Event callbacks count as calls from `load`.
   var pending: seq[string]
   for mcfunKey, declaration in compiler.mcfuns:
     if declaration.origin != orStd: pending.add mcfunKey
