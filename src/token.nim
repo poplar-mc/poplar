@@ -72,7 +72,7 @@ type
     literal*: string
     line*, column*: int
 
-const keywords = [tkAnd, tkBreak, tkContinue, tkElse, tkExecute, tkFalse, tkFor, tkMcfun, tkNamespace, tkSelf, tkIf,
+const keywords* = [tkAnd, tkBreak, tkContinue, tkElse, tkExecute, tkFalse, tkFor, tkMcfun, tkNamespace, tkSelf, tkIf,
                   tkImport, tkNull, tkOr, tkReturn, tkVar, tkTrue, tkWhile, tkWith]
 
 func keywordTag*(word: string): TokenTag =

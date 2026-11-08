@@ -65,6 +65,33 @@ func originFolder(origin: Origin): string =
   of orProject: "src"
   of orStd: "std"
 
+const schemaJson = staticRead("../schema/poplar.schema.json")
+
+type PathExistsError* = object of IOError
+  ## A file of a new project is there already.
+
+func namespaceFromName*(name: string): string =
+  ## `My Pack` → `my_pack`. A namespace may only use a-z, 0-9, `_`, `.` and `-`.
+  for ch in name:
+    let lower = ch.toLowerAscii
+    # No `-`: the namespace is also written in `namespace x;`, where `-` is the minus sign.
+    result.add(if lower.isLowerAscii or lower.isDigit or lower in {'_', '.'}: lower else: '_')
+
+proc writeNewFile(path, data: string) =
+  if fileExists(path) or dirExists(path): raise newException(PathExistsError, path & " exists")
+  writeFile(path, data)
+
+proc writeNewProject*(folder, name: string) =
+  ## Writes the files of a new project into `folder`. It never overwrites a file.
+  let namespace = namespaceFromName(name)
+  createDir(folder / "src")
+  writeNewFile(folder / fileName, "{\n  \"$schema\": \"./poplar.schema.json\",\n  \"zipName\": " & jsonString(name) &
+               ",\n  \"namespace\": \"" & namespace & "\"\n}\n")
+  writeNewFile(folder / "poplar.schema.json", schemaJson)
+  writeNewFile(folder / "src" / "main.poplar", &"namespace {namespace};\n\nmcfun load() {{\n    /say Hello from " &
+               &"{namespace}!;\n}}\n")
+  writeNewFile(folder / ".gitignore", outDirName & "/\n.env\n")
+
 proc installedStdPath*(): string =
   ## Where the release archives put the standard library: `lib/poplar/std` next to the `bin` folder of the binary.
   getAppDir() & DirSep & ".." & DirSep & "lib" & DirSep & "poplar" & DirSep & "std"

@@ -38,6 +38,12 @@ const latestFormat* = static:
 const minecraftVersion* = static(parseJson(versionJson)["name"].getStr)
   ## The Minecraft version that the command data comes from.
 
+const poplarVersion* = static:
+  var found = ""
+  for line in staticRead("../poplar.nimble").splitLines:
+    if line.startsWith("version"): found = line.split('"')[1]
+  found
+
 func `<`(a, b: PackFormat): bool = a.major < b.major or (a.major == b.major and a.minor < b.minor)
 
 func isResourceNameChar*(ch: char): bool = ch.isLowerAscii or ch.isDigit or ch in {'_', '.', '-'}

@@ -1,5 +1,5 @@
 import std/[algorithm, options, os, strutils, tables, tempfiles, unittest]
-import ../src/[compiler, ir, project]
+import ../src/[compiler, config, ir, project]
 
 test "builds every file in src/, and std when a file imports it":
   let folder = createTempDir("poplar", "")
@@ -36,3 +36,8 @@ test "only the std mcfuns that the project calls are written, under std/":
   for function in built.compiler.compile().functions:
     if not function.name.startsWith("poplar/"): names.add function.name
   check names.sorted == @["main", "std/double", "std/fromCommand", "std/twice"]
+
+test "makes a namespace from a project name":
+  let namespace = namespaceFromName("My Pack!")
+  check namespace == "my_pack_"
+  check isValidResourceName(namespace)
