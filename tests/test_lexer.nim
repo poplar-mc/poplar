@@ -2,7 +2,7 @@ import std/unittest
 import ../src/[lexer, token]
 
 proc skip(lexer: var Lexer, count: int) =
-  for _ in 1 .. count: discard lexer.nextToken()
+  for _ in 1..count: discard lexer.nextToken()
 
 test "reads a Minecraft check in a condition up to 'and'":
   var lexer = initLexer("if (block ~ ~-1 ~ stone[a=b] and #a > 1) {} if (block == 1)")

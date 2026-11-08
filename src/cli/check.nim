@@ -1,3 +1,5 @@
+## `poplar check`: finds errors without writing any files.
+
 import std/[options, strformat]
 import ../project
 import command_line, output, root
@@ -11,7 +13,7 @@ proc register*(shared: Shared): Command =
       output.errorCount(built.diagnostics.len, "")
       fail()
     let summary = built.summary.get
-    output.success(&"No errors in {output.bold}{summary.name}{output.reset} {output.dim}({summary.functionCount} " &
-                   &"{summary.functionsText}){output.reset}")
+    output.success(&"No errors in {output.bold}{summary.name}{output.reset} " &
+                   &"{output.dim}({summary.functionCount} {summary.functionsText}){output.reset}")
   result = newCommand("check", "Find errors without writing any files", run)
   result.addPositionalArg dirArg

@@ -31,13 +31,16 @@ test "an open document with an error gets a diagnostic, and loses it when it is 
   let uri = pathToUri(expandFilename(folder) / "src" / "main.poplar")
 
   var written: seq[JsonNode]
-  let server = newLanguageServer("no-std", proc (meth: string, params: JsonNode) = written.add params)
-  discard server.handle("textDocument/didOpen", %*{"textDocument": {"uri": uri, "languageId": "poplar", "version": 1,
-                                                    "text": "namespace test;\nmcfun f() {\n  #nope = 1;\n}\n"}})
-  check written[^1]["diagnostics"][0]["range"] == %*{"start": {"line": 2, "character": 2},
-                                                       "end": {"line": 2, "character": 7}}
+  let server = newLanguageServer("no-std", proc (meth: string, params: JsonNode) =
+    written.add params)
+  let source = "namespace test;\nmcfun f() {\n  #nope = 1;\n}\n"
+  discard server.handle("textDocument/didOpen", %*{
+    "textDocument": {"uri": uri, "languageId": "poplar", "version": 1, "text": source}})
+  check written[^1]["diagnostics"][0]["range"] ==
+    %*{"start": {"line": 2, "character": 2}, "end": {"line": 2, "character": 7}}
 
   written.setLen(0)
-  discard server.handle("textDocument/didChange", %*{"textDocument": {"uri": uri, "version": 2},
-                                                      "contentChanges": [{"text": "namespace test;\nmcfun f() {}\n"}]})
+  discard server.handle("textDocument/didChange", %*{
+    "textDocument": {"uri": uri, "version": 2},
+    "contentChanges": [{"text": "namespace test;\nmcfun f() {}\n"}]})
   check written[^1]["diagnostics"].len == 0

@@ -38,6 +38,6 @@ test "parses poplar.json":
   discard problem("{\"minFormat\": 121, \"maxFormat\": 101}")
 
 test "writes the description in compact form":
-  check parseConfig("{\"description\": [1e-7, 2.0, -0, 1E400, \"é\\u0001\"]}", "hello", latest).description ==
-    "[0.0000001,2,-0,1E400,\"é\\u0001\"]"
+  let json = "{\"description\": [1e-7, 2.0, -0, 1E400, \"é\\u0001\"]}"
+  check parseConfig(json, "hello", latest).description == "[0.0000001,2,-0,1E400,\"é\\u0001\"]"
   check problem("{\"description\": {\"a\": 1, \"a\": 2}}").msg == "invalid JSON"

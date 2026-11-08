@@ -17,7 +17,8 @@ type
     ## A diagnostic is already recorded, so the caller only has to stop what it is doing.
 
 template recover*(body: untyped) =
-  ## Ends the stop that `ReportedError` asked for, so that the next statement or declaration is checked.
+  ## Ends the stop that `ReportedError` asked for, so that the next statement or declaration is
+  ## checked.
   try:
     body
   except ReportedError:

@@ -1,7 +1,7 @@
 ## Minecraft functions and commands, before they are written as text.
 ##
-## A function name is `ns:path`, or only `path` in the pack namespace (Poplar's own files and the namespace of
-## `poplar.json`). A score or data path with no namespace is in the pack namespace too.
+## A function name is `ns:path`, or only `path` in the pack namespace (Poplar's own files and the
+## namespace of `poplar.json`). A score or data path with no namespace is in the pack namespace too.
 
 import std/[options, strutils]
 
@@ -24,13 +24,15 @@ type
     commands*: seq[Command]
 
   Command* = object
-    ## `FramePushCommand` adds a frame to `<ns>:poplar stack`, to hold the temps that a recursive call would
-    ## overwrite. `FramePopCommand` removes it, and `StackClearCommand` empties the stack.
+    ## `FramePushCommand` adds a frame to `<ns>:poplar stack`, to hold the temps that a recursive
+    ## call would overwrite. `FramePopCommand` removes it, and `StackClearCommand` empties the
+    ## stack.
     case
     of RawCommand: raw*: string
     of FunctionCommand: function*: string ## The writer adds the namespace to this mcfun name.
     of AddObjectiveCommand: objective*: Objective
-    of ScoreSetCommand, ScoreSetIfUnsetCommand, ScoreAddCommand, ScoreRemoveCommand: scoreValue*: ScoreValue
+    of ScoreSetCommand, ScoreSetIfUnsetCommand, ScoreAddCommand,
+        ScoreRemoveCommand: scoreValue*: ScoreValue
     of ScoreSetMacroArgumentCommand: scoreMacroArgument*: ScoreMacroArgument
     of ScoreOperationCommand: scoreOperation*: ScoreOperation
     of DataSetCommand, DataSetIfUnsetCommand: dataValue*: DataValue
@@ -67,10 +69,10 @@ type
     ## `stData` is the `<ns>:data` storage of `$` variables, where a key is a variable name.
     ## `stArgs` is `<ns>:poplar args`, the `with` compound of the mcfun that is called next.
     ## `stFrame` is the top frame of `<ns>:poplar stack`, where a key is the name of a saved temp.
-    ## `stMacro` is `<ns>:poplar macro`: the macro arguments and the inserted values for one macro helper. An empty
-    ## key is the whole compound.
-    ## `stPoplar` is the root of `<ns>:poplar`, where the string helpers keep their scratch value.
-    ## `stStd` is `<pack>:std`, the `$` variables of the standard library, apart from the pack's own `<pack>:data`.
+    ## `stMacro` is `<ns>:poplar macro`: the macro arguments and the inserted values for one macro
+    ## helper. An empty key is the whole compound. `stPoplar` is the root of `<ns>:poplar`, where
+    ## the string helpers keep their scratch value. `stStd` is `<pack>:std`, the `$` variables of
+    ## the standard library, apart from the pack's own `<pack>:data`.
     stData, stArgs, stFrame, stMacro, stPoplar, stStd
 
   DataPathHolder* = object
@@ -93,7 +95,8 @@ type
     source*: DataPath
 
   DataSetString* = object
-    ## `data modify <target> set string <source> [start] [end]`: a substring, or a number as a string.
+    ## `data modify <target> set string <source> [start] [end]`: a substring, or a number as a
+    ## string.
     target*: DataPath
     source*: DataPath
     start*, stop*: Option[int32]
@@ -138,7 +141,7 @@ type
       dataStorage*: DataStorage
         ## `with storage <ns>:data` or `<pack>:std`, where whole `$` variables are read as they are.
     of DataPathArguments:
-      dataPath*: DataPath ## `with storage ns:data player` or `with entity @s SelectedItem`.
+      dataPath*: DataPath         ## `with storage ns:data player` or `with entity @s SelectedItem`.
     of RawArguments: raw*: string ## `with entity @s` or `with block ~ ~ ~`, as written.
     of ArgsStorageArguments, MacroStorageArguments: discard
 
@@ -164,7 +167,8 @@ type
     of TempScore:
       temp*: ScoreTemp
         ## A value during one statement. Only the mcfun and its generated functions read it.
-    of ConstantScore: constant*: int32 ## A number that `poplar/load` sets, for math with a fixed value.
+    of ConstantScore:
+      constant*: int32 ## A number that `poplar/load` sets, for math with a fixed value.
     of LocalScore:
       owner*: string
         ## A local variable. The owner is its mcfun (`combat:heal`), and only that mcfun and its
@@ -175,7 +179,7 @@ type
     holder*: string
     objective*: Option[string]
     namespace*: Option[string] ## The objective is `<namespace>` or `<namespace>.<objective>`.
-    kind*: ScoreKind ## Not compared by `==`.
+    kind*: ScoreKind           ## Not compared by `==`.
 
   ScoreValue* = object
     score*: Score
@@ -266,14 +270,15 @@ func `==`*(a, b: Score): bool =
   a.objective == b.objective and a.namespace == b.namespace and a.holder == b.holder
 
 func splitName*(name: string): (Option[string], string) =
-  ## `combat:poplar/heal/if_0` → `combat` and `poplar/heal/if_0`. A name without `:` is in the pack namespace.
+  ## `combat:poplar/heal/if_0` → `combat` and `poplar/heal/if_0`. A name without `:` is in the pack
+  ## namespace.
   let colon = name.find(':')
-  if colon < 0: (none(string), name) else: (some(name[0 ..< colon]), name[colon + 1 .. ^1])
+  if colon < 0: (none(string), name) else: (some(name[0..<colon]), name[colon + 1 .. ^1])
 
 func generatedFolder*(mcfunPath: string): string =
-  ## The generated functions of an mcfun go in `poplar/<folder>/`, and its temps are `#poplar.<folder>.t<n>`. The
-  ## folder is the mcfun's path with `.` for `/` (`std/clamp` → `std.clamp`), because it is also in data keys, which
-  ## cannot have `/`.
+  ## The generated functions of an mcfun go in `poplar/<folder>/`, and its temps are
+  ## `#poplar.<folder>.t<n>`. The folder is the mcfun's path with `.` for `/` (`std/clamp` →
+  ## `std.clamp`), because it is also in data keys, which cannot have `/`.
   mcfunPath.replace('/', '.')
 
 func isGeneratedFolder*(folder, mcfunPath: string): bool =

@@ -1,4 +1,5 @@
-## Small rewrites of the IR, as in bolt-expressions. `optimizeFunction` runs the passes in order on each function.
+## Small rewrites of the IR, as in bolt-expressions. `optimizeFunction` runs the passes in order on
+## each function.
 
 import std/[math, options, sets, strutils]
 import datapack_writer, ir
@@ -33,7 +34,8 @@ func withRun(command: Command, run: Command): Command =
   of ExecuteCommand(execute): ExecuteCommand(execute: Execute(checks: execute.checks, run: newRun))
   of ExecuteRawCommand(execute):
     ExecuteRawCommand(executeRaw: ExecuteRaw(subcommands: execute.subcommands, run: newRun))
-  of StoreResultCommand(store): StoreResultCommand(storeResult: StoreResult(target: store.target, run: newRun))
+  of StoreResultCommand(store):
+    StoreResultCommand(storeResult: StoreResult(target: store.target, run: newRun))
   of ReturnRunCommand: ReturnRunCommand(returnRun: newRun)
   else: raiseAssert "the command runs no other command"
 
@@ -47,16 +49,17 @@ func isConstant(score: Score): bool = constantValue(score).isSome
 func isConstantOne(score: Score): bool = constantValue(score) == some(1'i32)
 
 func isScopedHere(score: Score, functionName: string): bool =
-  ## A temp, or a local of this mcfun, is only read by this function and its generated functions. A local can be
-  ## written in a generated body and read by its mcfun after the body returns, so it only counts in the mcfun itself.
+  ## A temp, or a local of this mcfun, is only read by this function and its generated functions. A
+  ## local can be written in a generated body and read by its mcfun after the body returns, so it
+  ## only counts in the mcfun itself.
   case score.kind
   of LocalScore(owner): owner == functionName
   of TempScore: true
   of GlobalScore, ConstantScore: false
 
 func isTracked(score: Score): bool =
-  ## Fake players, and `@s`, which is the same entity for the whole function. Other selectors can match other
-  ## entities in each command.
+  ## Fake players, and `@s`, which is the same entity for the whole function. Other selectors can
+  ## match other entities in each command.
   score.holder.startsWith('#') or score.holder == "@s"
 
 func isGenerated(name: string): bool =
@@ -135,7 +138,8 @@ func callsFunction(command: Command, name: string): bool =
   case command
   of FunctionCommand(called): called == name
   of FunctionWithCommand(call): call.name == name
-  of ExecuteCommand(execute): checkedFunction(execute) == some(name) or callsFunction(execute.run[], name)
+  of ExecuteCommand(execute):
+    checkedFunction(execute) == some(name) or callsFunction(execute.run[], name)
   else:
     let run = runOf(command)
     run != nil and callsFunction(run[], name)
@@ -158,11 +162,11 @@ func readsTempsOf(name: string, temp: Score): bool =
   if not path.startsWith(generatedPrefix): return false
   let folderEnd = path.find('/', generatedPrefix.len)
   if folderEnd < 0: return false
-  isGeneratedFolder(path[generatedPrefix.len ..< folderEnd], owner)
+  isGeneratedFolder(path[generatedPrefix.len..<folderEnd], owner)
 
 func callsTempReader(command: Command, temp: Score): bool =
-  ## Only the mcfun and its generated functions (`poplar/<mcfun>/...`) read the temps of the mcfun. The mcfun itself
-  ## sets each temp before it reads it, so a recursive call does not read them.
+  ## Only the mcfun and its generated functions (`poplar/<mcfun>/...`) read the temps of the mcfun.
+  ## The mcfun itself sets each temp before it reads it, so a recursive call does not read them.
   case command
   of FunctionCommand(name): readsTempsOf(name, temp)
   of FunctionWithCommand(call): readsTempsOf(call.name, temp)
@@ -198,7 +202,8 @@ func isReadLater(commands: openArray[Command], temp: Score): bool =
   ## True if a command reads the temp before a command sets it again.
   for command in commands:
     if readsScore(command, temp) or callsTempReader(command, temp): return true
-    # Command text can name a local's fake player: a user command, or a `text(#x)` part in a call's arguments.
+    # Command text can name a local's fake player: a user command, or a `text(#x)` part in a call's
+    # arguments.
     case temp.kind
     of LocalScore:
       if mentionsInText(command, temp.holder): return true
@@ -207,7 +212,8 @@ func isReadLater(commands: openArray[Command], temp: Score): bool =
   false
 
 func isSetBeforeUse(commands: openArray[Command], score: Score): bool =
-  ## Other functions and user commands can read any global score, and so can the caller after a return.
+  ## Other functions and user commands can read any global score, and so can the caller after a
+  ## return.
   for command in commands:
     if readsScore(command, score) or runsOtherCode(command) or canReturn(command): return false
     if setsScore(command, score): return true
@@ -277,7 +283,8 @@ func learn(known: var KnownScores, command: Command) =
   var learned: Option[KnownScore]
   case command
   of ScoreSetCommand(scoreValue):
-    learned = some(KnownScore(score: scoreValue.score, value: NumberKnown(number: scoreValue.value)))
+    let known = NumberKnown(number: scoreValue.value)
+    learned = some(KnownScore(score: scoreValue.score, value: known))
   of ScoreSetMacroArgumentCommand(argument):
     learned = some(KnownScore(score: argument.score,
                               value: MacroArgumentKnown(macroArgument: argument.macroArgument)))
@@ -293,13 +300,16 @@ func isKnown(known: KnownScores, score: Score, value: KnownValue): bool =
   known.get(score) == some(value)
 
 func foldMath(known: KnownScores, command: Command): Option[ScoreValue] =
-  ## The same math as Minecraft: ints wrap, and `/=` and `%=` round down. Division by 0 is not computed.
+  ## The same math as Minecraft: ints wrap, and `/=` and `%=` round down. Division by 0 is not
+  ## computed.
   var target: Score
   var op: Operator
   var source: KnownValue
   case command
-  of ScoreAddCommand(change): (target, op, source) = (change.score, opAdd, NumberKnown(number: change.value))
-  of ScoreRemoveCommand(change): (target, op, source) = (change.score, opSub, NumberKnown(number: change.value))
+  of ScoreAddCommand(change):
+    (target, op, source) = (change.score, opAdd, NumberKnown(number: change.value))
+  of ScoreRemoveCommand(change):
+    (target, op, source) = (change.score, opSub, NumberKnown(number: change.value))
   of ScoreOperationCommand(operation):
     let value = known.get(operation.source)
     if value.isNone: return none(ScoreValue)
@@ -335,19 +345,21 @@ func removeIdentities(commands: openArray[Command]): seq[Command] =
   for command in commands:
     let doesNothing = case command
       of {ScoreAddCommand, ScoreRemoveCommand}(change): change.value == 0
-      of ScoreOperationCommand(operation): operation.op in {opMul, opDiv} and isConstantOne(operation.source)
+      of ScoreOperationCommand(operation):
+        operation.op in {opMul, opDiv} and isConstantOne(operation.source)
       else: false
     if not doesNothing: result.add command
 
 func propagateKnownValues(commands: openArray[Command]): seq[Command] =
-  ## Removes a set when the score already has the value, copies a macro argument from a score that holds it (a macro
-  ## line is parsed again for new arguments), and computes math on known numbers.
+  ## Removes a set when the score already has the value, copies a macro argument from a score that
+  ## holds it (a macro line is parsed again for new arguments), and computes math on known numbers.
   var known: KnownScores
   for command in commands:
     var optimized = some(command)
     case command
     of ScoreSetCommand(scoreValue):
-      if known.isKnown(scoreValue.score, NumberKnown(number: scoreValue.value)): optimized = none(Command)
+      if known.isKnown(scoreValue.score,
+                       NumberKnown(number: scoreValue.value)): optimized = none(Command)
     of ScoreSetMacroArgumentCommand(argument):
       let value = MacroArgumentKnown(macroArgument: argument.macroArgument)
       if known.isKnown(argument.score, value):
@@ -355,8 +367,8 @@ func propagateKnownValues(commands: openArray[Command]): seq[Command] =
       else:
         let copy = known.scoreWithValue(value)
         if copy.isSome:
-          optimized = some(ScoreOperationCommand(scoreOperation: ScoreOperation(target: argument.score, op: opAssign,
-                                                                               source: copy.get)))
+          let operation = ScoreOperation(target: argument.score, op: opAssign, source: copy.get)
+          optimized = some(ScoreOperationCommand(scoreOperation: operation))
     of ScoreAddCommand, ScoreRemoveCommand, ScoreOperationCommand:
       let folded = known.foldMath(command)
       if folded.isSome: optimized = some(ScoreSetCommand(scoreValue: folded.get))
@@ -366,12 +378,14 @@ func propagateKnownValues(commands: openArray[Command]): seq[Command] =
       result.add optimized.get
 
 func removeDeadWrites(functionName: string, commands: openArray[Command]): seq[Command] =
-  ## A write to a temp or a local is removed when nothing reads it before it is set again or the function ends. A
-  ## write to a global is removed only when it is set again before anything else can read it.
+  ## A write to a temp or a local is removed when nothing reads it before it is set again or the
+  ## function ends. A write to a global is removed only when it is set again before anything else
+  ## can read it.
   for index, command in commands:
     var written = none(Score)
     case command
-    of {ScoreSetCommand, ScoreAddCommand, ScoreRemoveCommand}(scoreValue): written = some(scoreValue.score)
+    of {ScoreSetCommand, ScoreAddCommand, ScoreRemoveCommand}(scoreValue):
+      written = some(scoreValue.score)
     of ScoreSetMacroArgumentCommand(argument): written = some(argument.score)
     of ScoreOperationCommand(operation): written = some(operation.target)
     of DataToScoreCommand(store): written = some(store.score)
@@ -379,13 +393,16 @@ func removeDeadWrites(functionName: string, commands: openArray[Command]): seq[C
     if written.isSome:
       let score = written.get
       let isDead =
-        if isScopedHere(score, functionName): not isReadLater(commands.toOpenArray(index + 1, commands.high), score)
-        else: isTracked(score) and isSetBeforeUse(commands.toOpenArray(index + 1, commands.high), score)
+        if isScopedHere(score, functionName):
+          not isReadLater(commands.toOpenArray(index + 1, commands.high), score)
+        else:
+          isTracked(score) and isSetBeforeUse(commands.toOpenArray(index + 1, commands.high), score)
       if isDead: continue
     result.add command
 
 func scaleDataGets(commands: openArray[Command]): seq[Command] =
-  ## `data get X` followed by `*= N` becomes `data get X N`. Only `*=`: a scale such as 0.01 can round wrongly.
+  ## `data get X` followed by `*= N` becomes `data get X N`. Only `*=`: a scale such as 0.01 can
+  ## round wrongly.
   var index = 0
   while index < commands.len:
     var command = commands[index]
@@ -397,7 +414,7 @@ func scaleDataGets(commands: openArray[Command]): seq[Command] =
           let factor = constantValue(operation.source)
           if operation.op == opMul and operation.target == store.score and factor.isSome:
             let scale = int64(store.scale) * int64(factor.get)
-            if scale in int64(low(int32)) .. int64(high(int32)):
+            if scale in int64(low(int32))..int64(high(int32)):
               store.scale = int32(scale)
               inc index
         else: discard
@@ -406,8 +423,8 @@ func scaleDataGets(commands: openArray[Command]): seq[Command] =
     inc index
 
 func definedTemp(command: Command, functionName: string): Option[Score] =
-  ## The temp that a command writes, when the command's result is the temp's new value. `/=` and `%=` fail when the
-  ## source is 0, and then the result is 0, so they need a constant source.
+  ## The temp that a command writes, when the command's result is the temp's new value. `/=` and
+  ## `%=` fail when the source is 0, and then the result is 0, so they need a constant source.
   var score: Score
   case command
   of {ScoreSetCommand, ScoreAddCommand, ScoreRemoveCommand}(scoreValue): score = scoreValue.score
@@ -432,14 +449,16 @@ func mergeCopy(definition, copy: Command, temp: Score): Option[Command] =
       some(ReturnRunCommand(returnRun: createCommand(definition)))
     else: none(Command)
   of ScoreOperationCommand(operation):
-    if operation.op != opAssign or operation.source != temp or operation.target == temp: return none(Command)
+    if operation.op != opAssign or operation.source != temp or operation.target == temp:
+      return none(Command)
     some(StoreResultCommand(storeResult: StoreResult(target: ScoreTarget(score: operation.target),
                                                      run: createCommand(definition))))
   else: none(Command)
 
 func inlineStores(functionName: string, commands: openArray[Command]): seq[Command] =
   ## A command that computes a temp, followed by a copy of that temp, becomes one command:
-  ## `scoreboard players remove T 1` + `execute store result storage X int 1 run scoreboard players get T` →
+  ## `scoreboard players remove T 1` +
+  ## `execute store result storage X int 1 run scoreboard players get T` →
   ## `execute store result storage X int 1 run scoreboard players remove T 1`.
   var index = 0
   while index < commands.len:
@@ -448,7 +467,8 @@ func inlineStores(functionName: string, commands: openArray[Command]): seq[Comma
       let temp = definedTemp(command, functionName)
       if temp.isSome:
         let merged = mergeCopy(command, commands[index + 1], temp.get)
-        if merged.isSome and not isReadLater(commands.toOpenArray(index + 2, commands.high), temp.get):
+        if merged.isSome and not isReadLater(commands.toOpenArray(index + 2, commands.high),
+                                             temp.get):
           result.add merged.get
           index += 2
           continue
@@ -456,8 +476,9 @@ func inlineStores(functionName: string, commands: openArray[Command]): seq[Comma
     inc index
 
 func storeConstants(functionName: string, commands: openArray[Command]): seq[Command] =
-  ## `execute store result storage X float 1 run scoreboard players set T 20` → `data modify storage X set value
-  ## 20f`, when nothing reads the temp after it. A store into a score becomes `scoreboard players set`.
+  ## `execute store result storage X float 1 run scoreboard players set T 20` →
+  ## `data modify storage X set value 20f`, when nothing reads the temp after it. A store into a
+  ## score becomes `scoreboard players set`.
   for index, command in commands:
     case command
     of StoreResultCommand(store):
@@ -467,15 +488,18 @@ func storeConstants(functionName: string, commands: openArray[Command]): seq[Com
            not isReadLater(commands.toOpenArray(index + 1, commands.high), scoreValue.score):
           case store.target
           of ScoreTarget(score):
-            result.add ScoreSetCommand(scoreValue: ScoreValue(score: score, value: scoreValue.value))
-          of DataTarget(path): result.add DataSetCommand(dataValue: DataValue(target: path, snbt: $scoreValue.value))
+            result.add ScoreSetCommand(scoreValue: ScoreValue(score: score,
+                value: scoreValue.value))
+          of DataTarget(path):
+            result.add DataSetCommand(dataValue: DataValue(target: path, snbt: $scoreValue.value))
           continue
       else: discard
     else: discard
     result.add command
 
 func optimizeFunction*(functionName: string, commands: openArray[Command]): seq[Command] =
-  ## The passes run in this order on each function. Each pass is a small rewrite, as in bolt-expressions.
+  ## The passes run in this order on each function. Each pass is a small rewrite, as in
+  ## bolt-expressions.
   let withoutIdentities = removeIdentities(commands)
   let withKnownValues = propagateKnownValues(withoutIdentities)
   let withoutDeadWrites = removeDeadWrites(functionName, withKnownValues)
@@ -493,7 +517,8 @@ func smallBody(functions: openArray[McFunction], caller, name: string): Option[C
     return some(function.commands[0])
   none(Command)
 
-func inlineCall(functions: openArray[McFunction], caller: string, command: Command): Option[Command] =
+func inlineCall(functions: openArray[McFunction], caller: string,
+                command: Command): Option[Command] =
   case command
   of FunctionCommand(name): smallBody(functions, caller, name)
   # A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the caller.
@@ -507,11 +532,13 @@ func inlineCall(functions: openArray[McFunction], caller: string, command: Comma
     case run.get
     of ExecuteCommand(inner):
       some(ExecuteCommand(execute: Execute(checks: execute.checks & inner.checks, run: inner.run)))
-    else: some(ExecuteCommand(execute: Execute(checks: execute.checks, run: createCommand(run.get))))
+    else:
+      some(ExecuteCommand(execute: Execute(checks: execute.checks, run: createCommand(run.get))))
   of ExecuteRawCommand(execute):
     let run = inlineCall(functions, caller, execute.run[])
     if run.isNone: return none(Command)
-    some(ExecuteRawCommand(executeRaw: ExecuteRaw(subcommands: execute.subcommands, run: createCommand(run.get))))
+    some(ExecuteRawCommand(executeRaw: ExecuteRaw(subcommands: execute.subcommands,
+        run: createCommand(run.get))))
   else: none(Command)
 
 func callCount(functions: openArray[McFunction], name: string): int =
@@ -523,54 +550,60 @@ func readsReturnValue(command: Command, name: string): bool =
   case command
   of StoreResultCommand(store): callsFunction(store.run[], name)
   of ReturnRunCommand(run): callsFunction(run[], name)
-  of ExecuteCommand(execute): checkedFunction(execute) == some(name) or readsReturnValue(execute.run[], name)
+  of ExecuteCommand(execute):
+    checkedFunction(execute) == some(name) or readsReturnValue(execute.run[], name)
   of ExecuteRawCommand(execute): readsReturnValue(execute.run[], name)
   else: false
 
 func isReturnValueRead(functions: openArray[McFunction], name: string): bool =
-  ## True when a command uses the return value of `name`: `store result ... run function`, `if function`, or
-  ## `return run function`.
+  ## True when a command uses the return value of `name`: `store result ... run function`,
+  ## `if function`, or `return run function`.
   for function in functions:
     for command in function.commands:
       if readsReturnValue(command, name): return true
   false
 
 func inlineTailCalls(functions: var seq[McFunction]) =
-  ## A generated function that is called once, as the last command of its caller, is put in its place, even when it
-  ## can return: leaving the caller there is what happens anyway. Not when something reads the caller's return value.
+  ## A generated function that is called once, as the last command of its caller, is put in its
+  ## place, even when it can return: leaving the caller there is what happens anyway. Not when
+  ## something reads the caller's return value.
   for function in functions.mitems:
     let commands = function.commands
     if commands.len == 0: continue
     var calleeName: string
     case commands[^1]
     of FunctionCommand(name): calleeName = name
-    # A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the caller.
+    # A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the
+    # caller.
     of FunctionWithCommand(call):
       case call.arguments
       of CompoundArguments: calleeName = call.name
       else: continue
     else: continue
     if not isGenerated(calleeName) or calleeName == function.name: continue
-    if callCount(functions, calleeName) != 1 or isReturnValueRead(functions, function.name): continue
+    if callCount(functions, calleeName) != 1 or isReturnValueRead(functions,
+        function.name): continue
     for candidate in functions:
       if candidate.name == calleeName:
         function.commands = commands[0 ..< commands.len - 1] & candidate.commands
         break
 
 func inlineSmallFunctions*(functions: openArray[McFunction]): seq[McFunction] =
-  ## A generated function with one command is put where it is called, and the function is removed. A command that
-  ## can return is not moved, because the `return` would then leave the caller.
+  ## A generated function with one command is put where it is called, and the function is removed. A
+  ## command that can return is not moved, because the `return` would then leave the caller.
   # One pass with the original bodies, so that functions that call each other cannot grow forever.
   var inlined = @functions
   for function in inlined.mitems:
     var commands: seq[Command]
-    for command in function.commands: commands.add inlineCall(functions, function.name, command).get(command)
+    for command in function.commands:
+      commands.add inlineCall(functions, function.name, command).get(command)
     function.commands = commands
   inlineTailCalls(inlined)
 
   for function in inlined:
     if not isGenerated(function.name) or callCount(inlined, function.name) > 0: result.add function
-  for function in result.mitems: function.commands = optimizeFunction(function.name, function.commands)
+  for function in result.mitems:
+    function.commands = optimizeFunction(function.name, function.commands)
 
 # ---- macro arguments of generated functions
 
@@ -588,7 +621,8 @@ func usesArguments(command: Command, needs: HashSet[string]): bool =
     else: discard
   # The wrapper and its run are checked apart, so a call inside counts only as itself.
   of ExecuteCommand, ExecuteRawCommand, StoreResultCommand, ReturnRunCommand:
-    return hasMacroText(withRun(command, RawCommand(raw: ""))) or usesArguments(runOf(command)[], needs)
+    let wrapper = withRun(command, RawCommand(raw: ""))
+    return hasMacroText(wrapper) or usesArguments(runOf(command)[], needs)
   else: discard
   hasMacroText(command)
 
@@ -597,7 +631,8 @@ func withoutArguments(command: Command, needs: HashSet[string]): Command =
   of FunctionWithCommand(call):
     case call.arguments
     of CompoundArguments:
-      if isGenerated(call.name) and call.name notin needs: return FunctionCommand(function: call.name)
+      if isGenerated(call.name) and call.name notin needs:
+        return FunctionCommand(function: call.name)
     else: discard
   of ExecuteCommand, ExecuteRawCommand, StoreResultCommand, ReturnRunCommand:
     return withRun(command, withoutArguments(runOf(command)[], needs))
@@ -605,8 +640,9 @@ func withoutArguments(command: Command, needs: HashSet[string]): Command =
   command
 
 func dropUnusedArguments*(functions: var seq[McFunction]) =
-  ## A generated body gets the macro arguments of its mcfun (`{amount:"$(amount)"}`) only if it, or a body that it
-  ## calls, has a macro line. The others are called without them, so a value with a `"` in it cannot break the call.
+  ## A generated body gets the macro arguments of its mcfun (`{amount:"$(amount)"}`) only if it, or
+  ## a body that it calls, has a macro line. The others are called without them, so a value with a
+  ## `"` in it cannot break the call.
   var needs: HashSet[string]
   var isChanged = true
   while isChanged:

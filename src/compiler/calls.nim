@@ -1,7 +1,9 @@
-# mcfun calls: arguments, the call graph, and saving values around a recursive call. Part of compiler.nim.
+# mcfun calls: arguments, the call graph, and saving values around a recursive call. Part of
+# compiler.nim.
 
-const builtinNames* = ["append", "prepend", "insert", "remove", "len", "text", "onEvent", "onTrigger", "onDeath",
-                       "onFirstJoin", "onJoin", "onRespawn", "slice", "str", "startsWith", "endsWith"]
+const builtinNames* = ["append", "prepend", "insert", "remove", "len", "text", "onEvent",
+                       "onTrigger", "onDeath", "onFirstJoin", "onJoin", "onRespawn", "slice", "str",
+                       "startsWith", "endsWith"]
 
 func isBuiltin(name: string): bool = name in builtinNames
 
@@ -49,11 +51,14 @@ func setsData(body: openArray[Statement], name: string): bool =
     else: discard
   false
 
-proc nonCompoundGlobal(compiler: Compiler, identifier: Identifier, env: Environment): Option[string] =
-  ## The initial value of a whole `$` global that is not a compound and that no code changes. A global that code
-  ## sets can hold a compound by the time of the call, so it is not reported. None otherwise.
+proc nonCompoundGlobal(compiler: Compiler, identifier: Identifier,
+                       env: Environment): Option[string] =
+  ## The initial value of a whole `$` global that is not a compound and that no code changes. A
+  ## global that code sets can hold a compound by the time of the call, so it is not reported. None
+  ## otherwise.
   if identifier.kind != ikData or pathRoot(identifier.name) != identifier.name: return none(string)
-  if identifier.namespace.isNone and env.getLocal(lkData, identifier.name).isSome: return none(string)
+  if identifier.namespace.isNone and env.getLocal(lkData,
+                                                  identifier.name).isSome: return none(string)
   let namespace = compiler.resolveNamespace(identifier.namespace)
   let key = qualifiedKey(namespace, identifier.name)
   if key notin compiler.dataGlobals: return none(string)
@@ -70,8 +75,8 @@ proc dataArguments(compiler: Compiler, value: Expression, env: Environment): Fun
   let initial = compiler.nonCompoundGlobal(identifier, env)
   if initial.isSome:
     let name = identifier.name
-    compiler.failOn(value, &"'with' needs a compound, but '${name}' is {initial.get}. Declare it as a compound: " &
-                           &"'var ${name} = {{name: {initial.get}}};'")
+    compiler.failOn(value, &"'with' needs a compound, but '${name}' is {initial.get}. Declare it " &
+                           &"as a compound: 'var ${name} = {{name: {initial.get}}};'")
   DataPathArguments(dataPath: path)
 
 proc inlineCompound(compiler: Compiler, entries: openArray[Entry], env: Environment): string =
@@ -96,9 +101,10 @@ proc scoreOfArgument(compiler: Compiler, value: Expression, env: Environment,
   compiler.compileInto(temp, value, env, commands)
   some(temp)
 
-proc storeArguments(compiler: Compiler, entries: openArray[Entry], env: Environment, commands: var seq[Command]) =
-  ## Writes each key of `<ns>:poplar args`. Math is computed before any key is written, so a call inside a value
-  ## cannot overwrite them.
+proc storeArguments(compiler: Compiler, entries: openArray[Entry], env: Environment,
+    commands: var seq[Command]) =
+  ## Writes each key of `<ns>:poplar args`. Math is computed before any key is written, so a call
+  ## inside a value cannot overwrite them.
   var entryScores: seq[Option[Score]]
   for entry in entries: entryScores.add compiler.scoreOfArgument(entry.value, env, commands)
 
@@ -113,7 +119,8 @@ proc storeArguments(compiler: Compiler, entries: openArray[Entry], env: Environm
       of ListExpression, CompoundExpression: true
       else: false
     if entryScores[index].isSome:
-      commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: target, score: entryScores[index].get))
+      commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: target,
+                                                               score: entryScores[index].get))
     elif call.isSome and isStringCall(call.get) and isRuntime:
       compiler.compileStringInto(target, call.get, env, commands)
     elif isDataIdentifier(value):
@@ -122,22 +129,25 @@ proc storeArguments(compiler: Compiler, entries: openArray[Entry], env: Environm
     elif isLiteral and isRuntime:
       compiler.compileLiteralAssign(target, value, env, commands)
     else:
-      commands.add DataSetCommand(dataValue: DataValue(target: target, snbt: compiler.argumentSnbt(value, env)))
+      let snbt = compiler.argumentSnbt(value, env)
+      commands.add DataSetCommand(dataValue: DataValue(target: target, snbt: snbt))
 
-proc compoundArguments(compiler: Compiler, mcfunName: string, keys: OrderedSet[string], value: Expression,
+proc compoundArguments(compiler: Compiler, mcfunName: string, keys: OrderedSet[string],
+                       value: Expression,
                        env: Environment, commands: var seq[Command]): FunctionWithArguments =
-  ## `f() with {name: ...}`: written in the call when every value is known, else stored in `<ns>:poplar args`
-  ## first.
+  ## `f() with {name: ...}`: written in the call when every value is known, else stored in
+  ## `<ns>:poplar args` first.
   var entries: seq[Entry]
   case value
   of CompoundExpression(compoundEntries): entries = compoundEntries
   else:
-    compiler.failOn(value, "'with' needs a compound ('{name: ...}'), a '$' variable, 'entity <selector>' or " &
-                           "'block <position>'")
+    compiler.failOn(value, "'with' needs a compound ('{name: ...}'), a '$' variable, " &
+                           "'entity <selector>' or 'block <position>'")
 
   for key in keys:
     if not entries.anyIt(it.key == key):
-      compiler.failOn(value, &"mcfun '{mcfunName}' uses '$({key})', but this compound has no key '{key}'")
+      compiler.failOn(value, &"mcfun '{mcfunName}' uses '$({key})', but this compound has no key " &
+                             &"'{key}'")
 
   var isInline = true
   for entry in entries:
@@ -150,10 +160,11 @@ proc compoundArguments(compiler: Compiler, mcfunName: string, keys: OrderedSet[s
   compiler.storeArguments(entries, env, commands)
   ArgsStorageArguments()
 
-proc compileMcfunCall(compiler: Compiler, call: Call, declaration: McfunDeclaration, env: Environment,
+proc compileMcfunCall(compiler: Compiler, call: Call, declaration: McfunDeclaration,
+                      env: Environment,
                       commands: var seq[Command]): Command =
-  ## Returns the command that calls an mcfun. Commands that write a runtime `with` compound go into `commands`
-  ## first.
+  ## Returns the command that calls an mcfun. Commands that write a runtime `with` compound go into
+  ## `commands` first.
   let mcfun = declaration.mcfun
   var keys: OrderedSet[string]
   collectMacroKeys(mcfun.body, keys)
@@ -181,10 +192,11 @@ proc generatedCall(compiler: Compiler, name: string): Command =
   FunctionWithCommand(functionWith: FunctionWith(name: name, arguments: arguments))
 
 func scoreFrameSlot(score: Score): DataPath =
-  ## The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, and `s_i_countdown` for the local `#i_countdown`.
+  ## The key in the frame: `t0` for the temp `#poplar.<mcfun>.t0`, and `s_i_countdown` for the local
+  ## `#i_countdown`.
   let key = case score.kind
     of TempScore(temp): &"t{temp.index}"
-    of LocalScore: "s_" & score.holder[1 .. ^1]
+    of LocalScore: "s_" & score.holder[1..^1]
     of GlobalScore, ConstantScore: raiseAssert "only temps and locals are saved"
   inStorage(stFrame, key)
 
@@ -192,16 +204,18 @@ func dataFrameSlot(key: string): DataPath =
   ## The key in the frame of the data local `names_countdown`: `d_names_countdown`.
   inStorage(stFrame, "d_" & key)
 
-proc addWithSavedValues(compiler: Compiler, call: Command, target: Option[Score], liveTempCount: int,
-                           commands: var seq[Command]) =
-  ## A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
-  ## locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
+proc addWithSavedValues(compiler: Compiler, call: Command, target: Option[Score],
+                        liveTempCount: int, commands: var seq[Command]) =
+  ## A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps
+  ## and the visible locals are saved in a frame around the call. `target` gets the result of the
+  ## call, so it is not restored.
   var savedScores: seq[Score]
   var savedData: seq[string]
-  for index in 0 ..< liveTempCount: savedScores.add compiler.tempScore(index)
+  for index in 0..<liveTempCount: savedScores.add compiler.tempScore(index)
   for local in compiler.mcfun.liveLocals:
     case local.kind
-    of lkScore: savedScores.add localScore(local.generatedName, local.owner, compiler.scope.outputNamespace)
+    of lkScore:
+      savedScores.add localScore(local.generatedName, local.owner, compiler.scope.outputNamespace)
     of lkData: savedData.add local.generatedName
   if target.isSome:
     for index, score in savedScores:
@@ -215,14 +229,18 @@ proc addWithSavedValues(compiler: Compiler, call: Command, target: Option[Score]
   compiler.usesStack = true
   commands.add FramePushCommand()
   for score in savedScores:
-    commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: scoreFrameSlot(score), score: score))
+    commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: scoreFrameSlot(score),
+                                                             score: score))
   for key in savedData:
-    commands.add DataCopyCommand(dataCopy: DataCopy(target: dataFrameSlot(key), source: compiler.dataLocal(key)))
+    commands.add DataCopyCommand(dataCopy: DataCopy(target: dataFrameSlot(key),
+        source: compiler.dataLocal(key)))
   commands.add call
   for score in savedScores:
-    commands.add DataToScoreCommand(dataToScore: DataToScore(source: scoreFrameSlot(score), score: score))
+    commands.add DataToScoreCommand(dataToScore: DataToScore(source: scoreFrameSlot(score),
+                                                             score: score))
   for key in savedData:
-    commands.add DataCopyCommand(dataCopy: DataCopy(target: compiler.dataLocal(key), source: dataFrameSlot(key)))
+    commands.add DataCopyCommand(dataCopy: DataCopy(target: compiler.dataLocal(key),
+        source: dataFrameSlot(key)))
   commands.add FramePopCommand()
 
 proc calledKey(compiler: Compiler, identifier: Identifier): Option[string] =
@@ -231,7 +249,8 @@ proc calledKey(compiler: Compiler, identifier: Identifier): Option[string] =
   if key in compiler.mcfuns: some(key) else: none(string)
 
 proc collectStdIds(compiler: Compiler, text: string, calls: var OrderedSet[string]) =
-  ## A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as a use.
+  ## A std mcfun is only written when something uses it, so a `std:name` in Minecraft text counts as
+  ## a use.
   const prefix = stdNamespace & ":"
   var index = 0
   while true:
@@ -241,17 +260,20 @@ proc collectStdIds(compiler: Compiler, text: string, calls: var OrderedSet[strin
     if start > 0 and isResourceNameChar(text[start - 1]): continue
     var stop = index
     while stop < text.len and (text[stop].isAlphaNumeric or text[stop] == '_'): inc stop
-    let key = qualifiedKey(stdNamespace, text[index ..< stop])
+    let key = qualifiedKey(stdNamespace, text[index..<stop])
     if key in compiler.mcfuns: calls.incl key
 
-proc collectInsertCalls(compiler: Compiler, parts: openArray[CommandPart], calls: var OrderedSet[string]) =
-  ## `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
+proc collectInsertCalls(compiler: Compiler, parts: openArray[CommandPart],
+                        calls: var OrderedSet[string]) =
+  ## `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of
+  ## `std:clamp`.
   for part in parts:
     case part
     of TextPart(text): compiler.collectStdIds(text, calls)
     of InsertPart(insert): compiler.collectExpressionCalls(insert, calls)
 
-proc collectExpressionCalls(compiler: Compiler, expression: Expression, calls: var OrderedSet[string]) =
+proc collectExpressionCalls(compiler: Compiler, expression: Expression,
+                            calls: var OrderedSet[string]) =
   case expression
   of PrefixExpression(prefix): compiler.collectExpressionCalls(prefix.operand, calls)
   of InfixExpression(infix):

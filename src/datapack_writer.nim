@@ -7,8 +7,8 @@ const zipVersion = 20'u16
   ## Version 2.0 of the zip format: stored files with no compression.
 
 func functionPath*(name: string): string =
-  ## Minecraft function names cannot have capitals, so a camelCase name is written in snake_case: `playerDied` →
-  ## `player_died`, `poplar/usedCarrot/if_0` → `poplar/used_carrot/if_0`.
+  ## Minecraft function names cannot have capitals, so a camelCase name is written in snake_case:
+  ## `playerDied` → `player_died`, `poplar/usedCarrot/if_0` → `poplar/used_carrot/if_0`.
   for index, ch in name:
     if ch.isUpperAscii:
       if index > 0 and name[index - 1] != '/': result.add '_'
@@ -21,7 +21,8 @@ func splitFunctionName(packNamespace, name: string): (string, string) =
   (namespace.get(packNamespace), path)
 
 func functionId(packNamespace, name: string): string =
-  ## `combat:healPlayer` → `combat:heal_player`. A name without a namespace is in the pack namespace.
+  ## `combat:healPlayer` → `combat:heal_player`. A name without a namespace is in the pack
+  ## namespace.
   let (namespace, path) = splitFunctionName(packNamespace, name)
   namespace & ":" & functionPath(path)
 
@@ -37,7 +38,8 @@ func dataPathText(namespace: string, dataPath: DataPath): string =
     of stFrame: &"storage {namespace}:poplar stack[-1].{path}"
     of stPoplar: &"storage {namespace}:poplar {path}"
     of stMacro:
-      if path.len == 0: &"storage {namespace}:poplar macro" else: &"storage {namespace}:poplar macro.{path}"
+      if path.len == 0: &"storage {namespace}:poplar macro"
+      else: &"storage {namespace}:poplar macro.{path}"
   of EntityHolder(selector): &"entity {selector} {path}"
 
 func objectiveText*(namespace: string, objective: Option[string]): string =
@@ -85,7 +87,8 @@ func renderCheck(text: var string, namespace: string, check: Check) =
 func renderCommand*(text: var string, namespace: string, command: Command)
 
 func renderRun(text: var string, namespace: string, run: Command) =
-  ## `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become one.
+  ## `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become
+  ## one.
   const nested = " run execute "
   let start = text.len
   text.add " run "
@@ -97,21 +100,26 @@ func renderCommand*(text: var string, namespace: string, command: Command) =
   of RawCommand(raw): text.add raw
   of FunctionCommand(function): text.add "function " & functionId(namespace, function)
   of AddObjectiveCommand(objective):
-    text.add &"scoreboard objectives add {objectiveText(objective.namespace.get(namespace), objective.name)} dummy"
+    text.add "scoreboard objectives add " &
+             &"{objectiveText(objective.namespace.get(namespace), objective.name)} dummy"
   of ScoreSetCommand(scoreValue):
     text.add &"scoreboard players set {scoreText(namespace, scoreValue.score)} {scoreValue.value}"
   of ScoreSetIfUnsetCommand(scoreValue):
     let score = scoreText(namespace, scoreValue.score)
-    text.add &"execute unless score {score} matches -2147483648.. run scoreboard players set {score} {scoreValue.value}"
+    text.add &"execute unless score {score} matches -2147483648.. run scoreboard players set " &
+             &"{score} {scoreValue.value}"
   of ScoreAddCommand(scoreValue):
     text.add &"scoreboard players add {scoreText(namespace, scoreValue.score)} {scoreValue.value}"
   of ScoreRemoveCommand(scoreValue):
-    text.add &"scoreboard players remove {scoreText(namespace, scoreValue.score)} {scoreValue.value}"
+    text.add &"scoreboard players remove {scoreText(namespace, scoreValue.score)} " &
+             &"{scoreValue.value}"
   of ScoreOperationCommand(operation):
-    text.add &"scoreboard players operation {scoreText(namespace, operation.target)} {operatorText(operation.op)} " &
+    text.add &"scoreboard players operation {scoreText(namespace, operation.target)} " &
+             &"{operatorText(operation.op)} " &
              scoreText(namespace, operation.source)
   of ScoreSetMacroArgumentCommand(argument):
-    text.add &"scoreboard players set {scoreText(namespace, argument.score)} $({argument.macroArgument})"
+    text.add &"scoreboard players set {scoreText(namespace, argument.score)} " &
+             &"$({argument.macroArgument})"
   of DataSetCommand(data):
     text.add &"data modify {dataPathText(namespace, data.target)} set value {data.snbt}"
   of DataSetIfUnsetCommand(data):
@@ -128,14 +136,16 @@ func renderCommand*(text: var string, namespace: string, command: Command) =
     of FromSource(fromPath): text.add " from " & dataPathText(namespace, fromPath)
   of DataRemoveCommand(dataPath): text.add "data remove " & dataPathText(namespace, dataPath)
   of DataCopyCommand(copy):
-    text.add &"data modify {dataPathText(namespace, copy.target)} set from {dataPathText(namespace, copy.source)}"
+    text.add &"data modify {dataPathText(namespace, copy.target)} set from " &
+             &"{dataPathText(namespace, copy.source)}"
   of DataSetStringCommand(substring):
     text.add &"data modify {dataPathText(namespace, substring.target)} set string " &
              dataPathText(namespace, substring.source)
     if substring.start.isSome: text.add " " & $substring.start.get
     if substring.stop.isSome: text.add " " & $substring.stop.get
   of ScoreToDataCommand(copy):
-    text.add &"execute store result {dataPathText(namespace, copy.target)} int 1 run scoreboard players get " &
+    text.add &"execute store result {dataPathText(namespace, copy.target)} int 1 run scoreboard " &
+             "players get " &
              scoreText(namespace, copy.score)
   of DataToScoreCommand(copy):
     text.add &"execute store result score {scoreText(namespace, copy.score)} run data get " &
@@ -170,7 +180,8 @@ func renderCommand*(text: var string, namespace: string, command: Command) =
   of StoreResultCommand(store):
     case store.target
     of ScoreTarget(score): text.add &"execute store result score {scoreText(namespace, score)} run "
-    of DataTarget(dataPath): text.add &"execute store result {dataPathText(namespace, dataPath)} int 1 run "
+    of DataTarget(dataPath):
+      text.add &"execute store result {dataPathText(namespace, dataPath)} int 1 run "
     text.renderCommand(namespace, store.run[])
   of ScoreGetCommand(score): text.add "scoreboard players get " & scoreText(namespace, score)
   of DataGetCommand(dataPath): text.add "data get " & dataPathText(namespace, dataPath)
@@ -226,12 +237,12 @@ func crc32(data: string): uint32 =
   result = 0xFFFF_FFFF'u32
   for byte in data:
     result = result xor uint32(ord(byte))
-    for _ in 0 ..< 8:
+    for _ in 0..<8:
       result = if (result and 1) != 0: (result shr 1) xor 0xEDB8_8320'u32 else: result shr 1
   result = not result
 
 func addInt[T: uint16 | uint32](bytes: var string, value: T) =
-  for index in 0 ..< sizeof(T): bytes.add char((value shr (8 * index)) and 0xFF)
+  for index in 0..<sizeof(T): bytes.add char((value shr (8 * index)) and 0xFF)
 
 func addEntryHeader(bytes: var string, crc, size: uint32, nameLength: uint16) =
   ## The fields that the local header and the central directory
@@ -256,7 +267,8 @@ proc collectFiles(folder, relative: string, files: var seq[string]) =
     else: discard
 
 proc writeZip*(packPath, zipPath: string) =
-  ## Writes a zip of the pack folder with no compression, so `pack.mcmeta` is at the root of the zip.
+  ## Writes a zip of the pack folder with no compression, so `pack.mcmeta` is at the root of the
+  ## zip.
   var bytes, centralDirectory: string
   var fileCount = 0'u16
 

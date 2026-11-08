@@ -1,3 +1,5 @@
+## The tokens that the lexer gives the parser, and the keywords of the language.
+
 type
   TokenTag* = enum
     tkLeftParen = "left_paren"
@@ -33,7 +35,8 @@ type
     tkCommand = "command"
     tkSelector = "selector"
     tkExecuteSubcommands = "execute_subcommands"
-    ## `block ~ ~-1 ~ stone` in an `if` or `while` condition: an `execute if` subcommand as raw text.
+    ## `block ~ ~-1 ~ stone` in an `if` or `while` condition: an `execute if` subcommand as raw
+    ## text.
     tkConditionText = "condition_text"
     ## The JSON body of a data file, from `{` or `[` to the matching bracket.
     tkJsonBody = "json_body"
@@ -72,7 +75,8 @@ type
     literal*: string
     line*, column*: int
 
-const keywords* = [tkAnd, tkBreak, tkContinue, tkElse, tkExecute, tkFalse, tkFor, tkMcfun, tkNamespace, tkSelf, tkIf,
+const keywords* = [tkAnd, tkBreak, tkContinue, tkElse, tkExecute, tkFalse, tkFor, tkMcfun,
+                   tkNamespace, tkSelf, tkIf,
                   tkImport, tkNull, tkOr, tkReturn, tkVar, tkTrue, tkWhile, tkWith]
 
 func keywordTag*(word: string): TokenTag =

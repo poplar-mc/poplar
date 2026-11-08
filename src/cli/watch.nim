@@ -1,3 +1,5 @@
+## `poplar watch`: builds again after each change, and can copy each build into a world.
+
 import std/[hashes, monotimes, options, os, strformat, strutils, times]
 import ../[config, dot_env, project]
 import build, command_line, output, root
@@ -9,8 +11,8 @@ const markerName = ".poplar-watch"
 
 type
   WorldCopy = object
-    ## `--world`: after each build, the pack is copied into `<world>/datapacks/`. Minecraft does not follow symbolic
-    ## links unless they are allowed in `allowed_symlinks.txt`, so it is a copy.
+    ## `--world`: after each build, the pack is copied into `<world>/datapacks/`. Minecraft does not
+    ## follow symbolic links unless they are allowed in `allowed_symlinks.txt`, so it is a copy.
     datapacksPath: string
     source: string
       ## Where the world came from, such as ` (POPLAR_WORLD from .env)`, or empty for `--world`.
@@ -32,34 +34,39 @@ proc update(copy: var WorldCopy, output: Output, projectPath, packPath: string) 
   let worldName = lastPathPart(copy.datapacksPath.parentDir)
   if not isReplaceable(target):
     copy.failed = true
-    output.failure(&"{output.bold}{worldName}/datapacks/{name}{output.reset} already exists and was not made by " &
-                   "poplar watch. Remove it, then run watch again")
+    output.failure(&"{output.bold}{worldName}/datapacks/{name}{output.reset} already exists and " &
+                   "was not made by poplar watch. Remove it, then run watch again")
     return
   if symlinkExists(target) or fileExists(target): removeFile(target) else: removeDir(target)
 
   let source = projectPath / packPath
   createDir(target)
   for path in walkDirRec(source, yieldFilter = {pcFile, pcDir}, relative = true):
-    if dirExists(source / path): createDir(target / path) else: copyFile(source / path, target / path)
-  writeFile(target / markerName, "Copied by poplar watch, which replaces this folder after each build.\n")
+    if dirExists(source / path): createDir(target / path)
+    else: copyFile(source / path, target / path)
+  writeFile(target / markerName,
+            "Copied by poplar watch, which replaces this folder after each build.\n")
 
   if not copy.copiedBefore:
-    output.success(&"Copied to {output.bold}{worldName}/datapacks/{name}{output.reset}{copy.source}. Run " &
-                   &"{output.bold}/reload{output.reset} in the game after each build")
+    output.success(&"Copied to {output.bold}{worldName}/datapacks/{name}{output.reset}" &
+                   &"{copy.source}. Run {output.bold}/reload{output.reset} in the game after " &
+                   "each build")
   copy.copiedBefore = true
 
 proc expandHome(path: string): string =
   ## The shell turns `~/` into the home folder for `--world`, but not for a variable.
   if not path.startsWith("~/"): return path
   let home = getEnv("HOME", getEnv("USERPROFILE"))
-  if home.len == 0: path else: home / path[2 .. ^1]
+  if home.len == 0: path else: home / path[2..^1]
 
 proc chooseWorld(shared: Shared, invocation: Invocation, projectPath: string): Option[World] =
-  ## `--world`, else `POPLAR_WORLD` from the environment, else from the project's `.env`. None when none is set.
+  ## `--world`, else `POPLAR_WORLD` from the environment, else from the project's `.env`. None when
+  ## none is set.
   let flag = invocation.flag("world")
   if flag.len > 0: return some(World(path: flag))
   if existsEnv("POPLAR_WORLD"):
-    return some(World(path: expandHome(getEnv("POPLAR_WORLD")), source: " (POPLAR_WORLD from the environment)"))
+    return some(World(path: expandHome(getEnv("POPLAR_WORLD")),
+                      source: " (POPLAR_WORLD from the environment)"))
   case dot_env.read(projectPath, "POPLAR_WORLD")
   of ValueLookup(value): some(World(path: expandHome(value), source: " (POPLAR_WORLD from .env)"))
   of MissingLookup: none(World)
@@ -69,14 +76,16 @@ proc chooseWorld(shared: Shared, invocation: Invocation, projectPath: string): O
     fail()
 
 proc datapacksPath(output: Output, world: World): Option[string] =
-  ## The `datapacks` folder of the world, made if the world has none yet. None after an error is printed.
+  ## The `datapacks` folder of the world, made if the world has none yet. None after an error is
+  ## printed.
   if not dirExists(world.path):
-    output.failure(&"The world folder {output.bold}{world.path}{output.reset}{world.source} does not exist")
+    output.failure(&"The world folder {output.bold}{world.path}{output.reset}{world.source} does " &
+                   "not exist")
     return none(string)
   let worldPath = expandFilename(world.path)
   if not fileExists(worldPath / "level.dat"):
-    output.failure(&"{output.bold}{world.path}{output.reset}{world.source} is not a Minecraft world: it has no " &
-                   "level.dat")
+    output.failure(&"{output.bold}{world.path}{output.reset}{world.source} is not a Minecraft " &
+                   "world: it has no level.dat")
     return none(string)
   createDir(worldPath / "datapacks")
   some(worldPath / "datapacks")
@@ -121,8 +130,9 @@ proc register*(shared: Shared): Command =
       if datapacks.isNone: fail()
       worldCopy = some(WorldCopy(datapacksPath: datapacks.get, source: world.get.source))
     else:
-      output.warning(&"No world specified, so builds are not copied anywhere. Use {output.bold}--world" &
-                     &"{output.reset}, or set {output.bold}POPLAR_WORLD{output.reset} in .env")
+      output.warning("No world specified, so builds are not copied anywhere. Use " &
+                     &"{output.bold}--world{output.reset}, or set {output.bold}POPLAR_WORLD" &
+                     &"{output.reset} in .env")
 
     var lastFingerprint = fingerprint(projectPath)
     rebuild(shared, projectPath, worldCopy)
@@ -134,5 +144,7 @@ proc register*(shared: Shared): Command =
       rebuild(shared, projectPath, worldCopy)
   result = newCommand("watch", "Build again each time a file in src/ or poplar.json changes", run)
   result.addPositionalArg dirArg
-  result.addFlag Flag(name: "world", default: TextFlag(text: ""), description: "A world folder. Each build is copied into its " &
-                      "datapacks/ folder, so /reload loads it (default: POPLAR_WORLD from the environment or .env)")
+  result.addFlag Flag(name: "world", default: TextFlag(text: ""),
+                      description: "A world folder. Each build is copied into its datapacks/ " &
+                                   "folder, so /reload loads it (default: POPLAR_WORLD from the " &
+                                   "environment or .env)")

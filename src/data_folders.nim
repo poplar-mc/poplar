@@ -1,6 +1,6 @@
-## The data file types: the word in `predicate isSneaking { ... }` → the folder in `data/<ns>/`. The data folders
-## of mcmeta 26.3, in camelCase, without `worldgen/`. `item_modifier` is not in mcmeta, because vanilla has none.
-## Tags (`itemTag`) are found from the registries.
+## The data file types: the word in `predicate isSneaking { ... }` → the folder in `data/<ns>/`. The
+## data folders of mcmeta 26.3, in camelCase, without `worldgen/`. `item_modifier` is not in mcmeta,
+## because vanilla has none. Tags (`itemTag`) are found from the registries.
 
 import std/[options, strutils, tables]
 
@@ -75,8 +75,8 @@ func snakeCase(word: string): string =
       result.add ch
 
 func tagFolder*(word: string, registries: OrderedTable[string, seq[string]]): Option[string] =
-  ## `itemTag` → `tags/item`, `biomeTag` → `tags/worldgen/biome`, `functionTag` → `tags/function`. A registry in
-  ## `worldgen/` comes first, so `structureTag` is the worldgen structure.
+  ## `itemTag` → `tags/item`, `biomeTag` → `tags/worldgen/biome`, `functionTag` → `tags/function`. A
+  ## registry in `worldgen/` comes first, so `structureTag` is the worldgen structure.
   if not word.endsWith("Tag") or word.len == "Tag".len: return none(string)
   let registry = snakeCase(word[0 ..< word.len - "Tag".len])
   if registry == "function": return some("tags/function")

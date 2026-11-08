@@ -1,5 +1,5 @@
-# Minecraft text: `/commands`, `execute (...)`, `{{...}}` inserts and macro lines, and `self:` ids. Part of
-# compiler.nim.
+# Minecraft text: `/commands`, `execute (...)`, `{{...}}` inserts and macro lines, and `self:` ids.
+# Part of compiler.nim.
 
 func isWholeDataVar(insert: Insert): bool =
   ## A whole `$` var is read from `<ns>:data` as it is.
@@ -17,8 +17,8 @@ func macroName(path: string): string =
 func isIdChar(ch: char): bool = ch.isAlphaNumeric or ch in "_-./"
 
 func sharedStorage(inserts: openArray[Insert]): Option[DataStorage] =
-  ## The storage that holds every insert, when each one is a whole `$` variable of the same storage: the helper can
-  ## then read them from it as they are.
+  ## The storage that holds every insert, when each one is a whole `$` variable of the same storage:
+  ## the helper can then read them from it as they are.
   var shared = none(DataStorage)
   for insert in inserts:
     if not insert.isWholeDataVar: return none(DataStorage)
@@ -31,7 +31,8 @@ func sharedStorage(inserts: openArray[Insert]): Option[DataStorage] =
         storage = DataStorage(kind: kind, namespace: path.namespace)
       else: discard
     else: discard
-    if shared.isSome and (shared.get.kind != storage.kind or shared.get.namespace != storage.namespace):
+    if shared.isSome and (shared.get.kind != storage.kind or
+                          shared.get.namespace != storage.namespace):
       return none(DataStorage)
     shared = some(storage)
   shared
@@ -54,9 +55,10 @@ func isSameInsert(a, b: InsertSource): bool =
 proc isUsedMacroName(compiler: Compiler, name: string, used: openArray[Insert]): bool =
   used.anyIt(it.macroName == name) or name in compiler.mcfun.macroKeys
 
-proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment, used: openArray[Insert]): Insert =
-  ## Where the value of a runtime insert comes from, and its macro name. The same value again in the line gives the
-  ## insert that is already there.
+proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment,
+                   used: openArray[Insert]): Insert =
+  ## Where the value of a runtime insert comes from, and its macro name. The same value again in the
+  ## line gives the insert that is already there.
   let outerPosition = compiler.enterExpression(expression)
   defer: compiler.position = outerPosition
 
@@ -83,9 +85,10 @@ proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment,
     inc number
   Insert(macroName: name, source: source)
 
-proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart], env: Environment): CommandText =
-  ## Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line. `$(key)` in
-  ## the text uses the mcfun's macro arguments.
+proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart],
+    env: Environment): CommandText =
+  ## Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro
+  ## line. `$(key)` in the text uses the mcfun's macro arguments.
   for part in parts:
     result.textStarts.add result.text.len
     case part
@@ -110,7 +113,8 @@ proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart], env: En
       result.text.add valueToText(compiler.evaluate(expression, env))
 
 func sourceOffset(parts: openArray[CommandPart], textStarts: openArray[int], at: int): int =
-  ## Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.
+  ## Maps an offset in the finished command back to the source. An offset inside an insert maps to
+  ## its `{{`.
   result = at
   for index, part in parts:
     let textStart = textStarts[index]
@@ -132,15 +136,16 @@ proc declaredNames(compiler: Compiler, namespace: string): seq[string] =
   ## The source names of the data files and mcfuns of a namespace.
   let keyPrefix = qualifiedKey(namespace, "")
   for declared in compiler.dataFileNames.keys:
-    if declared.startsWith(keyPrefix): result.add declared[keyPrefix.len .. ^1]
+    if declared.startsWith(keyPrefix): result.add declared[keyPrefix.len..^1]
   for declared in compiler.mcfuns.keys:
-    if declared.startsWith(keyPrefix): result.add declared[keyPrefix.len .. ^1]
+    if declared.startsWith(keyPrefix): result.add declared[keyPrefix.len..^1]
 
 proc declarationWithFileName(compiler: Compiler, namespace, fileName: string): Option[string] =
   ## The source name whose file is `fileName`: `healPlayer` for `heal_player`.
   for declared in compiler.declaredNames(namespace):
     let key = qualifiedKey(namespace, declared)
-    let declaredFile = if key in compiler.dataFileNames: compiler.dataFileNames[key] else: functionPath(declared)
+    let declaredFile =
+      if key in compiler.dataFileNames: compiler.dataFileNames[key] else: functionPath(declared)
     if declaredFile == fileName: return some(declared)
   none(string)
 
@@ -148,42 +153,48 @@ proc unknownIdMessage(compiler: Compiler, written, namespace, name: string): str
   # `self:heal_player` is the file name of `healPlayer`: point to the name in the source.
   let declared = compiler.declarationWithFileName(namespace, name)
   if declared.isSome:
-    return &"'{written}:{name}' is a file name. Use the name from the source: '{written}:{declared.get}'"
+    return &"'{written}:{name}' is a file name. Use the name from the source: " &
+           &"'{written}:{declared.get}'"
   &"'{written}:{name}' is not a data file or mcfun of namespace '{namespace}'" &
     suggestion(closestId(compiler.declaredNames(namespace), name))
 
 proc sourceNamespaceOf(compiler: Compiler, written: string): Option[string] =
-  ## The namespace whose Poplar names an id in Minecraft text uses: `self:`, or a namespace of the pack that the file
-  ## imports. None for any other id, such as `minecraft:stone`, which is left as it is.
+  ## The namespace whose Poplar names an id in Minecraft text uses: `self:`, or a namespace of the
+  ## pack that the file imports. None for any other id, such as `minecraft:stone`, which is left as
+  ## it is.
   if written == "self": return some(compiler.scope.namespace)
   if written notin compiler.namespaceImports: return none(string)
   if written == compiler.scope.namespace or compiler.isImported(written): return some(written)
   none(string)
 
-proc checkBareName(compiler: Compiler, parts: openArray[CommandPart], built: CommandText, column, start: int) =
+proc checkBareName(compiler: Compiler, parts: openArray[CommandPart], built: CommandText, column,
+                   start: int) =
   ## A name with no namespace means `minecraft:name`, so a name from this pack needs `self:`.
   var stop = start
   while stop < built.text.len and isIdChar(built.text[stop]): inc stop
-  let name = built.text[start ..< stop]
+  let name = built.text[start..<stop]
   let namespace = compiler.scope.namespace
   let at = column + sourceOffset(parts, built.textStarts, start)
   var sourceName = name
   if compiler.idOf(namespace, name).isNone:
     let declared = compiler.declarationWithFileName(namespace, name)
     if declared.isNone:
-      # An id cannot have a capital letter, so this is a typo of a name from this pack, or a mistake.
+      # An id cannot have a capital letter, so this is a typo of a name from this pack, or a
+      # mistake.
       if name.anyIt(it.isUpperAscii):
-        compiler.failAt(at, &"'{name}' cannot be an id, because an id has no capital letters. To name something in " &
-                            &"this pack, write 'self:{name}'")
+        compiler.failAt(at, &"'{name}' cannot be an id, because an id has no capital letters. To " &
+                            &"name something in this pack, write 'self:{name}'")
       return
     sourceName = declared.get
-  compiler.failAt(at, &"'{name}' is in this pack, but with no namespace it means 'minecraft:{name}'. Write " &
-                      &"'self:{sourceName}'")
+  compiler.failAt(at, &"'{name}' is in this pack, but with no namespace it means " &
+                      &"'minecraft:{name}'. Write 'self:{sourceName}'")
 
-proc checkMinecraftText(compiler: Compiler, parts: openArray[CommandPart], built: CommandText, column: int,
+proc checkMinecraftText(compiler: Compiler, parts: openArray[CommandPart], built: CommandText,
+                        column: int,
                         prefix, suffix: string): string =
-  ## Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each `self:name` and
-  ## `ns:name` of a declaration into its id. `column` is where the text starts in the source.
+  ## Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each
+  ## `self:name` and `ns:name` of a declaration into its id. `column` is where the text starts in
+  ## the source.
   let fullText = prefix & built.text & suffix
   let checked = compiler.commandTree.checkText(fullText, compiler.poplarNamespaces)
   if checked.failure.isSome:
@@ -202,12 +213,13 @@ proc checkMinecraftText(compiler: Compiler, parts: openArray[CommandPart], built
     if colon >= built.text.len or built.text[colon] != ':':
       if textId.canBePackName: compiler.checkBareName(parts, built, column, start)
       continue
-    let written = built.text[start ..< colon]
+    let written = built.text[start..<colon]
 
     # A storage or bossbar id is not a Poplar declaration: `self:` only gives it the namespace.
     if not textId.namesDeclaration:
       if written != "self": continue
-      resolved.add built.text[copied ..< start] & compiler.scope.outputNamespace.get(compiler.packNamespace)
+      resolved.add built.text[copied..<start]
+      resolved.add compiler.scope.outputNamespace.get(compiler.packNamespace)
       copied = colon
       continue
     let namespace = compiler.sourceNamespaceOf(written)
@@ -218,20 +230,23 @@ proc checkMinecraftText(compiler: Compiler, parts: openArray[CommandPart], built
     let name = built.text[colon + 1 ..< stop]
     let id = compiler.idOf(namespace.get, name)
     if id.isNone:
-      # `magic:heal_player`, the real id, stays as it is. `self:` only takes the name from the source.
+      # `magic:heal_player`, the real id, stays as it is. `self:` only takes the name from the
+      # source.
       let isSelf = written == "self"
       if not isSelf and compiler.declarationWithFileName(namespace.get, name).isSome: continue
       compiler.failAt(column + sourceOffset(parts, built.textStarts, start),
                       compiler.unknownIdMessage(written, namespace.get, name))
-    resolved.add built.text[copied ..< start] & id.get
+    resolved.add built.text[copied..<start] & id.get
     copied = stop
-  resolved.add built.text[copied .. ^1]
+  resolved.add built.text[copied..^1]
   resolved
 
-proc callMacroHelper(compiler: Compiler, name: string, commandText: CommandText, needsMacroKeys: bool,
+proc callMacroHelper(compiler: Compiler, name: string, commandText: CommandText,
+                     needsMacroKeys: bool,
                      env: Environment, commands: var seq[Command]) =
-  ## A macro call gets its arguments from one place. A helper that also needs the macro arguments of the mcfun, or a
-  ## path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro arguments, then each value it uses.
+  ## A macro call gets its arguments from one place. A helper that also needs the macro arguments of
+  ## the mcfun, or a path such as `$stats.hp`, gets one compound in `<ns>:poplar macro`: the macro
+  ## arguments, then each value it uses.
   if not needsMacroKeys:
     let storage = sharedStorage(commandText.inserts)
     if storage.isSome:
@@ -264,7 +279,8 @@ proc callMacroHelper(compiler: Compiler, name: string, commandText: CommandText,
         score = compiler.newTemp()
         compiler.compileInto(score, expression, env, commands)
       commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: target, score: score))
-  commands.add FunctionWithCommand(functionWith: FunctionWith(name: name, arguments: MacroStorageArguments()))
+  commands.add FunctionWithCommand(functionWith: FunctionWith(name: name,
+      arguments: MacroStorageArguments()))
 
 proc compileCommand(compiler: Compiler, command: ast.Command, textColumn: int, env: Environment,
                     commands: var seq[Command]) =
@@ -277,29 +293,35 @@ proc compileCommand(compiler: Compiler, command: ast.Command, textColumn: int, e
     return
 
   let name = compiler.newGeneratedName("macro")
-  compiler.generated.add McFunction(name: name, commands: @[MacroCommand(macroLine: commandText.text)])
+  let macroLine = MacroCommand(macroLine: commandText.text)
+  compiler.generated.add McFunction(name: name, commands: @[macroLine])
   compiler.callMacroHelper(name, commandText, commandText.usesMacroKeys, env, commands)
 
-proc compileExecute(compiler: Compiler, execute: ast.Execute, env: Environment, commands: var seq[Command]) =
+proc compileExecute(compiler: Compiler, execute: ast.Execute, env: Environment,
+                    commands: var seq[Command]) =
   var subcommands = compiler.buildCommandText(execute.subcommands, env)
-  subcommands.text = compiler.checkMinecraftText(execute.subcommands, subcommands, execute.subcommandsColumn,
+  subcommands.text = compiler.checkMinecraftText(execute.subcommands, subcommands,
+                                                 execute.subcommandsColumn,
                                                  "execute ", " run say x")
 
   let canReturn = jumpsIn(execute.body).hasReturn
   if canReturn:
     if compiler.mcfun.forwardedArgs.isSome:
-      compiler.fail("'return' inside 'execute (...)' in an mcfun that uses macro arguments is not supported yet")
-    if subcommands.isMacro: compiler.fail("'return' inside 'execute (...)' with a data insert is not supported yet")
+      compiler.fail("'return' inside 'execute (...)' in an mcfun that uses macro arguments is " &
+                    "not supported yet")
+    if subcommands.isMacro:
+      compiler.fail("'return' inside 'execute (...)' with a data insert is not supported yet")
 
   let run = compiler.compileJumpBody(execute.body, env, none(string))
   if run.isNone: return
   let executeCommand = ExecuteRawCommand(executeRaw: ExecuteRaw(subcommands: subcommands.text,
-                                                               run: createCommand(run.get)))
+                                                                run: createCommand(run.get)))
   if not subcommands.isMacro:
     commands.add executeCommand
     return
 
   let name = compiler.newGeneratedName("macro")
   compiler.generated.add McFunction(name: name, commands: @[executeCommand])
-  # The body can forward the macro arguments too, so in an mcfun that uses them they always go along.
+  # The body can forward the macro arguments too, so in an mcfun that uses them they always go
+  # along.
   compiler.callMacroHelper(name, subcommands, compiler.mcfun.forwardedArgs.isSome, env, commands)

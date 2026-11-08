@@ -1,5 +1,6 @@
-## Changes source text into tokens, one at a time, as the parser asks for them. Raw text is one token: a command after
-## `/`, `execute (...)` subcommands, and a data file JSON body (a top-level `{` after a name).
+## Changes source text into tokens, one at a time, as the parser asks for them. Raw text is one
+## token: a command after `/`, `execute (...)` subcommands, and a data file JSON body (a top-level
+## `{` after a name).
 
 import std/[options, strutils]
 import token
@@ -22,9 +23,11 @@ type
       ## Added to the column of each token on the first line: the column where a `{{...}}` insert
       ## starts in its file.
 
-const conditionWords = ["biome", "block", "blocks", "data", "dimension", "entity", "function", "items", "loaded",
+const conditionWords = ["biome", "block", "blocks", "data", "dimension", "entity", "function",
+                        "items", "loaded",
                         "predicate", "score", "slots", "stopwatch"]
-  ## The `execute if` subcommands of Minecraft 26.3. In a condition, `block ~ ~-1 ~ stone` is raw text.
+  ## The `execute if` subcommands of Minecraft 26.3. In a condition, `block ~ ~-1 ~ stone` is raw
+  ## text.
 
 func isLetter(ch: char): bool = ch.isAlphaAscii or ch == '_'
 
@@ -45,21 +48,24 @@ func peekChar(lexer: Lexer): char = lexer.peekCharAt(1)
 
 func newToken(lexer: Lexer, tag: TokenTag, literal: string): Token =
   let offset = if lexer.lineStart == 0: lexer.firstLineColumn else: 0
-  Token(tag: tag, literal: literal, line: lexer.line, column: lexer.tokenStart - lexer.lineStart + 1 + offset)
+  Token(tag: tag, literal: literal, line: lexer.line, column: lexer.tokenStart - lexer.lineStart +
+      1 + offset)
 
 func startsStatement(lexer: Lexer): bool =
   ## Division cannot follow these tokens, so a `/` here starts a command.
   lexer.previousTag.isNone or lexer.previousTag.get in {tkSemicolon, tkLeftBrace, tkRightBrace}
 
 func readInQuote(lexer: var Lexer, quote: var char) =
-  ## One character inside a quote: an escape skips the next character, and the quote's own character closes it.
+  ## One character inside a quote: an escape skips the next character, and the quote's own character
+  ## closes it.
   if lexer.ch == '\\':
     lexer.readChar()
   elif lexer.ch == quote:
     quote = '\0'
 
 func readBalanced(lexer: var Lexer, stop: char): Option[string] =
-  ## Reads up to `stop` outside quotes and brackets, or up to the end of the line. None if a quote is still open.
+  ## Reads up to `stop` outside quotes and brackets, or up to the end of the line. None if a quote
+  ## is still open.
   let start = lexer.pos
   var depth = 0
   var quote = '\0'
@@ -77,10 +83,11 @@ func readBalanced(lexer: var Lexer, stop: char): Option[string] =
     lexer.readChar()
 
   if quote != '\0': return none(string)
-  some(lexer.input[start ..< lexer.pos])
+  some(lexer.input[start..<lexer.pos])
 
 func readCommand(lexer: var Lexer): Option[string] =
-  ## Reads to the `;` that ends the command. A `;` inside quotes or brackets (NBT, JSON) is part of the text.
+  ## Reads to the `;` that ends the command. A `;` inside quotes or brackets (NBT, JSON) is part of
+  ## the text.
   lexer.readChar()
   let text = lexer.readBalanced(';')
   if text.isNone: return text
@@ -107,7 +114,7 @@ func readExecuteSubcommands(lexer: var Lexer): Token =
 func readIdentifier(lexer: var Lexer): string =
   let start = lexer.pos
   while isLetter(lexer.ch) or lexer.ch.isDigit: lexer.readChar()
-  lexer.input[start ..< lexer.pos]
+  lexer.input[start..<lexer.pos]
 
 func readMacroKey(lexer: var Lexer): Token =
   ## Reads `$(name)`. The literal is the name.
@@ -123,11 +130,12 @@ func startsWithSource(lexer: Lexer): bool =
   if lexer.previousTag != some(tkWith): return false
   var stop = lexer.pos
   while stop < lexer.input.len and isLetter(lexer.input[stop]): inc stop
-  lexer.input[lexer.pos ..< stop] in ["entity", "block"]
+  lexer.input[lexer.pos..<stop] in ["entity", "block"]
 
 func readSelector(lexer: var Lexer): Token =
   ## Reads `@s` or `@a[tag=x,limit=1]`.
-  let isSelector = lexer.peekChar() in {'a', 'e', 'p', 'r', 's', 'n'} and not isLetter(lexer.peekCharAt(2))
+  let isSelector = lexer.peekChar() in {'a', 'e', 'p', 'r', 's', 'n'} and
+                   not isLetter(lexer.peekCharAt(2))
   if not isSelector:
     result = lexer.newToken(tkIllegal, "@")
     lexer.readChar()
@@ -141,12 +149,12 @@ func readSelector(lexer: var Lexer): Token =
     if lexer.ch != ']': return lexer.newToken(tkUnclosed, "]")
     lexer.readChar()
 
-  lexer.newToken(tkSelector, lexer.input[lexer.tokenStart ..< lexer.pos])
+  lexer.newToken(tkSelector, lexer.input[lexer.tokenStart..<lexer.pos])
 
 func readDataPath(lexer: var Lexer, tag: TokenTag, start: int): Token =
-  ## Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not followed by a key ends
-  ## the path, so `$a..` is still a range. `start` is where the token text starts, which can be before the current
-  ## character (a `ns:` prefix).
+  ## Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not
+  ## followed by a key ends the path, so `$a..` is still a range. `start` is where the token text
+  ## starts, which can be before the current character (a `ns:` prefix).
   var depth = 0
   var quote = '\0'
   while lexer.ch notin {'\n', '\0'}:
@@ -155,7 +163,9 @@ func readDataPath(lexer: var Lexer, tag: TokenTag, start: int): Token =
       lexer.readChar()
       continue
 
-    if depth == 0 and lexer.ch == '.' and not isLetter(lexer.peekChar()) and lexer.peekChar() != '"': break
+    if depth == 0 and lexer.ch == '.' and not isLetter(lexer.peekChar()) and
+        lexer.peekChar() != '"':
+      break
     case lexer.ch
     of '"', '\'':
       quote = lexer.ch
@@ -171,10 +181,11 @@ func readDataPath(lexer: var Lexer, tag: TokenTag, start: int): Token =
   if quote != '\0': return lexer.newToken(tkUnclosed, "\"")
   if depth > 0: return lexer.newToken(tkUnclosed, "]")
   if lexer.pos == start: return lexer.newToken(tkIllegal, ".$")
-  lexer.newToken(tag, lexer.input[start ..< lexer.pos])
+  lexer.newToken(tag, lexer.input[start..<lexer.pos])
 
 func readVariable(lexer: var Lexer): Token =
-  ## Reads `#mana` or `$item.count`. `#magic:mana` and `$magic:item.count` name a variable of another namespace.
+  ## Reads `#mana` or `$item.count`. `#magic:mana` and `$magic:item.count` name a variable of
+  ## another namespace.
   let tag = if lexer.ch == '#': tkScoreIdentifier else: tkDataIdentifier
   lexer.readChar()
   let start = lexer.pos
@@ -186,7 +197,7 @@ func readVariable(lexer: var Lexer): Token =
     lexer.readChar()
   if tag == tkDataIdentifier: return lexer.readDataPath(tkDataIdentifier, start)
   discard lexer.readIdentifier()
-  lexer.newToken(tag, lexer.input[start ..< lexer.pos])
+  lexer.newToken(tag, lexer.input[start..<lexer.pos])
 
 func readEntityDataPath(lexer: var Lexer): Token =
   ## Reads `.$Inventory[0].count` after a selector. The literal is the NBT path without `.$`.
@@ -195,14 +206,15 @@ func readEntityDataPath(lexer: var Lexer): Token =
   lexer.readDataPath(tkEntityData, lexer.pos)
 
 func startsConditionCheck(lexer: Lexer): bool =
-  ## A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a space and something
-  ## that is not an operator. So `block == 1` and `(block)` still read `block` as a name.
+  ## A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a
+  ## space and something that is not an operator. So `block == 1` and `(block)` still read `block`
+  ## as a name.
   if lexer.conditionParenDepth == 0 or lexer.previousTag.isNone: return false
   if lexer.previousTag.get notin {tkLeftParen, tkAnd, tkOr, tkBang}: return false
 
   var stop = lexer.pos
   while stop < lexer.input.len and isLetter(lexer.input[stop]): inc stop
-  if lexer.input[lexer.pos ..< stop] notin conditionWords: return false
+  if lexer.input[lexer.pos..<stop] notin conditionWords: return false
   if stop >= lexer.input.len or lexer.input[stop] != ' ': return false
   while stop < lexer.input.len and lexer.input[stop] == ' ': inc stop
   if stop >= lexer.input.len: return false
@@ -211,11 +223,12 @@ func startsConditionCheck(lexer: Lexer): bool =
 func isWordAhead(lexer: Lexer, word: string): bool =
   let start = lexer.pos + 1
   let stop = start + word.len
-  if stop > lexer.input.len or lexer.input[start ..< stop] != word: return false
+  if stop > lexer.input.len or lexer.input[start..<stop] != word: return false
   stop == lexer.input.len or not isLetter(lexer.input[stop]) and not lexer.input[stop].isDigit
 
 func readConditionText(lexer: var Lexer): string =
-  ## Reads to the `)` that closes the condition part, or to an `and` or `or` word, outside brackets and quotes.
+  ## Reads to the `)` that closes the condition part, or to an `and` or `or` word, outside brackets
+  ## and quotes.
   let start = lexer.pos
   var depth = 0
   var quote = '\0'
@@ -234,7 +247,7 @@ func readConditionText(lexer: var Lexer): string =
         if depth == 0 and (lexer.isWordAhead("and") or lexer.isWordAhead("or")): break
       else: discard
     lexer.readChar()
-  lexer.input[start ..< lexer.pos].strip(leading = false, chars = {' '})
+  lexer.input[start..<lexer.pos].strip(leading = false, chars = {' '})
 
 func readJsonBody(lexer: var Lexer): Token =
   ## Reads `{ ... }` or `[ ... ]` over many lines, to the bracket
@@ -260,7 +273,8 @@ func readJsonBody(lexer: var Lexer): Token =
         depth = max(depth - 1, 0)
         if depth == 0:
           lexer.readChar()
-          return Token(tag: tkJsonBody, literal: lexer.input[start ..< lexer.pos], line: startLine, column: startColumn)
+          return Token(tag: tkJsonBody, literal: lexer.input[start..<lexer.pos], line: startLine,
+              column: startColumn)
       else: discard
     lexer.readChar()
   Token(tag: tkUnclosed, literal: "}", line: startLine, column: startColumn)
@@ -277,7 +291,8 @@ func readString(lexer: var Lexer): Option[string] =
   some(lexer.input[start + 1 ..< lexer.pos])
 
 func readNumber(lexer: var Lexer): string =
-  ## Reads an SNBT number: `5`, `0.05`, `0.05f` or `1b`. A `.` needs a digit after it, so `1..5` is still a range.
+  ## Reads an SNBT number: `5`, `0.05`, `0.05f` or `1b`. A `.` needs a digit after it, so `1..5` is
+  ## still a range.
   let start = lexer.pos
   while lexer.ch.isDigit: lexer.readChar()
   if lexer.ch == '.' and lexer.peekChar().isDigit:
@@ -287,7 +302,7 @@ func readNumber(lexer: var Lexer): string =
   let next = lexer.peekChar()
   let endsAfter = not isLetter(next) and not next.isDigit
   if lexer.ch in "bBsSlLfFdD" and endsAfter: lexer.readChar()
-  lexer.input[start ..< lexer.pos]
+  lexer.input[start..<lexer.pos]
 
 func skipWhitespaceAndComments(lexer: var Lexer) =
   while true:
@@ -330,7 +345,8 @@ func readToken(lexer: var Lexer): Token =
   of ',':
     result = lexer.newToken(tkComma, ",")
   of '.':
-    if lexer.previousTag == some(tkSelector) and lexer.peekChar() == '$': return lexer.readEntityDataPath()
+    if lexer.previousTag == some(tkSelector) and lexer.peekChar() ==
+        '$': return lexer.readEntityDataPath()
     if lexer.peekChar() == '.':
       lexer.readChar()
       result = lexer.newToken(tkDotDot, "..")
@@ -374,7 +390,7 @@ func readToken(lexer: var Lexer): Token =
       of '<': (if isDouble: tkLessEql else: tkLess)
       else: (if isDouble: tkGreaterEql else: tkGreater)
     if isDouble: lexer.readChar()
-    result = lexer.newToken(tag, lexer.input[lexer.tokenStart .. lexer.pos])
+    result = lexer.newToken(tag, lexer.input[lexer.tokenStart..lexer.pos])
   of '"':
     let text = lexer.readString()
     if text.isNone: return lexer.newToken(tkUnclosed, "\"")
@@ -384,8 +400,10 @@ func readToken(lexer: var Lexer): Token =
       if lexer.startsWithSource():
         let text = lexer.readBalanced(';')
         if text.isNone: return lexer.newToken(tkUnclosed, "\"")
-        return lexer.newToken(tkWithSource, text.get.strip(leading = false, chars = {' ', '\t', '\r'}))
-      if lexer.startsConditionCheck(): return lexer.newToken(tkConditionText, lexer.readConditionText())
+        let trimmed = text.get.strip(leading = false, chars = {' ', '\t', '\r'})
+        return lexer.newToken(tkWithSource, trimmed)
+      if lexer.startsConditionCheck():
+        return lexer.newToken(tkConditionText, lexer.readConditionText())
       let literal = lexer.readIdentifier()
       return lexer.newToken(keywordTag(literal), literal)
     if lexer.ch.isDigit: return lexer.newToken(tkNumber, lexer.readNumber())

@@ -1,7 +1,8 @@
-# What the game runs on its own: `poplar/load`, the `load` and `tick` of each namespace, and events. Part of
-# compiler.nim.
+# What the game runs on its own: `poplar/load`, the `load` and `tick` of each namespace, and events.
+# Part of compiler.nim.
 
-proc visitNamespace(compiler: Compiler, namespace: string, visited: var HashSet[string], order: var seq[string]) =
+proc visitNamespace(compiler: Compiler, namespace: string, visited: var HashSet[string],
+    order: var seq[string]) =
   if visited.containsOrIncl(namespace): return
   if namespace in compiler.namespaceImports:
     for imported in sorted(toSeq(compiler.namespaceImports[namespace])):
@@ -10,11 +11,12 @@ proc visitNamespace(compiler: Compiler, namespace: string, visited: var HashSet[
 
 proc namespaceOrder(compiler: Compiler): seq[string] =
   var visited: HashSet[string]
-  for namespace in sorted(toSeq(compiler.namespaceImports.keys)): compiler.visitNamespace(namespace, visited, result)
+  for namespace in sorted(toSeq(compiler.namespaceImports.keys)):
+    compiler.visitNamespace(namespace, visited, result)
 
 proc hookNames(compiler: Compiler, namespaces: OrderedSet[string], hook: string): seq[string] =
-  ## The IR names of `load` or `tick` of each namespace that has one. A namespace comes after the namespaces it
-  ## imports. Namespaces that import each other are in alphabetical order.
+  ## The IR names of `load` or `tick` of each namespace that has one. A namespace comes after the
+  ## namespaces it imports. Namespaces that import each other are in alphabetical order.
   for namespace in compiler.namespaceOrder():
     if namespace in namespaces: result.add compiler.functionName(namespace, hook)
 
@@ -35,9 +37,10 @@ proc eventObjective(compiler: Compiler, event: Event, index: int): string =
   of TriggerSource(trigger): trigger
   else: &"{event.namespace.get(compiler.packNamespace)}.event_{index}"
 
-proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks: openArray[string]) =
-  ## For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
-  ## `poplar/tick` runs it for every player with a count, then the user's `tick`.
+proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction],
+                       ticks: openArray[string]) =
+  ## For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at
+  ## the player. `poplar/tick` runs it for every player with a count, then the user's `tick`.
   if compiler.events.len == 0: return
 
   var tick: seq[Command]
@@ -62,8 +65,9 @@ proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks
       # Dead, and alive again: `time_since_death` only counts while the player is alive.
       of RespawnSource: @[&"@a[scores={{{objective}=1..,{objective}_alive=1..}}]"]
     for selector in players:
+      let run = createCommand(FunctionCommand(function: name))
       tick.add ExecuteRawCommand(executeRaw: ExecuteRaw(subcommands: &"as {selector} at @s",
-                                                        run: createCommand(FunctionCommand(function: name))))
+                                                        run: run))
   for event in compiler.events:
     case event.source
     of TriggerSource(trigger): tick.add RawCommand(raw: &"scoreboard players enable @a {trigger}")
@@ -82,7 +86,8 @@ proc removeUnusedConstants(compiler: Compiler, functions: openArray[McFunction])
   var index = compiler.constants.len
   while index > 0:
     dec index
-    if not isScoreRead(functions, constantScore(compiler.constants[index])): compiler.constants.delete(index)
+    if not isScoreRead(functions, constantScore(compiler.constants[index])):
+      compiler.constants.delete(index)
 
 proc mentionsGlobalHolder(command: Command, objective: string): bool =
   let text = case command
@@ -97,9 +102,10 @@ proc mentionsGlobalHolder(command: Command, objective: string): bool =
       return run != nil and mentionsGlobalHolder(run[], objective)
   globalHolder in text and objective in text
 
-proc isGlobalValueUsed(compiler: Compiler, functions: openArray[McFunction], global: GlobalScore): bool =
-  ## A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text part such as
-  ## `text(#mana)` names `#global` in the command text, so that counts as a use too.
+proc isGlobalValueUsed(compiler: Compiler, functions: openArray[McFunction],
+    global: GlobalScore): bool =
+  ## A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text
+  ## part such as `text(#mana)` names `#global` in the command text, so that counts as a use too.
   let score = globalScore(global)
   let objective = &"\"{global.outputNamespace.get(compiler.packNamespace)}.{global.name}\""
   for function in functions:
@@ -117,7 +123,8 @@ proc buildLoadFunction(compiler: Compiler, functions: openArray[McFunction]): Mc
   for namespace in compiler.outputNamespaces():
     commands.add AddObjectiveCommand(objective: Objective(namespace: some(namespace)))
   for global in compiler.globals.values:
-    commands.add AddObjectiveCommand(objective: Objective(namespace: global.outputNamespace, name: some(global.name)))
+    commands.add AddObjectiveCommand(objective: Objective(namespace: global.outputNamespace,
+        name: some(global.name)))
   for index, event in compiler.events:
     let objective = compiler.eventObjective(event, index)
     var criteria: string
@@ -135,16 +142,19 @@ proc buildLoadFunction(compiler: Compiler, functions: openArray[McFunction]): Mc
     else: discard
 
   for constant in compiler.constants:
-    commands.add ScoreSetCommand(scoreValue: ScoreValue(score: compiler.constantScore(constant), value: constant))
+    commands.add ScoreSetCommand(scoreValue: ScoreValue(score: compiler.constantScore(constant),
+        value: constant))
 
   for global in compiler.globals.values:
     if not compiler.isGlobalValueUsed(functions, global): continue
-    commands.add ScoreSetIfUnsetCommand(scoreValue: ScoreValue(score: globalScore(global), value: global.initialValue))
+    commands.add ScoreSetIfUnsetCommand(scoreValue: ScoreValue(score: globalScore(global),
+        value: global.initialValue))
 
   for global in compiler.dataGlobals.values:
     var target = inStorage(global.storage, global.name)
     target.namespace = global.outputNamespace
-    commands.add DataSetIfUnsetCommand(dataValue: DataValue(target: target, snbt: global.initialSnbt))
+    commands.add DataSetIfUnsetCommand(dataValue: DataValue(target: target,
+        snbt: global.initialSnbt))
 
   # A `load` with only `onEvent` lines has no commands, so `poplar/load` does not call it.
   for name in compiler.hookNames(compiler.loadNamespaces, "load"):
@@ -165,15 +175,16 @@ proc isInRuntimeBranch(env: Environment): bool =
   false
 
 proc poplarObjectiveClash(compiler: Compiler, name: string): Option[string] =
-  ## Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name clashes with.
+  ## Poplar's objectives are `poplar.<ns>` and `<ns>.<name>`. Gives the prefix that a trigger name
+  ## clashes with.
   if name.startsWith("poplar."): return some("poplar.")
   for namespace in @[compiler.packNamespace] & compiler.outputNamespaces():
     let prefix = namespace & "."
     if name.startsWith(prefix): return some(prefix)
   none(string)
 
-proc eventName(compiler: Compiler, argument: Expression, builtin: string, kind: EventKind, first: string,
-               env: Environment): string =
+proc eventName(compiler: Compiler, argument: Expression, builtin: string, kind: EventKind,
+               first: string, env: Environment): string =
   ## The first argument of `onEvent` or `onTrigger`, which must be a constant string.
   var name = ""
   case compiler.evaluate(argument, env)
@@ -188,7 +199,8 @@ proc eventName(compiler: Compiler, argument: Expression, builtin: string, kind: 
     compiler.fail(&"the trigger name '{name}' can only have letters, 0-9, '_', '-', '.' and '+'")
   let clash = compiler.poplarObjectiveClash(name)
   if clash.isSome:
-    compiler.fail(&"the trigger name '{name}' starts with '{clash.get}', which Poplar uses for its own objectives")
+    compiler.fail(&"the trigger name '{name}' starts with '{clash.get}', which Poplar uses for " &
+                  "its own objectives")
   name
 
 proc callbackOf(compiler: Compiler, callback: Expression, builtin: string): string =
@@ -202,21 +214,21 @@ proc callbackOf(compiler: Compiler, callback: Expression, builtin: string): stri
   var keys: OrderedSet[string]
   collectMacroKeys(found.declaration.mcfun.body, keys)
   if keys.len > 0:
-    compiler.fail(&"the callback '{identifier.get.name}' is run by the game, so it gets no macro arguments and " &
-                  &"cannot use '$({toSeq(keys)[0]})'")
+    compiler.fail(&"the callback '{identifier.get.name}' is run by the game, so it gets no macro " &
+                  &"arguments and cannot use '$({toSeq(keys)[0]})'")
   found.declaration.irName
 
 proc compileEvent(compiler: Compiler, call: Call, builtin: string, env: Environment) =
-  ## `onEvent(criteria, callback)` and the other event builtins in `load`. It registers the event at compile time and
-  ## writes no command.
+  ## `onEvent(criteria, callback)` and the other event builtins in `load`. It registers the event at
+  ## compile time and writes no command.
   let kind = eventBuiltins[builtin]
   if not compiler.mcfun.inLoad: compiler.fail(&"'{builtin}' must be in 'mcfun load'")
   if isInRuntimeBranch(env):
-    compiler.fail(&"'{builtin}' registers the event when the pack is compiled, so it cannot be in a runtime 'if', " &
-                  "'while' or 'execute'")
+    compiler.fail(&"'{builtin}' registers the event when the pack is compiled, so it cannot be " &
+                  "in a runtime 'if', 'while' or 'execute'")
 
-  # `onEvent(criteria, callback)` and `onTrigger(name, callback)` take a name first; the player events only a
-  # callback.
+  # `onEvent(criteria, callback)` and `onTrigger(name, callback)` take a name first; the player
+  # events only a callback.
   let takesName = kind == ekTrigger or builtin == "onEvent"
   let first = if kind == ekTrigger: "name" else: "criteria"
   if takesName and call.args.len != 2:
@@ -232,4 +244,5 @@ proc compileEvent(compiler: Compiler, call: Call, builtin: string, env: Environm
     of ekFirstJoin: FirstJoinSource()
     of ekJoin: JoinSource()
     of ekRespawn: RespawnSource()
-  compiler.events.add Event(source: source, callback: callback, namespace: compiler.scope.outputNamespace)
+  compiler.events.add Event(source: source, callback: callback,
+      namespace: compiler.scope.outputNamespace)

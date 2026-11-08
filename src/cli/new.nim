@@ -1,3 +1,5 @@
+## `poplar new`: makes a project in a new folder.
+
 import std/[os, strformat]
 import ../project
 import command_line, output, root
@@ -15,5 +17,5 @@ proc register*(shared: Shared): Command =
     output.success(&"Made {output.bold}{path}{output.reset}")
     stdout.write &"  {output.dim}Next: cd \"{path}\" && poplar build{output.reset}\n"
   result = newCommand("new", "Make a new project folder", run)
-  result.addPositionalArg PositionalArg(name: "name", description: "The folder to make. Its name is the pack name",
-                                        required: true)
+  result.addPositionalArg PositionalArg(
+    name: "name", description: "The folder to make. Its name is the pack name", required: true)

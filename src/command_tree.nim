@@ -52,7 +52,7 @@ type
     at: int
     expected: string
     outOfRange: bool
-    message: Option[string] ## A finished message, for a problem inside an argument.
+    message: Option[string]   ## A finished message, for a problem inside an argument.
     unknownIn: Option[string] ## The registry when the id is not in it.
 
   Walk = object
@@ -67,9 +67,9 @@ type
 const commandsJson = staticRead("../mcmeta/commands.json")
 const registriesJson = staticRead("../mcmeta/registries.json")
 
-const selectorOptions = ["advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit", "name", "nbt",
-                         "predicate", "scores", "sort", "tag", "team", "type", "x", "x_rotation", "y", "y_rotation",
-                         "z"]
+const selectorOptions = ["advancements", "distance", "dx", "dy", "dz", "gamemode", "level", "limit",
+                         "name", "nbt", "predicate", "scores", "sort", "tag", "team", "type", "x",
+                         "x_rotation", "y", "y_rotation", "z"]
   ## The options of a selector, as the game knows them.
 
 func toNode(json: JsonNode): Node =
@@ -84,7 +84,8 @@ func toNode(json: JsonNode): Node =
     if properties.hasKey("min"): result.properties.min = some(properties["min"].getFloat)
     if properties.hasKey("max"): result.properties.max = some(properties["max"].getFloat)
     if properties.hasKey("type"): result.properties.kind = some(properties["type"].getStr)
-    if properties.hasKey("registry"): result.properties.registry = some(properties["registry"].getStr)
+    if properties.hasKey("registry"):
+      result.properties.registry = some(properties["registry"].getStr)
 
 proc loadCommandTree*(): CommandTree =
   result = CommandTree(root: toNode(parseJson(commandsJson)))
@@ -96,8 +97,9 @@ proc loadCommandTree*(): CommandTree =
 
 func parseWholeNumber(word: string): Option[int64] =
   ## An optional sign, then digits that `_` can separate.
-  let digits = if word.startsWith('+') or word.startsWith('-'): word[1 .. ^1] else: word
-  if digits.len == 0 or digits[0] == '_' or digits[^1] == '_' or not digits.allCharsInSet(Digits + {'_'}):
+  let digits = if word.startsWith('+') or word.startsWith('-'): word[1..^1] else: word
+  if digits.len == 0 or digits[0] == '_' or digits[^1] == '_' or
+     not digits.allCharsInSet(Digits + {'_'}):
     return none(int64)
   try:
     some(parseBiggestInt(word[0 ..< word.len - digits.len] & digits.replace("_", "")))
@@ -115,14 +117,15 @@ func validUnderscores(text: string, digits: set[char]): bool =
   true
 
 func parseDecimal(word: string): Option[float] =
-  ## A decimal or hex (`0x1.8p3`) number, `inf` or `nan`, with an optional sign. `_` can separate digits.
+  ## A decimal or hex (`0x1.8p3`) number, `inf` or `nan`, with an optional sign. `_` can separate
+  ## digits.
   let negative = word.startsWith('-')
-  let unsigned = if word.startsWith('+') or negative: word[1 .. ^1] else: word
+  let unsigned = if word.startsWith('+') or negative: word[1..^1] else: word
   if unsigned.len == 0: return none(float)
   let sign = if negative: -1.0 else: 1.0
 
   let hex = unsigned.len >= 2 and unsigned[0] == '0' and unsigned[1] in {'x', 'X'}
-  let body = if hex: unsigned[2 .. ^1] else: unsigned
+  let body = if hex: unsigned[2..^1] else: unsigned
   let digits = if hex: HexDigits else: Digits
   var pos = 0
   var integerPart, fractionPart = ""
@@ -144,7 +147,8 @@ func parseDecimal(word: string): Option[float] =
       inc pos
     valid = pos < body.len and body[pos].isDigit
     while pos < body.len and body[pos] in Digits + {'_'}:
-      if body[pos] != '_' and exponent < 0x1000_0000: exponent = exponent * 10 + ord(body[pos]) - ord('0')
+      if body[pos] != '_' and exponent < 0x1000_0000: exponent = exponent * 10 + ord(body[pos]) -
+          ord('0')
       inc pos
     if exponentNegative: exponent = -exponent
   if valid and pos == body.len and validUnderscores(body, digits):
@@ -191,7 +195,8 @@ func parseNumber(parser, word: string): Option[float] =
   if whole.isSome: some(float(whole.get)) else: none(float)
 
 func registryOf(parser: string, properties: Properties): Option[string] =
-  ## The registry that an argument names: `minecraft:resource` with `registry: minecraft:mob_effect` → `mob_effect`.
+  ## The registry that an argument names: `minecraft:resource` with `registry: minecraft:mob_effect`
+  ## → `mob_effect`.
   if parser in ["minecraft:item_stack", "minecraft:item_predicate"]: return some("item")
   if parser in ["minecraft:block_state", "minecraft:block_predicate"]: return some("block")
   if parser in ["minecraft:resource", "minecraft:resource_key", "minecraft:resource_or_tag",
@@ -202,14 +207,15 @@ func registryOf(parser: string, properties: Properties): Option[string] =
   none(string)
 
 func registryId(word: string): Option[string] =
-  ## `minecraft:stone[lit=true]` → `stone`. None for a tag, `*`, or another namespace (the pack's own).
+  ## `minecraft:stone[lit=true]` → `stone`. None for a tag, `*`, or another namespace (the pack's
+  ## own).
   if word.len == 0 or word[0] in {'#', '*'}: return none(string)
   var stop = word.find({'[', '{'})
   if stop < 0: stop = word.len
-  let id = word[0 ..< stop]
+  let id = word[0..<stop]
   let separator = id.find(':')
   if separator < 0: return some(id)
-  if id[0 ..< separator] != "minecraft": return none(string)
+  if id[0..<separator] != "minecraft": return none(string)
   some(id[separator + 1 .. ^1])
 
 func suggestion*(closest: Option[string]): string =
@@ -220,7 +226,7 @@ func editDistance(a, b: string): Option[int] =
   ## Levenshtein distance. None for words longer than 64 characters.
   if a.len > 64 or b.len > 64: return none(int)
   var previous, current = newSeq[int](b.len + 1)
-  for j in 0 .. b.len: previous[j] = j
+  for j in 0..b.len: previous[j] = j
   for i, aChar in a:
     current[0] = i + 1
     for j, bChar in b:
@@ -246,7 +252,7 @@ func isCoordinate(word: string): bool =
   if word.len == 0: return false
   if isMacroWord(word): return true
   let hasPrefix = word[0] in {'~', '^'}
-  let number = if hasPrefix: word[1 .. ^1] else: word
+  let number = if hasPrefix: word[1..^1] else: word
   if hasPrefix and number.len == 0: return true
   parseDecimal(number).isSome
 
@@ -254,7 +260,7 @@ func optionEnd(selector: string, start, close: int): int =
   ## The `,` or closing `]` that ends the option at `start`, outside quotes and brackets.
   var depth = 0
   var quote = '\0'
-  for index in start ..< close:
+  for index in start..<close:
     let ch = selector[index]
     if quote != '\0':
       if ch == quote: quote = '\0'
@@ -281,7 +287,7 @@ func selectorFailure(registries: Registries, selector: string): Option[Failure] 
     pos = stop + 1
     let separator = selector.find('=', start, stop - 1)
     if separator < 0: continue
-    let key = selector[start ..< separator].strip(chars = {' '})
+    let key = selector[start..<separator].strip(chars = {' '})
 
     if key notin selectorOptions:
       # Option names are short, so only a near match is worth suggesting.
@@ -292,21 +298,23 @@ func selectorFailure(registries: Registries, selector: string): Option[Failure] 
 
     var valueStart = separator + 1
     while valueStart < stop and selector[valueStart] in {' ', '!'}: inc valueStart
-    let value = selector[valueStart ..< stop].strip(leading = false, chars = {' '})
+    let value = selector[valueStart..<stop].strip(leading = false, chars = {' '})
     if value.len == 0: continue
 
-    # The game reads a quoted `name`, and quotes inside the NBT of `nbt`. Every other option refuses them.
+    # The game reads a quoted `name`, and quotes inside the NBT of `nbt`. Every other option refuses
+    # them.
     if value[0] in {'"', '\''} and key notin ["name", "nbt"]:
       let unquoted = value.strip(chars = {'"', '\''})
-      return some(Failure(message: &"selector option '{key}' cannot have quotes: write {key}={unquoted}",
+      return some(Failure(message: &"selector option '{key}' cannot have quotes: write " &
+                                   &"{key}={unquoted}",
                           at: valueStart))
     if key != "type": continue
     let id = registryId(value)
     if id.isNone or "entity_type" notin registries: continue
     let ids = registries["entity_type"]
     if id.get notin ids:
-      return some(Failure(message: &"unknown entity_type '{id.get}'" & suggestion(closestId(ids, id.get)),
-                          at: valueStart))
+      let message = &"unknown entity_type '{id.get}'" & suggestion(closestId(ids, id.get))
+      return some(Failure(message: message, at: valueStart))
   none(Failure)
 
 func isEntity(word: string): bool =
@@ -328,11 +336,12 @@ func isEntityParser(parser: string): bool =
   parser in ["minecraft:entity", "minecraft:game_profile", "minecraft:score_holder"]
 
 func isResourceLocation(word: string, poplarNamespaces: openArray[string]): bool =
-  let location = if word.startsWith('#'): word[1 .. ^1] else: word
+  let location = if word.startsWith('#'): word[1..^1] else: word
   if location.len == 0: return false
-  # `self:healPlayer` names a Poplar declaration with a capital. The compiler changes it into the id.
+  # `self:healPlayer` names a Poplar declaration with a capital. The compiler changes it into the
+  # id.
   let colon = location.find(':')
-  if colon >= 0 and location[0 ..< colon] in poplarNamespaces:
+  if colon >= 0 and location[0..<colon] in poplarNamespaces:
     return location[colon + 1 .. ^1].allCharsInSet(Letters + Digits + {'_', '-', '.', '/'})
   for ch in location:
     if not isResourceNameChar(ch) and ch notin {':', '/'}: return false
@@ -347,7 +356,7 @@ func describeParser(parser: string): string =
 
 func describe(problem: Problem, text: string, registries: Registries): string =
   if problem.message.isSome: return problem.message.get
-  let found = text[problem.at ..< readBalanced(text, problem.at)]
+  let found = text[problem.at..<readBalanced(text, problem.at)]
   if problem.unknownIn.isSome:
     let registry = problem.unknownIn.get
     let id = registryId(found).get
@@ -367,7 +376,7 @@ func addIdStart(walk: var Walk, at: int, namesDeclaration, canBePackName: bool) 
 
 func addIdStarts(walk: var Walk, parser: string, properties: Properties, start, stop: int) =
   ## `self:heal` or `#magic:swords` in an id argument, and `type=#magic:undead` in a selector.
-  let word = walk.text[start ..< stop]
+  let word = walk.text[start..<stop]
   if isIdParser(parser, properties):
     let offset = if word.startsWith('#'): 1 else: 0
     let namesDeclaration = parser != "minecraft:resource_location"
@@ -384,12 +393,13 @@ func addIdStarts(walk: var Walk, parser: string, properties: Properties, start, 
       if ch != '=': continue
       var value = index + 1
       while value < word.len and word[value] in {'!', '#'}: inc value
-      let keyStart = word[0 ..< index].rfind({'[', ','}) + 1
-      let key = word[keyStart ..< index].strip(chars = {' '})
+      let keyStart = word[0..<index].rfind({'[', ','}) + 1
+      let key = word[keyStart..<index].strip(chars = {' '})
       walk.addIdStart(start + value, true, key == "predicate")
 
 func continuation(walk: Walk, node: Node): Node =
-  ## `execute ... run` has no children, no redirect and is not executable. It continues from the root.
+  ## `execute ... run` has no children, no redirect and is not executable. It continues from the
+  ## root.
   if node.redirect.len > 0:
     result = walk.tree.root
     for name in node.redirect: result = result.children[name]
@@ -399,20 +409,21 @@ func continuation(walk: Walk, node: Node): Node =
   nil
 
 func isUnknownId(walk: Walk, registry, word: string): bool =
-  ## Only vanilla ids are checked: a tag, `*`, or an id in another namespace (the pack's own) passes.
+  ## Only vanilla ids are checked: a tag, `*`, or an id in another namespace (the pack's own)
+  ## passes.
   let id = registryId(word)
   id.isSome and registry in walk.tree.registries and id.get notin walk.tree.registries[registry]
 
 func readCoordinates(walk: var Walk, start, count: int): Option[int] =
   var pos = start
-  for index in 0 ..< count:
+  for index in 0..<count:
     if index > 0:
       if pos >= walk.text.len or walk.text[pos] != ' ':
         walk.fail(Problem(at: min(pos + 1, walk.text.len), expected: "a coordinate"))
         return none(int)
       inc pos
     let stop = readBalanced(walk.text, pos)
-    if not isCoordinate(walk.text[pos ..< stop]):
+    if not isCoordinate(walk.text[pos..<stop]):
       walk.fail(Problem(at: pos, expected: "a coordinate"))
       return none(int)
     pos = stop
@@ -422,7 +433,7 @@ func readArgument(walk: var Walk, node: Node, pos: int): Option[int] =
   let parser = node.parser
   let text = walk.text
   let stop = readBalanced(text, pos)
-  let word = text[pos ..< stop]
+  let word = text[pos..<stop]
   let properties = node.properties
 
   if parser == "minecraft:message": return some(text.len)
@@ -442,7 +453,9 @@ func readArgument(walk: var Walk, node: Node, pos: int): Option[int] =
   elif parser in ["brigadier:integer", "brigadier:float", "brigadier:double"]:
     let value = parseNumber(parser, word)
     if value.isSome:
-      if value.get >= properties.min.get(-Inf) and value.get <= properties.max.get(Inf): return some(stop)
+      let isInRange = value.get >= properties.min.get(-Inf) and
+                      value.get <= properties.max.get(Inf)
+      if isInRange: return some(stop)
       walk.fail(Problem(at: pos, expected: describeParser(parser), outOfRange: true))
       return none(int)
   elif isEntityParser(parser):
@@ -501,11 +514,13 @@ func matchChildren(walk: var Walk, node: Node, pos: int): bool =
       walk.addIdStarts(child.parser, child.properties, pos, stop.get)
       return true
 
-  if hasLiteral: walk.fail(Problem(at: pos, expected: if node == walk.tree.root: "a command" else: "a subcommand"))
+  if hasLiteral: walk.fail(Problem(at: pos, expected: if node ==
+      walk.tree.root: "a command" else: "a subcommand"))
   false
 
 func checkText*(tree: CommandTree, text: string, poplarNamespaces: openArray[string]): Checked =
-  ## `poplarNamespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
+  ## `poplarNamespaces` are the namespaces whose ids can be Poplar names with capitals
+  ## (`self:healPlayer`).
   var walk = Walk(tree: tree, text: text, poplarNamespaces: @poplarNamespaces)
   if walk.matchChildren(tree.root, 0): return Checked(ids: walk.ids)
   if walk.furthest.isNone: return Checked(failure: some(Failure(message: "invalid command", at: 0)))

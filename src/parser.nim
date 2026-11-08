@@ -1,6 +1,7 @@
-## Changes tokens into an AST with a Pratt parser. A mistake records a diagnostic and raises `ReportedError`, and
-## recovery skips to the next statement or declaration. A `{{...}}` insert is parsed by a second parser whose lexer
-## starts at the insert's line and column, so errors in it point into the file.
+## Changes tokens into an AST with a Pratt parser. A mistake records a diagnostic and raises
+## `ReportedError`, and recovery skips to the next statement or declaration. A `{{...}}` insert is
+## parsed by a second parser whose lexer starts at the insert's line and column, so errors in it
+## point into the file.
 
 import std/[options, strformat, strutils]
 import ast, diagnostic, lexer, token
@@ -48,7 +49,8 @@ func expectedText(tag: TokenTag): string =
 
 func addDiagnostic(parser: var Parser, diagnostic: Diagnostic) =
   ## Only the first error on a line is kept. Later ones on that line are usually caused by it.
-  if parser.errors.len > 0 and parser.errors[^1].position.get.line == diagnostic.position.get.line: return
+  if parser.errors.len > 0 and parser.errors[^1].position.get.line ==
+      diagnostic.position.get.line: return
   parser.errors.add diagnostic
 
 func addError(parser: var Parser, message: string) =
@@ -60,7 +62,8 @@ func fail(parser: var Parser, message: string) {.noreturn.} =
   raise newException(ReportedError, message)
 
 func nextToken(parser: var Parser) =
-  ## Illegal and unclosed tokens are reported here and skipped, so they do not cause more errors later.
+  ## Illegal and unclosed tokens are reported here and skipped, so they do not cause more errors
+  ## later.
   parser.current = parser.peek
   parser.peek = parser.lexer.nextToken()
   while parser.peek.tag in {tkIllegal, tkUnclosed}:
@@ -82,7 +85,8 @@ func currentIs(parser: Parser, tag: TokenTag): bool = parser.current.tag == tag
 func peekIs(parser: Parser, tag: TokenTag): bool = parser.peek.tag == tag
 
 func expectPeek(parser: var Parser, tag: TokenTag) =
-  if not parser.peekIs(tag): parser.fail(&"expected {expectedText(tag)}, found {parser.describe(parser.peek)}")
+  if not parser.peekIs(tag):
+    parser.fail(&"expected {expectedText(tag)}, found {parser.describe(parser.peek)}")
   parser.nextToken()
 
 func precedenceOf(tag: TokenTag): Precedence =
@@ -121,7 +125,7 @@ func splitNamespace(literal: string): (string, Option[string]) =
   var pathStart = literal.find({'[', '"'})
   if pathStart < 0: pathStart = literal.len
   if colon > pathStart: return (literal, none(string))
-  (literal[colon + 1 .. ^1], some(literal[0 ..< colon]))
+  (literal[colon + 1 .. ^1], some(literal[0..<colon]))
 
 func currentIdentifier(parser: Parser): Option[Identifier] =
   let kind = case parser.current.tag
@@ -191,7 +195,8 @@ func parseNumber(parser: var Parser, position: Position): Expression =
     of 'f': some(ntFloat)
     of 'd': some(ntDouble)
     else: none(NumberType)
-  let number = TypedNumber(text: if numberType.isNone: literal else: literal[0 ..< ^1], numberType: numberType)
+  let number = TypedNumber(text: if numberType.isNone: literal else: literal[0 ..< ^1],
+      numberType: numberType)
 
   if numberType.isNone and not number.hasFraction:
     try:
@@ -220,8 +225,8 @@ func parseInsert(parser: var Parser, source: string, column: int): Expression =
   if insertParser.errors.len > 0: raise newException(ReportedError, "error in an insert")
 
 func parseCommandParts(parser: var Parser, text: string, textColumn: int): seq[CommandPart] =
-  ## Splits command text into plain text and `{{expr}}` inserts. `textColumn` is the column where `text` starts in the
-  ## file, so an expression in an insert has its real position.
+  ## Splits command text into plain text and `{{expr}}` inserts. `textColumn` is the column where
+  ## `text` starts in the file, so an expression in an insert has its real position.
   var pos = 0
   while true:
     let open = text.find("{{", pos)
@@ -229,12 +234,12 @@ func parseCommandParts(parser: var Parser, text: string, textColumn: int): seq[C
     let close = text.find("}}", open + 2)
     if close < 0: parser.fail("missing '}}' in command")
 
-    if open > pos: result.add TextPart(offset: pos, text: text[pos ..< open])
+    if open > pos: result.add TextPart(offset: pos, text: text[pos..<open])
     let expression = parser.parseInsert(text[open + 2 ..< close], textColumn + open + 2)
     result.add InsertPart(offset: open, insert: expression)
     pos = close + 2
 
-  if pos < text.len: result.add TextPart(offset: pos, text: text[pos .. ^1])
+  if pos < text.len: result.add TextPart(offset: pos, text: text[pos..^1])
 
 func parseListLiteral(parser: var Parser): seq[Expression] =
   ## `[1, 2, 3]`
@@ -289,9 +294,11 @@ func parsePrefix(parser: var Parser): Expression =
     let operand = parser.parseExpression(prefixPrecedence)
     result = PrefixExpression(position: position, prefix: Prefix(op: op, operand: operand))
   of tkSelf:
-    parser.fail("'self:' is only for ids in commands and checks. In code, a plain name already means this namespace")
+    parser.fail("'self:' is only for ids in commands and checks. In code, a plain name already " &
+                "means this namespace")
   of tkConditionText:
-    result = MinecraftCheck(position: position, parts: parser.parseCommandParts(start.literal, start.column))
+    let parts = parser.parseCommandParts(start.literal, start.column)
+    result = MinecraftCheck(position: position, parts: parts)
   of tkMacroKey:
     result = MacroKey(position: position, key: start.literal)
   of tkLeftParen:
@@ -375,7 +382,8 @@ func parseCondition(parser: var Parser): Expression =
 func parseVarDecl(parser: var Parser): VarDecl =
   parser.nextToken()
   let target = parser.currentIdentifier()
-  if target.isNone: parser.fail(&"expected a variable name, found {parser.describe(parser.current)}")
+  if target.isNone:
+    parser.fail(&"expected a variable name, found {parser.describe(parser.current)}")
   parser.expectPeek(tkEql)
   parser.nextToken()
   let value = parser.parseExpression(lowestPrecedence)
@@ -417,7 +425,8 @@ func parseFor(parser: var Parser): For =
 
 func parseStatement(parser: var Parser): Statement =
   let position = tokenPosition(parser.current)
-  let isAssignment = (parser.currentIdentifier().isSome and parser.peekIs(tkEql)) or parser.currentIs(tkSelector)
+  let isAssignment = (parser.currentIdentifier().isSome and parser.peekIs(tkEql)) or
+      parser.currentIs(tkSelector)
   if isAssignment:
     let target = parser.parseIdentifier()
     parser.expectPeek(tkEql)
@@ -439,7 +448,8 @@ func parseStatement(parser: var Parser): Statement =
   of tkBreak, tkContinue:
     let isBreak = parser.currentIs(tkBreak)
     parser.expectPeek(tkSemicolon)
-    result = if isBreak: BreakStatement(position: position) else: ContinueStatement(position: position)
+    result = if isBreak: BreakStatement(position: position)
+             else: ContinueStatement(position: position)
   of tkIf:
     result = IfStatement(position: position, ifStatement: parser.parseIf())
   of tkFor:
@@ -447,7 +457,8 @@ func parseStatement(parser: var Parser): Statement =
   of tkWhile:
     let condition = parser.parseCondition()
     parser.expectPeek(tkLeftBrace)
-    result = WhileStatement(position: position, whileLoop: While(condition: condition, body: parser.parseBlock()))
+    result = WhileStatement(position: position, whileLoop: While(condition: condition,
+        body: parser.parseBlock()))
   of tkCommand:
     let text = parser.current.literal
     let parts = parser.parseCommandParts(text, parser.current.column + 1)
@@ -458,7 +469,8 @@ func parseStatement(parser: var Parser): Statement =
     let column = parser.current.column
     let subcommands = parser.parseCommandParts(parser.current.literal, column)
     parser.expectPeek(tkLeftBrace)
-    let execute = Execute(subcommands: subcommands, subcommandsColumn: column, body: parser.parseBlock())
+    let execute = Execute(subcommands: subcommands, subcommandsColumn: column,
+        body: parser.parseBlock())
     result = ExecuteStatement(position: position, execute: execute)
   else:
     let expression = parser.parseExpression(lowestPrecedence)
@@ -468,8 +480,9 @@ func parseStatement(parser: var Parser): Statement =
 # ---- declarations
 
 func skipToDeclaration(parser: var Parser) =
-  ## Skips the rest of a broken declaration, so a statement in its body is not read as a declaration. It stops after
-  ## the `;`, `}` or JSON body that ends the declaration, or before a word that starts a new one.
+  ## Skips the rest of a broken declaration, so a statement in its body is not read as a
+  ## declaration. It stops after the `;`, `}` or JSON body that ends the declaration, or before a
+  ## word that starts a new one.
   var depth = if parser.currentIs(tkLeftBrace): 1 else: 0
   while not parser.peekIs(tkEof):
     let startsDeclaration = parser.peek.tag in {tkImport, tkVar, tkMcfun}
@@ -499,12 +512,13 @@ func parseNamespaceStatement(parser: var Parser): NamespaceName =
 func parseImport(parser: var Parser): NamespaceName =
   ## `import magic;`
   if parser.peekIs(tkString):
-    parser.fail("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/")
+    parser.fail("imports are by namespace: 'import magic;'. A file is part of the pack when it " &
+                "is in src/")
   parser.parseNamespaceStatement()
 
 func parseDataFile(parser: var Parser): DataFile =
-  ## `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie"
-  ## { ... }`. The Compiler checks the type word.
+  ## `predicate isSneaking { ... }` or
+  ## `lootTable "minecraft:entities/zombie" { ... }`. The Compiler checks the type word.
   let typeWord = parser.current.literal
   let position = tokenPosition(parser.current)
 
@@ -512,11 +526,14 @@ func parseDataFile(parser: var Parser): DataFile =
   let name = case parser.current.tag
     of tkIdentifier: IdentifierName(identifier: parser.current.literal)
     of tkString: IdName(id: parser.decodeString(parser.current.literal))
-    else: parser.fail(&"expected a name after '{typeWord}', found {parser.describe(parser.current)}")
-  if parser.peekIs(tkUnclosed): parser.fail(&"the JSON of {typeWord} '{parser.current.literal}' is not closed")
+    else: parser.fail(&"expected a name after '{typeWord}', found " &
+                      &"{parser.describe(parser.current)}")
+  if parser.peekIs(tkUnclosed):
+    parser.fail(&"the JSON of {typeWord} '{parser.current.literal}' is not closed")
   if not parser.peekIs(tkJsonBody):
     let found = parser.describe(parser.peek)
-    parser.fail(&"expected the JSON of {typeWord} '{parser.current.literal}' (an object or a list), found {found}")
+    parser.fail(&"expected the JSON of {typeWord} '{parser.current.literal}' (an object or a " &
+                &"list), found {found}")
   parser.nextToken()
 
   DataFile(typeWord: typeWord, name: name, json: parser.current.literal, position: position,
@@ -524,7 +541,8 @@ func parseDataFile(parser: var Parser): DataFile =
 
 func parseMcfun(parser: var Parser): Mcfun =
   if not parser.currentIs(tkMcfun):
-    parser.fail(&"expected 'import', 'var', 'mcfun' or a data file, found {parser.describe(parser.current)}")
+    parser.fail("expected 'import', 'var', 'mcfun' or a data file, found " &
+                &"{parser.describe(parser.current)}")
   parser.expectPeek(tkIdentifier)
   let name = parser.current.literal
   let position = tokenPosition(parser.current)
@@ -532,8 +550,8 @@ func parseMcfun(parser: var Parser): Mcfun =
   parser.expectPeek(tkLeftParen)
   if not parser.peekIs(tkRightParen):
     parser.nextToken()
-    parser.fail("an mcfun has no parameter list. Pass a compound with 'f() with {name: ...}' and read it with " &
-                "'$(name)'")
+    parser.fail("an mcfun has no parameter list. Pass a compound with 'f() with {name: ...}' and " &
+                "read it with '$(name)'")
   parser.nextToken()
 
   parser.expectPeek(tkLeftBrace)

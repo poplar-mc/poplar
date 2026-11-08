@@ -22,7 +22,8 @@ type
     lkScore, lkData
 
   Local* = object
-    ## A local is a global with a generated name: `#i_countdown` for a score, `i_countdown` in `<ns>:data` for data.
+    ## A local is a global with a generated name: `#i_countdown` for a score, `i_countdown` in
+    ## `<ns>:data` for data.
     kind*: LocalKind
     generatedName*: string
     owner*: string ## The mcfun that the local belongs to.

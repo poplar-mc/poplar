@@ -5,7 +5,8 @@ test "writes functions and tags":
   let folder = createTempDir("poplar", "")
   defer: removeDir(folder)
   let program = Program(
-    functions: @[McFunction(name: "main", commands: @[RawCommand(raw: "say hi"), FunctionCommand(function: "other")])],
+    functions: @[McFunction(name: "main", commands: @[RawCommand(raw: "say hi"),
+                                                      FunctionCommand(function: "other")])],
     load: some(McFunction(name: "poplar/load", commands: @[
       ScoreSetIfUnsetCommand(scoreValue: ScoreValue(score: Score(holder: "$hp"), value: 20))])),
     tick: @["main"],
@@ -17,8 +18,10 @@ test "writes functions and tags":
   check readFile(folder / "data/demo/function/main.mcfunction") == "say hi\nfunction demo:other\n"
   check readFile(folder / "data/demo/function/poplar/load.mcfunction") ==
     "execute unless score $hp poplar.demo matches -2147483648.. run scoreboard players set $hp poplar.demo 20\n"
-  check readFile(folder / "data/minecraft/tags/function/load.json") == "{\n    \"values\": [\"demo:poplar/load\"]\n}\n"
-  check readFile(folder / "data/minecraft/tags/function/tick.json") == "{\n    \"values\": [\"demo:main\"]\n}\n"
+  check readFile(folder / "data/minecraft/tags/function/load.json") ==
+    "{\n    \"values\": [\"demo:poplar/load\"]\n}\n"
+  check readFile(folder / "data/minecraft/tags/function/tick.json") ==
+    "{\n    \"values\": [\"demo:main\"]\n}\n"
 
 test "writes a zip with each file stored after its name":
   let pack = createTempDir("poplar", "")

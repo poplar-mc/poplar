@@ -1,3 +1,5 @@
+## `poplar update`: finds the latest release on GitHub and runs the install script.
+
 import std/[json, options, os, osproc, strformat, strtabs, strutils, terminal]
 import command_line, output, root
 
@@ -15,7 +17,7 @@ func parseVersion(text: string): Option[Version] =
   let dash = core.find('-')
   if dash >= 0:
     version.prerelease = core[dash + 1 .. ^1].split('.')
-    core = core[0 ..< dash]
+    core = core[0..<dash]
   let parts = core.split('.')
   if parts.len != 3: return none(Version)
   for index, part in parts:
@@ -28,11 +30,13 @@ func `$`(version: Version): string =
   if version.prerelease.len > 0: result.add "-" & version.prerelease.join(".")
 
 func isNewer(a, b: Version): bool =
-  ## True if `a` comes after `b`. A version with a prerelease comes before the same version without one.
-  for index in 0 ..< 3:
+  ## True if `a` comes after `b`. A version with a prerelease comes before the same version without
+  ## one.
+  for index in 0..<3:
     if a.numbers[index] != b.numbers[index]: return a.numbers[index] > b.numbers[index]
-  if a.prerelease.len == 0 or b.prerelease.len == 0: return a.prerelease.len == 0 and b.prerelease.len > 0
-  for index in 0 ..< min(a.prerelease.len, b.prerelease.len):
+  if a.prerelease.len == 0 or b.prerelease.len == 0:
+    return a.prerelease.len == 0 and b.prerelease.len > 0
+  for index in 0..<min(a.prerelease.len, b.prerelease.len):
     let (left, right) = (a.prerelease[index], b.prerelease[index])
     if left == right: continue
     let (leftNumber, rightNumber) = (left.allCharsInSet(Digits), right.allCharsInSet(Digits))
@@ -42,15 +46,16 @@ func isNewer(a, b: Version): bool =
   a.prerelease.len > b.prerelease.len
 
 proc latestRelease(): (string, string) =
-  ## The tag and the page of the latest release. GitHub's API answers only requests that name their client.
+  ## The tag and the page of the latest release. GitHub's API answers only requests that name their
+  ## client.
   let (body, code) = execCmdEx(&"curl -fsSL -H \"User-Agent: poplar/{version}\" {latestReleaseUrl}")
   if code != 0: raise newException(IOError, body.strip.splitLines[^1])
   let release = parseJson(body)
   (release["tag_name"].getStr, release["html_url"].getStr)
 
 proc runInstallScript(shared: Shared) =
-  ## The same command as the README. `POPLAR_PREFIX` is the folder above this binary's `bin/`, so the script
-  ## replaces the copy that is running instead of installing a second one.
+  ## The same command as the README. `POPLAR_PREFIX` is the folder above this binary's `bin/`, so
+  ## the script replaces the copy that is running instead of installing a second one.
   let environment = newStringTable()
   for key, value in envPairs(): environment[key] = value
   environment["POPLAR_PREFIX"] = getAppDir().parentDir
@@ -98,4 +103,5 @@ proc register*(shared: Shared): Command =
     stdout.flushFile()
     runInstallScript(shared)
   result = newCommand("update", "Update Poplar to the latest release", run)
-  result.addFlag Flag(name: "yes", description: "Update without asking", default: BoolFlag(isOn: false))
+  result.addFlag Flag(name: "yes", description: "Update without asking",
+                      default: BoolFlag(isOn: false))

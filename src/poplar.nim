@@ -17,8 +17,9 @@ when isMainModule:
     color: not existsEnv("NO_COLOR") and stdout.isatty,
   )
   let poplar = newRootCommand()
-  for command in [new.register(shared), init.register(shared), build.register(shared), check.register(shared),
-                  watch.register(shared), update.register(shared), lsp.register(shared)]:
+  for command in [new.register(shared), init.register(shared), build.register(shared),
+                  check.register(shared), watch.register(shared), update.register(shared),
+                  lsp.register(shared)]:
     poplar.addCommand command
   let code = poplar.execute(commandLineParams())
   stdout.flushFile()

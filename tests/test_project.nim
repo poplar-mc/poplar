@@ -25,9 +25,10 @@ test "only the std mcfuns that the project calls are written, under std/":
   createDir(folder / "src")
   createDir(folder / "std")
   writeFile(folder / "poplar.json", "{\"namespace\": \"ns\"}")
-  writeFile(folder / "src" / "main.poplar", "namespace ns;\nimport std;\nmcfun main() { /say {{ std:double() with " &
-            "{x: 2} }}; /function std:fromCommand; }\n")
-  writeFile(folder / "std" / "std.poplar", "namespace std;\nmcfun double() { return twice() with {x: $(x)}; }\n" &
+  writeFile(folder / "src" / "main.poplar", "namespace ns;\nimport std;\n" &
+            "mcfun main() { /say {{ std:double() with {x: 2} }}; /function std:fromCommand; }\n")
+  writeFile(folder / "std" / "std.poplar", "namespace std;\n" &
+            "mcfun double() { return twice() with {x: $(x)}; }\n" &
             "mcfun twice() { return $(x) * 2; }\nmcfun fromCommand() {}\nmcfun unused() {}\n")
 
   let built = build(folder, Options(stdPath: folder / "std", mode: moCheck))

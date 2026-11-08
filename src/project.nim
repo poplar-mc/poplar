@@ -1,5 +1,5 @@
-## Builds a project: reads `poplar.json`, then parses every file in `src/`, and the standard library when a file
-## imports `std`.
+## Builds a project: reads `poplar.json`, then parses every file in `src/`, and the standard library
+## when a file imports `std`.
 
 import std/[algorithm, options, os, sets, strformat, strutils, tables]
 import ast, command_tree, compiler, config, datapack_writer, diagnostic, lexer, parser
@@ -11,7 +11,7 @@ type
     moWrite, moCheck
 
   Summary* = object
-    name*: string ## `zipName`, the name of the pack.
+    name*: string                       ## `zipName`, the name of the pack.
     functionCount*: int
     packPath*, zipPath*: Option[string] ## `poplar-out/<zipName>`, or none for `moCheck`.
 
@@ -83,28 +83,33 @@ proc writeNewProject*(folder, name: string) =
   ## Writes the files of a new project into `folder`. It never overwrites a file.
   let namespace = namespaceFromName(name)
   createDir(folder / "src")
-  writeNewFile(folder / fileName, "{\n  \"$schema\": \"./poplar.schema.json\",\n  \"zipName\": " & jsonString(name) &
+  writeNewFile(folder / fileName,
+               "{\n  \"$schema\": \"./poplar.schema.json\",\n  \"zipName\": " & jsonString(name) &
                ",\n  \"namespace\": \"" & namespace & "\"\n}\n")
   writeNewFile(folder / "poplar.schema.json", schemaJson)
-  writeNewFile(folder / "src" / "main.poplar", &"namespace {namespace};\n\nmcfun load() {{\n    /say Hello from " &
-               &"{namespace}!;\n}}\n")
+  writeNewFile(folder / "src" / "main.poplar", &"namespace {namespace};\n\n" &
+               &"mcfun load() {{\n    /say Hello from {namespace}!;\n}}\n")
   writeNewFile(folder / ".gitignore", outDirName & "/\n.env\n")
 
 proc installedStdPath*(): string =
-  ## Where the release archives put the standard library: `lib/poplar/std` next to the `bin` folder of the binary.
+  ## Where the release archives put the standard library: `lib/poplar/std` next to the `bin` folder
+  ## of the binary.
   getAppDir() & DirSep & ".." & DirSep & "lib" & DirSep & "poplar" & DirSep & "std"
 
 proc sourceFiles(folder: string, origin: Origin): seq[SourceFile] =
-  ## Every `.poplar` file under `folder`, sorted, so the build does not depend on the order of the file system.
+  ## Every `.poplar` file under `folder`, sorted, so the build does not depend on the order of the
+  ## file system.
   for path in walkDirRec(folder, yieldFilter = {pcFile}, relative = true):
-    if path.endsWith(".poplar"): result.add SourceFile(origin: origin, path: path.replace(DirSep, '/'))
+    if path.endsWith(".poplar"):
+      result.add SourceFile(origin: origin, path: path.replace(DirSep, '/'))
   result.sort(proc (a, b: SourceFile): int = cmp(a.path, b.path))
 
 proc addError(loader: var Loader, path: string, position: Option[Position], message: string) =
   loader.diagnostics.add Diagnostic(path: path, position: position, message: message)
 
 proc read(loader: var Loader, file: SourceFile, displayPath: string): Option[string] =
-  ## The text of a file: from the overlay when an editor has it open, else from the disk. None if it does not exist.
+  ## The text of a file: from the overlay when an editor has it open, else from the disk. None if it
+  ## does not exist.
   let rootPath = case file.origin
     of orProject: loader.srcPath
     of orStd: loader.stdRealPath.get
@@ -116,8 +121,8 @@ proc read(loader: var Loader, file: SourceFile, displayPath: string): Option[str
   some(readFile(absolutePath))
 
 proc parse(loader: var Loader, file: SourceFile, hasErrors: var bool): Option[LoadedProgram] =
-  ## Parses one file. None if it has no `namespace` line. After another parse error the rest still loads, so the
-  ## editor knows its names.
+  ## Parses one file. None if it has no `namespace` line. After another parse error the rest still
+  ## loads, so the editor knows its names.
   let displayPath = originFolder(file.origin) / file.path
   let input = loader.read(file, displayPath)
   if input.isNone: return none(LoadedProgram)
@@ -131,7 +136,8 @@ proc parse(loader: var Loader, file: SourceFile, hasErrors: var bool): Option[Lo
   if program.namespace.isNone:
     # A broken `namespace` line already has its own error.
     if fileParser.errors.len == 0:
-      loader.addError(displayPath, some(Position(line: 1, column: 1)), "a file must start with 'namespace <name>;'")
+      loader.addError(displayPath, some(Position(line: 1, column: 1)), "a file must start with " &
+                                                                       "'namespace <name>;'")
     hasErrors = true
     return none(LoadedProgram)
   some(LoadedProgram(origin: file.origin, displayPath: displayPath, program: program))
@@ -175,7 +181,8 @@ proc load(loader: var Loader): bool =
   for loaded in programs:
     for imported in loaded.program.imports:
       if imported.name in namespaces: continue
-      loader.addError(loaded.displayPath, some(imported.position), &"no file has 'namespace {imported.name};'")
+      loader.addError(loaded.displayPath, some(imported.position),
+          &"no file has 'namespace {imported.name};'")
       hasErrors = true
     loader.compiler.addProgram(loaded.displayPath, loaded.program, loaded.origin)
 
@@ -185,8 +192,8 @@ func onlyDiagnostic(path: string, position: Option[Position], message: string): 
   Result(diagnostics: @[Diagnostic(path: path, position: position, message: message)])
 
 proc build*(projectPath: string, options: Options): Result =
-  ## Compiles the project in `projectPath`, and writes the pack in `moWrite` mode. Errors in the user's files are in
-  ## the result, not printed.
+  ## Compiles the project in `projectPath`, and writes the pack in `moWrite` mode. Errors in the
+  ## user's files are in the result, not printed.
   if not dirExists(projectPath):
     return onlyDiagnostic("", none(Position), &"the project folder {projectPath} does not exist")
   let projectRealPath = expandFilename(projectPath)
@@ -199,14 +206,15 @@ proc build*(projectPath: string, options: Options): Result =
 
   if not dirExists(projectPath / "src"):
     return onlyDiagnostic("", none(Position),
-                          &"the folder {projectPath} is not a Poplar project: it has no src/ folder")
+                          &"the folder {projectPath} is not a Poplar project: it has no src/ " &
+                          "folder")
 
   let commandTree = if options.commandTree != nil: options.commandTree else: loadCommandTree()
   let compiler = newCompiler(commandTree)
   compiler.packNamespace = packConfig.namespace
 
-  var loader = Loader(srcPath: projectRealPath / "src", stdPath: options.stdPath, overlay: options.overlay,
-                      compiler: compiler)
+  var loader = Loader(srcPath: projectRealPath / "src", stdPath: options.stdPath,
+                      overlay: options.overlay, compiler: compiler)
   let sourcesLoaded = loader.load()
   result.compiler = compiler
   result.files = loader.files

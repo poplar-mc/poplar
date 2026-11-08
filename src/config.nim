@@ -1,4 +1,5 @@
-## Reads `poplar.json` and gives the defaults. The default pack format comes from mcmeta `version.json`.
+## Reads `poplar.json` and gives the defaults. The default pack format comes from mcmeta
+## `version.json`.
 
 import std/[json, math, options, os, sets, strformat, strutils]
 import diagnostic, json_scanner
@@ -20,19 +21,22 @@ type
       ## Where and why `poplar.json` is invalid. None when the problem has no position in the file.
 
   FieldReader = object
-    ## Reads the fields one token at a time, so that each problem has the line and column of its field.
+    ## Reads the fields one token at a time, so that each problem has the line and column of its
+    ## field.
     scanner: JsonScanner
 
 const fileName* = "poplar.json"
 
 const oldestFormat* = PackFormat(major: 88)
-  ## 1.21.9. Older versions also need the old `pack_format` and `supported_formats` fields in pack.mcmeta.
+  ## 1.21.9. Older versions also need the old `pack_format` and `supported_formats` fields in
+  ## pack.mcmeta.
 
 const versionJson = staticRead("../mcmeta/version.json")
 
 const latestFormat* = static:
   let version = parseJson(versionJson)
-  PackFormat(major: version["data_pack_version"].getInt, minor: version["data_pack_version_minor"].getInt)
+  PackFormat(major: version["data_pack_version"].getInt,
+             minor: version["data_pack_version_minor"].getInt)
 
 const minecraftVersion* = static(parseJson(versionJson)["name"].getStr)
   ## The Minecraft version that the command data comes from.
@@ -48,7 +52,7 @@ func `<`(a, b: PackFormat): bool = a.major < b.major or (a.major == b.major and 
 func isResourceNameChar*(ch: char): bool = ch.isLowerAscii or ch.isDigit or ch in {'_', '.', '-'}
 
 func isValidResourceName*(name: string): bool =
-  name.len > 0 and name.allCharsInSet({'a' .. 'z', '0' .. '9', '_', '.', '-'})
+  name.len > 0 and name.allCharsInSet({'a'..'z', '0'..'9', '_', '.', '-'})
 
 func failWithoutPosition(message: string) {.noreturn.} =
   raise (ref ConfigError)(msg: message, position: none(Position))
@@ -67,12 +71,13 @@ func jsonString*(text: string): string =
     of '\n': result.add "\\n"
     of '\r': result.add "\\r"
     of '\t': result.add "\\t"
-    of '\0' .. '\x07', '\v', '\x0E' .. '\x1F': result.add "\\u" & toHex(ord(ch), 4).toLowerAscii
+    of '\0'..'\x07', '\v', '\x0E'..'\x1F': result.add "\\u" & toHex(ord(ch), 4).toLowerAscii
     else: result.add ch
   result.add '"'
 
 func decimalText(number: float): string =
-  ## The shortest digits that read back as `number`, without an exponent: `1e-7` is `0.0000001`, `2.0` is `2`.
+  ## The shortest digits that read back as `number`, without an exponent: `1e-7` is `0.0000001`,
+  ## `2.0` is `2`.
   var shortest = $number
   if shortest.startsWith('-'):
     result.add '-'
@@ -82,12 +87,12 @@ func decimalText(number: float): string =
   var digits = parts[0]
   let point = digits.find('.')
   if point >= 0:
-    digits.delete(point .. point)
+    digits.delete(point..point)
     exponent += point
   else:
     exponent += digits.len
   while digits.len > 0 and digits[0] == '0':
-    digits.delete(0 .. 0)
+    digits.delete(0..0)
     dec exponent
   digits.removeSuffix('0')
   if digits.len == 0:
@@ -97,11 +102,11 @@ func decimalText(number: float): string =
   elif exponent >= digits.len:
     result.add digits & '0'.repeat(exponent - digits.len)
   else:
-    result.add digits[0 ..< exponent] & "." & digits[exponent .. ^1]
+    result.add digits[0..<exponent] & "." & digits[exponent..^1]
 
 func jsonNumber(text: string): string =
-  ## A whole number that fits in 64 bits is written as a whole number, and any other finite number as a decimal.
-  ## Other numbers stay as written.
+  ## A whole number that fits in 64 bits is written as a whole number, and any other finite number
+  ## as a decimal. Other numbers stay as written.
   if text != "-0" and not text.contains({'.', 'e', 'E'}):
     try:
       return $parseBiggestInt(text)
@@ -185,7 +190,8 @@ func writeValue(reader: var FieldReader, token: JsonToken, output: var string) =
       element = reader.next()
       inc count
     output.add ']'
-  of jtObjectEnd, jtArrayEnd, jtEndOfDocument: raiseAssert "the scanner does not give an end token in place of a value"
+  of jtObjectEnd, jtArrayEnd, jtEndOfDocument:
+    raiseAssert "the scanner does not give an end token in place of a value"
 
 func readJson(reader: var FieldReader): string =
   ## Any JSON value, for example a text component. It is written to pack.mcmeta in compact form.
@@ -198,9 +204,10 @@ func validate(config: Config, hasNamespace: bool): Config =
     failWithoutPosition(&"\"zipName\" '{config.zipName}' must not be empty or contain '/' or '\\'")
   if not isValidResourceName(config.namespace):
     if hasNamespace:
-      failWithoutPosition(&"\"namespace\" '{config.namespace}' must only use a-z, 0-9, '_', '.' and '-'")
-    failWithoutPosition(&"the project folder name '{config.namespace}' is not a valid namespace. Set " &
-                        "\"namespace\" in poplar.json (a-z, 0-9, '_', '.' and '-')")
+      failWithoutPosition(&"\"namespace\" '{config.namespace}' must only use a-z, 0-9, '_', '.' " &
+                          "and '-'")
+    failWithoutPosition(&"the project folder name '{config.namespace}' is not a valid namespace. " &
+                        "Set \"namespace\" in poplar.json (a-z, 0-9, '_', '.' and '-')")
   if config.minFormat < oldestFormat:
     failWithoutPosition(&"\"minFormat\" must be at least {oldestFormat.major} (Minecraft 1.21.9)")
   if config.maxFormat < config.minFormat:
@@ -225,7 +232,8 @@ func parseConfig*(json, folderName: string, latest = latestFormat): Config =
     of "description": description = some(reader.readJson())
     of "minFormat": minFormat = some(reader.readFormat(field))
     of "maxFormat": maxFormat = some(reader.readFormat(field))
-    else: reader.fail(&"unknown field '{field}'. Fields: zipName, namespace, description, minFormat, maxFormat")
+    else: reader.fail(&"unknown field '{field}'. Fields: zipName, namespace, description, " &
+                      "minFormat, maxFormat")
 
   let name = zipName.get(folderName)
   let config = Config(

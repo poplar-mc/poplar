@@ -1,7 +1,8 @@
 import std/[options, unittest]
 import ../src/[ast, diagnostic, lexer, parser]
 
-# A test knows which branch each node is, so it reads the fields with `uncheckedAccess` instead of matching.
+# A test knows which branch each node is, so it reads the fields with `uncheckedAccess` instead of
+# matching.
 
 proc parseWithErrors(source: string): (Program, seq[Diagnostic]) =
   var sourceParser = initParser(initLexer(source))
@@ -26,7 +27,8 @@ test "parse hello.poplar":
     check call.args[0].text == "hello"
 
 test "parse calls with a macro compound, a path or raw text, and macro keys":
-  let program = parseValid("mcfun f() { g() with {name: $(name)}; g() with $players[0]; g() with entity @s; }")
+  let program = parseValid("mcfun f() { g() with {name: $(name)}; g() with $players[0]; " &
+                           "g() with entity @s; }")
   let body = program.mcfuns[0].body
   {.cast(uncheckedAccess).}:
     check body[0].expression.call.with.get.value.entries[0].value.key == "name"
@@ -91,7 +93,8 @@ test "parse call with args":
     check call.args[2].text == "three"
 
 test "parse if else":
-  let program = parseValid("mcfun f() {\n    if (x < 1) { a(); } else if (x == 2) { b(); } else { c(); }\n}")
+  let program = parseValid(
+    "mcfun f() {\n    if (x < 1) { a(); } else if (x == 2) { b(); } else { c(); }\n}")
   {.cast(uncheckedAccess).}:
     let ifStatement = program.mcfuns[0].body[0].ifStatement
     check ifStatement.condition.infix.op == ioLess
@@ -122,7 +125,8 @@ test "errors have a column, also in an insert, and name the end of the insert":
   check errors[1].position.get.column == 9
 
 test "after a broken declaration, its body is skipped and the next declaration is read":
-  let (program, errors) = parseWithErrors("mcfun broken( {\n    var x = 1;\n}\nrecipe a {}\nmcfun f() {}")
+  let (program, errors) =
+    parseWithErrors("mcfun broken( {\n    var x = 1;\n}\nrecipe a {}\nmcfun f() {}")
   check errors.len == 1
   check program.globals.len == 0
   check program.dataFiles.len == 1
@@ -136,7 +140,8 @@ test "decodes string escapes":
   check errors[0].message == "unknown escape '\\q' in string. Only \\\" and \\\\ are allowed"
 
 test "reads namespace, imports and names of other namespaces":
-  let program = parseValid("namespace combat;\nimport bs.math;\nmcfun f() { bs.math:clamp(#magic:mana, $magic:item.count); }")
+  let program = parseValid("namespace combat;\nimport bs.math;\n" &
+                           "mcfun f() { bs.math:clamp(#magic:mana, $magic:item.count); }")
   check program.namespace.get.name == "combat"
   check program.imports[0].name == "bs.math"
   {.cast(uncheckedAccess).}:

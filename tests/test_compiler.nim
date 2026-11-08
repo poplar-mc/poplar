@@ -58,7 +58,8 @@ say ok
 var #a = 0;
 mcfun main() { var count = 0; if (#a > 0) { count = 1; } }""")
     discard compiler.compile()
-    check compiler.messages == @["cannot change compile-time 'count' inside a runtime 'if' or 'execute'"]
+    check compiler.messages ==
+      @["cannot change compile-time 'count' inside a runtime 'if' or 'execute'"]
 
   test "errors point to their expression":
     let compiler = compileForTest("""
@@ -77,8 +78,8 @@ mcfun main() {
     check errors[0].position.get.column == 5
     check errors[1].position.get.line == 6
     check errors[1].position.get.column == 13
-    check errors[2].message == "'copy' is a build-time constant, but this value only exists in the game. Use " &
-                               "'var #copy' for a score or 'var $copy' for data"
+    check errors[2].message == "'copy' is a build-time constant, but this value only exists in " &
+                               "the game. Use 'var #copy' for a score or 'var $copy' for data"
 
   test "break, continue and return in loops and execute bodies":
     let compiler = compileForTest("""
@@ -138,15 +139,17 @@ mcfun f() {
     discard compiler.compile()
     let errors = compiler.errors
     check compiler.messages == @[
-      "if one branch of an 'if' contains 'return', 'break' or 'continue', every branch must end with one",
+      "if one branch of an 'if' contains 'return', 'break' or 'continue', every branch must end " &
+        "with one",
       "'break' must be inside a 'while' (not in 'execute (...)')",
-      "this 'while' never stops: add a 'break' or 'return', or use a score or data value in the condition",
+      "this 'while' never stops: add a 'break' or 'return', or use a score or data value in the " &
+        "condition",
       "code after 'return', 'break' or 'continue' is never run",
     ]
     check errors[0].position.get.line == 3
     check errors[3].position.get.line == 10
 
-  test "locals are set on every call, saved around a recursive call, and data locals are removed at each exit":
+  test "locals: set on every call, saved around recursion, data locals removed at each exit":
     let compiler = compileForTest("""
 mcfun walk() {
     var #mine = $(depth);
@@ -229,7 +232,8 @@ suite "values":
     check commands[2].rawText == "say step 2"
 
   test "folds compile-time if":
-    let compiler = compileForTest("mcfun main() { for (0..4) |i| { if (i % 2 == 0) { /say {{i}}; } } }")
+    let compiler =
+      compileForTest("mcfun main() { for (0..4) |i| { if (i % 2 == 0) { /say {{i}}; } } }")
     let program = compiler.compile()
     check compiler.errors.len == 0
     check program.render("main") == "say 0\nsay 2\n"
@@ -300,8 +304,9 @@ mcfun main() {
     @s.$Health = #mana;
 }""")
     discard compiler.compile()
-    check compiler.messages == @["'@a.#mana' needs a selector for one entity (@s, @p, @r, @n or limit=1)",
-                                 "expected a subcommand, found 'az'"]
+    check compiler.messages == @[
+      "'@a.#mana' needs a selector for one entity (@s, @p, @r, @n or limit=1)",
+      "expected a subcommand, found 'az'"]
     check compiler.errors[1].position.get.column == 14
 
 suite "conditions":
@@ -491,8 +496,8 @@ mcfun main() {
     #n = slice($id, 1);
 }""")
     let program = compiler.compile()
-    check compiler.messages == @["'slice' gives a string, so it cannot be a score. Store it in data: " &
-                                 "'$x = slice(...);'"]
+    check compiler.messages ==
+      @["'slice' gives a string, so it cannot be a score. Store it in data: '$x = slice(...);'"]
     check program.render("main") == """
 data modify storage ns:data id set string entity @s SelectedItem.id 10 -2
 execute store result storage ns:poplar string int 1 run scoreboard players get #global ns.n
@@ -506,7 +511,8 @@ execute if data storage ns:poplar {string_test:"_sword"} run say sword
 suite "calls":
   test "a recursive call saves the locals of an mcfun in another namespace where they are":
     let compiler = newCompiler(tree)
-    compiler.addProgram("magic.poplar", parseForTest("""
+    compiler.addProgram("magic.poplar", parseForTest(
+        """
 namespace magic;
 mcfun down() {
     var #i = 1;
@@ -534,8 +540,9 @@ mcfun main() { #n = ns:len($list); }
 mcfun one() { return 1; }
 mcfun range() { for (0..one()) |i| { /say {{i}}; } }""")
     discard compiler.compile()
-    check compiler.messages == @["unknown function 'len'",
-                                 "mcfun 'one' runs in the game, so its result is not known when the pack is built"]
+    check compiler.messages == @[
+      "unknown function 'len'",
+      "mcfun 'one' runs in the game, so its result is not known when the pack is built"]
 
   test "return values, mcfun calls as values and while":
     let compiler = compileForTest("""
@@ -621,8 +628,10 @@ mcfun main() {
     check compiler.messages == @[
       "mcfun 'two' uses '$(b)', but this compound has no key 'b'",
       "mcfun 'two' uses '$(b)', but this compound has no key 'b'",
-      "'with' needs a compound, but '$num' is 0.05f. Declare it as a compound: 'var $num = {name: 0.05f};'",
-      "'with' needs a compound, but '$list' is [1]. Declare it as a compound: 'var $list = {name: [1]};'",
+      "'with' needs a compound, but '$num' is 0.05f. Declare it as a compound: " &
+        "'var $num = {name: 0.05f};'",
+      "'with' needs a compound, but '$list' is [1]. Declare it as a compound: " &
+        "'var $list = {name: [1]};'",
     ]
 
   test "mcfun call errors":
@@ -633,11 +642,12 @@ mcfun heal() {
 mcfun main() { heal(); heal(5); heal() with 5; }""")
     discard compiler.compile()
     check compiler.messages == @[
-      "'copy' is a build-time constant, but this value only exists in the game. Use 'var #copy' for a score or " &
-        "'var $copy' for data",
+      "'copy' is a build-time constant, but this value only exists in the game. Use 'var #copy' " &
+        "for a score or 'var $copy' for data",
       "mcfun 'heal' uses '$(amount)', so it needs a compound: 'heal() with {amount: ...}'",
       "mcfun 'heal' takes no arguments. Pass them as a compound: 'heal() with {amount: ...}'",
-      "'with' needs a compound ('{name: ...}'), a '$' variable, 'entity <selector>' or 'block <position>'",
+      "'with' needs a compound ('{name: ...}'), a '$' variable, 'entity <selector>' or " &
+        "'block <position>'",
     ]
 
   test "recursive calls save live temps in a frame":
@@ -668,7 +678,8 @@ scoreboard players set #global ns.x 2
 execute store result score #poplar.main.t0 poplar.ns run function ns:double {v:3}
 scoreboard players operation #global ns.x *= #poplar.main.t0 poplar.ns
 """
-    check renderFunction("ns", program.load.get).startsWith("data modify storage ns:poplar stack set value []\n")
+    check renderFunction("ns", program.load.get).startsWith(
+      "data modify storage ns:poplar stack set value []\n")
 
 suite "declarations":
   test "data files go to their folder, and self: names them in commands":
@@ -687,7 +698,8 @@ mcfun main() { /execute if predicate self:isSneaking run say hi; }""")
                                  "invalid JSON in recipe 'b'",
                                  "recipe 'ns:b' is already declared at main.poplar:5"]
     check compiler.errors[1].position.get.line == 6
-    check program.functions[0].commands[0].rawText == "execute if predicate ns:is_sneaking run say hi"
+    check program.functions[0].commands[0].rawText ==
+      "execute if predicate ns:is_sneaking run say hi"
     let files = program.dataFiles
     check files[0].folder == "predicate"
     check files[0].path == "is_sneaking"
@@ -710,7 +722,8 @@ mcfun heal() { #mana = #mana + 1; }
 mcfun castSpell() { ns:heal(); }
 mcfun build() { var $player = {mana: #mana}; }"""
     let compiler = newCompiler(tree)
-    for source in [packSource, magicSource]: compiler.addProgram("main.poplar", parseForTest(source), orProject)
+    for source in [packSource, magicSource]:
+      compiler.addProgram("main.poplar", parseForTest(source), orProject)
     let program = compiler.compile()
     check compiler.messages == @["namespace 'ns' is not imported. Add 'import ns;'"]
     check program.render("heal") == """
@@ -744,7 +757,8 @@ scoreboard players set #left_playerDied poplar.ns 3
 function ns:tellraw {target:"@a",message:["HP ",{score:{name:"#global",objective:"ns.hp"}},{storage:"ns:data",nbt:"stats.maxHp"},{entity:"@s",nbt:"CustomName"},{score:{name:"#left_playerDied",objective:"poplar.ns"}}]}
 """
     check program.render("main") == "function ns:greet {target:\"@p\"}\n"
-    check program.render("poplar/event_0") == "scoreboard players reset @s ns.event_0\nfunction ns:player_died\n"
+    check program.render("poplar/event_0") ==
+      "scoreboard players reset @s ns.event_0\nfunction ns:player_died\n"
     check program.render("poplar/tick") ==
       "execute as @a[scores={ns.event_0=1..}] at @s run function ns:poplar/event_0\n"
     check program.tick == @["poplar/tick"]
@@ -764,7 +778,8 @@ mcfun withMacroArgument() { /say $(x); }
 mcfun other() { onEvent("deathCount", other); }""")
     discard compiler.compile()
     check compiler.messages == @[
-      "the callback 'withMacroArgument' is run by the game, so it gets no macro arguments and cannot use '$(x)'",
+      "the callback 'withMacroArgument' is run by the game, so it gets no macro arguments and " &
+        "cannot use '$(x)'",
       "unknown function 'missing'",
       "'onEvent' must be in 'mcfun load'",
     ]
@@ -788,7 +803,7 @@ function ns:load
     check libraryProgram.load.isNone
     check libraryProgram.tick.len == 0
 
-  test "onTrigger makes a trigger objective, runs the callback and enables it again, even with the namespace name":
+  test "onTrigger: trigger objective, callback, enabled again, even with the namespace name":
     let compiler = compileForTest("""
 mcfun load() {
     onTrigger("ns", show);
@@ -847,17 +862,17 @@ mcfun main() {
     discard compiler.compile()
     let errors = compiler.errors
     check errors.len == 7
-    check errors[6].message == "'isMissing' cannot be an id, because an id has no capital letters. To name " &
-                               "something in this pack, write 'self:isMissing'"
-    check errors[0].message == "'isVehicle' is in this pack, but with no namespace it means 'minecraft:isVehicle'. " &
-                               "Write 'self:isVehicle'"
+    check errors[6].message == "'isMissing' cannot be an id, because an id has no capital " &
+                               "letters. To name something in this pack, write 'self:isMissing'"
+    check errors[0].message == "'isVehicle' is in this pack, but with no namespace it means " &
+                               "'minecraft:isVehicle'. Write 'self:isVehicle'"
     check errors[0].position.get.column == 27
     check errors[1].message == "'is_vehicle' is in this pack, but with no namespace it means " &
                                "'minecraft:is_vehicle'. Write 'self:isVehicle'"
-    check errors[3].message == "'speed' is in this pack, but with no namespace it means 'minecraft:speed'. Write " &
-                               "'self:speed'"
-    check errors[4].message == "'greeters' is in this pack, but with no namespace it means 'minecraft:greeters'. " &
-                               "Write 'self:greeters'"
+    check errors[3].message == "'speed' is in this pack, but with no namespace it means " &
+                               "'minecraft:speed'. Write 'self:speed'"
+    check errors[4].message == "'greeters' is in this pack, but with no namespace it means " &
+                               "'minecraft:greeters'. Write 'self:greeters'"
 
   test "inserts compile-time and runtime values into commands":
     let compiler = compileForTest("""
@@ -873,7 +888,8 @@ mcfun bad() { /effect give @p poison {{"x"}}; }""")
     check compiler.errors[0].position.get.line == 7
     check compiler.errors[0].position.get.column == 38
 
-    # The macro key `hp` has the name `hp`, so the score gets `hp_2`. The same score again uses it again.
+    # The macro key `hp` has the name `hp`, so the score gets `hp_2`. The same score again uses it
+    # again.
     check program.render("main") == """
 effect give @p poison 10
 $data modify storage ns:poplar macro set value {hp:"$(hp)"}
@@ -883,7 +899,8 @@ execute store result storage ns:poplar macro.value int 1 run scoreboard players 
 data modify storage ns:poplar macro.CustomName set from entity @s CustomName
 function ns:poplar/main/macro_0 with storage ns:poplar macro
 """
-    check program.render("poplar/main/macro_0") == "$say $(hp_2) $(value) $(CustomName) $(hp) $(hp_2)\n"
+    check program.render("poplar/main/macro_0") ==
+      "$say $(hp_2) $(value) $(CustomName) $(hp) $(hp_2)\n"
 
   test "a command uses a data variable and a macro key together":
     let compiler = compileForTest("""

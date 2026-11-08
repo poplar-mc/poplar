@@ -27,7 +27,7 @@ proc readMessage(): Option[string] =
     if line.len == 0: break
     let colon = line.find(": ")
     if colon < 0: raise newException(HeaderError, "InvalidHeaderField")
-    if line[0 ..< colon].toLowerAscii != "content-length": continue
+    if line[0..<colon].toLowerAscii != "content-length": continue
     if contentLength >= 0: raise newException(HeaderError, "DuplicateContentLength")
     try:
       contentLength = parseInt(line[colon + 2 .. ^1])
@@ -35,7 +35,8 @@ proc readMessage(): Option[string] =
       raise newException(HeaderError, "InvalidContentLength")
   if contentLength < 0: raise newException(HeaderError, "MissingContentLength")
   var body = newString(contentLength)
-  if contentLength > 0 and stdin.readBuffer(body[0].addr, contentLength) != contentLength: return none(string)
+  if contentLength > 0 and stdin.readBuffer(body[0].addr, contentLength) !=
+      contentLength: return none(string)
   some(body)
 
 proc writeMessage(message: JsonNode) =
@@ -79,4 +80,6 @@ proc serve(shared: Shared) =
 
 proc register*(shared: Shared): Command =
   proc run(invocation: Invocation) = serve(shared)
-  newCommand("lsp", "Run the language server. An editor starts it and talks to it over stdin and stdout", run)
+  const description =
+    "Run the language server. An editor starts it and talks to it over stdin and stdout"
+  newCommand("lsp", description, run)

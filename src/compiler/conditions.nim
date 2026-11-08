@@ -1,5 +1,5 @@
-# `if` and `while` conditions: comparisons, data tests and Minecraft checks, in OR-of-ANDs form. Part of
-# compiler.nim.
+# `if` and `while` conditions: comparisons, data tests and Minecraft checks, in OR-of-ANDs form.
+# Part of compiler.nim.
 
 type Operand = object
   case
@@ -68,25 +68,30 @@ func matchesCondition(score: Score, op: CompareOp, number: int64, negated: bool)
   let rangeMax = if max.isSome and max.get < high(int32): some(int32(max.get)) else: none(int32)
   if rangeMin.isNone and rangeMax.isNone: return ConstantCondition(isTrue: not negated)
 
-  singleCheck(Check(negated: negated, condition: MatchesTest(matches: Matches(score: score, min: rangeMin,
+  singleCheck(Check(negated: negated, condition: MatchesTest(matches: Matches(score: score,
+                                                                              min: rangeMin,
                                                                               max: rangeMax))))
 
-proc minecraftCheck(compiler: Compiler, parts: openArray[CommandPart], column: int, env: Environment,
-                    negated: bool): Condition =
-  ## `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of `execute (...)`.
+proc minecraftCheck(compiler: Compiler, parts: openArray[CommandPart], column: int,
+                    env: Environment, negated: bool): Condition =
+  ## `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of
+  ## `execute (...)`.
   let check = compiler.buildCommandText(parts, env)
   if check.isMacro:
-    compiler.fail("a game value in a Minecraft check is not supported yet. Use 'execute (if ...) { }'")
+    compiler.fail("a game value in a Minecraft check is not supported yet. " &
+                  "Use 'execute (if ...) { }'")
 
   let text = compiler.checkMinecraftText(parts, check, column, "execute if ", " run say x")
   singleCheck(Check(negated: negated, condition: RawTest(raw: text)))
 
 proc dataCondition(compiler: Compiler, identifier: Identifier, value: Value, negated: bool,
                    env: Environment): Condition =
-  ## `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
+  ## `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested
+  ## filter.
   let path = compiler.dataPathOf(identifier, env)
   if path.path.find({'[', '"'}) >= 0:
-    compiler.fail(&"a condition on '{identifier.name}' is not supported yet: the path must only have keys")
+    compiler.fail(&"a condition on '{identifier.name}' is not supported yet: the path must only " &
+                  "have keys")
 
   let keys = path.path.split('.')
   var filter = ""
@@ -99,9 +104,11 @@ proc dataCondition(compiler: Compiler, identifier: Identifier, value: Value, neg
 
   singleCheck(Check(negated: negated, condition: DataTest(dataPath: path.withPath(filter))))
 
-proc dataComparison(compiler: Compiler, dataSide, other: Expression, env: Environment, negated: bool): Condition =
-  ## `==` between data and a compile-time string, bool, list, compound or typed number is an NBT filter. A number
-  ## comparison still goes through a score, which also works for other number types.
+proc dataComparison(compiler: Compiler, dataSide, other: Expression, env: Environment,
+    negated: bool): Condition =
+  ## `==` between data and a compile-time string, bool, list, compound or typed number is an NBT
+  ## filter. A number comparison still goes through a score, which also works for other number
+  ## types.
   let outerPosition = compiler.enterExpression(other)
   defer: compiler.position = outerPosition
   if containsRuntimeValue(other):
@@ -115,7 +122,8 @@ func isNbtFilterComparison(left, right: Expression): bool =
   for side in [left, right]:
     if isDataIdentifier(side) or containsRuntimeValue(side): continue
     case side
-    of StringExpression, BooleanExpression, ListExpression, CompoundExpression, TypedNumberExpression: return true
+    of StringExpression, BooleanExpression, ListExpression, CompoundExpression,
+        TypedNumberExpression: return true
     of PrefixExpression(prefix):
       case prefix.operand
       of TypedNumberExpression: return true
@@ -123,14 +131,16 @@ func isNbtFilterComparison(left, right: Expression): bool =
     else: discard
   false
 
-proc lowerOperand(compiler: Compiler, expression: Expression, env: Environment, setup: var seq[Command]): Operand =
+proc lowerOperand(compiler: Compiler, expression: Expression, env: Environment,
+                  setup: var seq[Command]): Operand =
   let outerPosition = compiler.enterExpression(expression)
   defer: compiler.position = outerPosition
   if not containsRuntimeValue(expression):
     let value = compiler.evaluate(expression, env)
     case value
     of TypedNumberValue(number):
-      compiler.fail(&"a score holds whole numbers with no suffix, so it cannot be compared with '{number.text}'")
+      compiler.fail("a score holds whole numbers with no suffix, so it cannot be compared with " &
+                    &"'{number.text}'")
     of NumberValue(number): return NumberOperand(number: number)
     else: compiler.fail(&"only numbers can be compared with scores, found {tagName(value)}")
 
@@ -148,8 +158,10 @@ proc lowerComparison(compiler: Compiler, infix: Infix, env: Environment, negated
   let op = compareOperator(infix.op)
 
   if infix.op in {ioEqual, ioNotEqual} and isNbtFilterComparison(infix.left, infix.right):
-    if isDataIdentifier(infix.left): return compiler.dataComparison(infix.left, infix.right, env, checkNegated)
-    if isDataIdentifier(infix.right): return compiler.dataComparison(infix.right, infix.left, env, checkNegated)
+    if isDataIdentifier(infix.left):
+      return compiler.dataComparison(infix.left, infix.right, env, checkNegated)
+    if isDataIdentifier(infix.right):
+      return compiler.dataComparison(infix.right, infix.left, env, checkNegated)
 
   let left = compiler.lowerOperand(infix.left, env, setup)
   let right = compiler.lowerOperand(infix.right, env, setup)
@@ -164,8 +176,8 @@ proc lowerComparison(compiler: Compiler, infix: Infix, env: Environment, negated
     case right
     of NumberOperand(number): matchesCondition(leftScore, op, number, checkNegated)
     of ScoreOperand(rightScore):
-      singleCheck(Check(negated: checkNegated,
-                        condition: CompareTest(compare: Compare(left: leftScore, op: op, right: rightScore))))
+      let compare = Compare(left: leftScore, op: op, right: rightScore)
+      singleCheck(Check(negated: checkNegated, condition: CompareTest(compare: compare)))
 
 proc lowerCondition(compiler: Compiler, expression: Expression, env: Environment, negated: bool,
                     setup: var seq[Command]): Condition =
@@ -175,7 +187,8 @@ proc lowerCondition(compiler: Compiler, expression: Expression, env: Environment
     let value = compiler.evaluate(expression, env)
     case value
     of BooleanValue(boolean): return ConstantCondition(isTrue: boolean != negated)
-    else: compiler.fail(&"a condition must be a comparison, a data path, true or false, found {tagName(value)}")
+    else: compiler.fail("a condition must be a comparison, a data path, true or false, found " &
+                        &"{tagName(value)}")
 
   case expression
   of PrefixExpression(prefix):
@@ -192,9 +205,11 @@ proc lowerCondition(compiler: Compiler, expression: Expression, env: Environment
     else: discard
   of CallExpression(call):
     if isStringTest(call): return compiler.stringTest(call, env, negated, setup)
-  of MinecraftCheck(parts): return compiler.minecraftCheck(parts, expression.position.column, env, negated)
+  of MinecraftCheck(parts):
+    return compiler.minecraftCheck(parts, expression.position.column, env, negated)
   of NameExpression(identifier):
-    # `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs `== true`.
+    # `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs
+    # `== true`.
     if identifier.kind in {ikData, ikEntityData}:
       let path = compiler.dataPathOf(identifier, env)
       return singleCheck(Check(negated: negated, condition: DataTest(dataPath: path)))

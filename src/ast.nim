@@ -6,10 +6,12 @@ import diagnostic
 type
   NumberType* = enum
     ## The NBT number types of a number literal: `0.05f`, `1b`.
-    ntByte = "byte", ntShort = "short", ntInt = "int", ntLong = "long", ntFloat = "float", ntDouble = "double"
+    ntByte = "byte", ntShort = "short", ntInt = "int", ntLong = "long", ntFloat = "float",
+        ntDouble = "double"
 
   TypedNumber* = object
-    ## `0.05f`, `1b` or `0.05`: an SNBT number as written, so `0.05` stays exact. None is a plain decimal, a double.
+    ## `0.05f`, `1b` or `0.05`: an SNBT number as written, so `0.05` stays exact. None is a plain
+    ## decimal, a double.
     text*: string
     numberType*: Option[NumberType]
 
@@ -29,8 +31,7 @@ type
 
   InfixOperator* = enum
     ioAdd, ioSubtract, ioMultiply, ioDivide, ioModulo,
-    ioEqual, ioNotEqual, ioLess, ioLessEqual, ioGreater, ioGreaterEqual,
-    ioAnd, ioOr
+    ioEqual, ioNotEqual, ioLess, ioLessEqual, ioGreater, ioGreaterEqual, ioAnd, ioOr
 
   Expression* = ref object
     ## An expression and where it starts. An infix or a call starts at its left side.
@@ -140,8 +141,8 @@ type
     position*: Position
 
   DataFileName* = object
-    ## `isSneaking` is the file `is_sneaking`, and a constant with its id. `"minecraft:entities/zombie"` is the resource
-    ## id as written.
+    ## `isSneaking` is the file `is_sneaking`, and a constant with its id.
+    ## `"minecraft:entities/zombie"` is the resource id as written.
     case
     of IdentifierName: identifier*: string
     of IdName: id*: string

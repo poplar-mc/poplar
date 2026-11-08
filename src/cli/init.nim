@@ -1,3 +1,5 @@
+## `poplar init`: makes a project in the current folder.
+
 import std/[os, strformat]
 import ../[config, project]
 import command_line, output, root
@@ -7,7 +9,8 @@ proc register*(shared: Shared): Command =
     let output = shared.output
     for path in [fileName, "src/main.poplar"]:
       if fileExists(path) or dirExists(path):
-        output.failure(&"{output.bold}{path}{output.reset} already exists, so this folder has a project")
+        output.failure(&"{output.bold}{path}{output.reset} already exists, so this folder has a " &
+                       "project")
         fail()
 
     let folder = lastPathPart(getCurrentDir())

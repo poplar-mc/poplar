@@ -1,4 +1,5 @@
-# Build-time values: evaluating constant expressions, and writing values as text or SNBT. Part of compiler.nim.
+# Build-time values: evaluating constant expressions, and writing values as text or SNBT. Part of
+# compiler.nim.
 
 func tagName(value: Value): string =
   ## The kind of a value, as error messages name it.
@@ -25,7 +26,8 @@ func containsRuntimeValue(expression: Expression): bool =
   of ListExpression(elements): elements.anyIt(containsRuntimeValue(it))
   of CompoundExpression(entries): entries.anyIt(containsRuntimeValue(it.value))
   of CallExpression(call):
-    # An mcfun runs in the game. `text(#hp)` only names the score, so it is known when the pack is built.
+    # An mcfun runs in the game. `text(#hp)` only names the score, so it is known when the pack is
+    # built.
     if isBuiltinCall(call, "text"): false
     elif not isBuiltinCall(call, "len") and not isStringCall(call) and not isStringTest(call): true
     else: call.args.anyIt(containsRuntimeValue(it))
@@ -53,7 +55,8 @@ func infixOperatorText(op: InfixOperator): string =
   of ioOr: "or"
 
 func typedNumberSnbt(number: TypedNumber): string =
-  ## `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is a double.
+  ## `0.05f`: the number as written, with the suffix of its type. A plain decimal has none, so it is
+  ## a double.
   number.text & (if number.numberType.isSome: number.numberType.get.suffix else: "")
 
 func valueToText(value: Value): string =
@@ -67,13 +70,15 @@ func valueToText(value: Value): string =
 
 func snbtKey(key: string): string =
   ## A key is written as it is when it is a plain name, else in quotes.
-  if not key.allCharsInSet(Letters + Digits + {'_', '-', '.', '+'}): return valueToSnbt(StringValue(text: key))
+  if not key.allCharsInSet(Letters + Digits + {'_', '-', '.',
+                                               '+'}): return valueToSnbt(StringValue(text: key))
   if key.len == 0: "\"\"" else: key
 
 func valueToSnbt(value: Value): string =
   case value
   of ListValue(elements): "[" & elements.mapIt(valueToSnbt(it)).join(",") & "]"
-  of CompoundValue(entries): "{" & entries.mapIt(snbtKey(it.key) & ":" & valueToSnbt(it.value)).join(",") & "}"
+  of CompoundValue(entries):
+    "{" & entries.mapIt(snbtKey(it.key) & ":" & valueToSnbt(it.value)).join(",") & "}"
   of StringValue(text):
     var snbt = "\""
     for ch in text:
@@ -107,7 +112,9 @@ func valuesEqual(left, right: Value): bool =
     of ListValue(others):
       if elements.len != others.len: return false
       for index, element in elements:
-        if tagName(element) != tagName(others[index]) or not valuesEqual(element, others[index]): return false
+        if tagName(element) != tagName(others[index]) or
+            not valuesEqual(element, others[index]):
+          return false
       true
     else: false
   of CompoundValue(entries):
@@ -124,10 +131,12 @@ func valuesEqual(left, right: Value): bool =
 # ---- math that finds overflow
 
 func checkedAdd(a, b: int64): Option[int64] =
-  if (b > 0 and a > high(int64) - b) or (b < 0 and a < low(int64) - b): none(int64) else: some(a + b)
+  if (b > 0 and a > high(int64) - b) or (b < 0 and a < low(int64) - b): none(int64)
+  else: some(a + b)
 
 func checkedSub(a, b: int64): Option[int64] =
-  if (b < 0 and a > high(int64) + b) or (b > 0 and a < low(int64) + b): none(int64) else: some(a - b)
+  if (b < 0 and a > high(int64) + b) or (b > 0 and a < low(int64) + b): none(int64)
+  else: some(a - b)
 
 func checkedMul(a, b: int64): Option[int64] =
   if a == 0 or b == 0: return some(0'i64)
@@ -166,7 +175,8 @@ proc evaluateCall(compiler: Compiler, call: Call, env: Environment): Value =
     of StringValue(text): return NumberValue(number: utf16Length(text).get(text.len))
     else: discard
   if compiler.calledKey(identifier).isSome:
-    compiler.fail(&"mcfun '{name}' runs in the game, so its result is not known when the pack is built")
+    compiler.fail(&"mcfun '{name}' runs in the game, so its result is not known when the pack is " &
+                  "built")
   if identifier.namespace.isNone and isBuiltin(name):
     compiler.fail(&"'{name}' changes data in the game, so it has no build-time value")
   compiler.fail(&"unknown function '{name}'")
@@ -178,12 +188,14 @@ proc evaluatePrefix(compiler: Compiler, prefix: Prefix, env: Environment): Value
     if prefix.op == poNegate: return compiler.checkedNumber(checkedSub(0, number))
   of TypedNumberValue(number):
     if prefix.op == poNegate:
-      let negated = if number.text[0] == '-': number.text[1 .. ^1] else: "-" & number.text
-      return TypedNumberValue(typedNumber: TypedNumber(text: negated, numberType: number.numberType))
+      let negated = if number.text[0] == '-': number.text[1..^1] else: "-" & number.text
+      return TypedNumberValue(typedNumber: TypedNumber(text: negated,
+          numberType: number.numberType))
   of BooleanValue(boolean):
     if prefix.op == poNot: return BooleanValue(boolean: not boolean)
   else: discard
-  compiler.fail(&"operator '{prefixOperatorText(prefix.op)}' cannot be used with {tagName(operand)}")
+  compiler.fail(&"operator '{prefixOperatorText(prefix.op)}' cannot be used with " &
+                &"{tagName(operand)}")
 
 proc evaluateNumbers(compiler: Compiler, op: InfixOperator, a, b: int64): Option[Value] =
   case op
@@ -192,7 +204,8 @@ proc evaluateNumbers(compiler: Compiler, op: InfixOperator, a, b: int64): Option
   of ioMultiply: some(compiler.checkedNumber(checkedMul(a, b)))
   of ioDivide:
     if b == 0: compiler.fail("division by zero")
-    some(compiler.checkedNumber(if a == low(int64) and b == -1: none(int64) else: some(floorDiv(a, b))))
+    let quotient = if a == low(int64) and b == -1: none(int64) else: some(floorDiv(a, b))
+    some(compiler.checkedNumber(quotient))
   of ioModulo:
     if b == 0: compiler.fail("division by zero")
     some(NumberValue(number: floorMod(a, b)))
@@ -230,7 +243,8 @@ proc evaluateInfix(compiler: Compiler, infix: Infix, env: Environment): Value =
 
   let opText = infixOperatorText(infix.op)
   if "typed_number" in [leftTag, rightTag]:
-    compiler.fail(&"build-time math only works on whole numbers with no suffix, so '{opText}' cannot be used here")
+    compiler.fail(&"build-time math only works on whole numbers with no suffix, so '{opText}' " &
+                  "cannot be used here")
   compiler.fail(&"operator '{opText}' cannot be used with {leftTag} and {rightTag}")
 
 proc evaluate(compiler: Compiler, expression: Expression, env: Environment): Value =
@@ -238,10 +252,11 @@ proc evaluate(compiler: Compiler, expression: Expression, env: Environment): Val
   defer: compiler.position = outerPosition
   case expression
   of MinecraftCheck:
-    compiler.fail("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or 'while' condition")
+    compiler.fail("a Minecraft check such as 'block ~ ~ ~ stone' only works as an 'if' or " &
+                  "'while' condition")
   of MacroKey(key):
-    compiler.fail(&"'$({key})' is a macro argument, known only when the call starts, so it cannot be used at " &
-                  "compile time")
+    compiler.fail(&"'$({key})' is a macro argument, known only when the call starts, so it " &
+                  "cannot be used at compile time")
   of StringExpression(text): StringValue(text: text)
   of NumberExpression(number): NumberValue(number: number)
   of TypedNumberExpression(number): TypedNumberValue(typedNumber: number)
@@ -252,7 +267,8 @@ proc evaluate(compiler: Compiler, expression: Expression, env: Environment): Val
     of ikCompileTime: discard
     of ikScore: compiler.fail(&"score '#{identifier.name}' cannot be used here")
     of ikData: compiler.fail(&"data '${identifier.name}' cannot be used here")
-    of ikEntityData: compiler.fail(&"entity data '{identifier.selector.get}.${identifier.name}' cannot be used here")
+    of ikEntityData: compiler.fail(&"entity data '{identifier.selector.get}.${identifier.name}' " &
+                                   "cannot be used here")
     let value = env.get(identifier.name)
     if value.isNone: compiler.fail(&"unknown name '{identifier.name}'")
     value.get
@@ -270,7 +286,7 @@ proc evaluate(compiler: Compiler, expression: Expression, env: Environment): Val
   of CompoundExpression(entries):
     var values: seq[ValueEntry]
     for index, entry in entries:
-      for earlier in entries[0 ..< index]:
+      for earlier in entries[0..<index]:
         if earlier.key == entry.key: compiler.fail(&"key '{entry.key}' is used more than once")
       values.add ValueEntry(key: entry.key, value: compiler.evaluate(entry.value, env))
     CompoundValue(entries: values)

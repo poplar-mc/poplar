@@ -1,5 +1,6 @@
-## Builds each project in `tests/e2e/` with poplar, runs `function <name>:test` on a Minecraft server, and compares
-## the `say` output with `expect.txt`. Downloads use curl, and the SHA-1 check uses sha1sum or shasum.
+## Builds each project in `tests/e2e/` with poplar, runs `function <name>:test` on a Minecraft
+## server, and compares the `say` output with `expect.txt`. Downloads use curl, and the SHA-1 check
+## uses sha1sum or shasum.
 ##
 ## usage: e2e <poplar> <mcmeta version.json> <tests dir> <cache dir> [--accept-eula]
 
@@ -31,7 +32,8 @@ proc stop(message: string) {.noreturn.} =
   quit(1)
 
 proc download(url, path: string) =
-  let (output, code) = execCmdEx(&"curl -fsSL -o {quoteShell(path)} {quoteShell(url)}", options = {poUsePath})
+  let command = &"curl -fsSL -o {quoteShell(path)} {quoteShell(url)}"
+  let (output, code) = execCmdEx(command, options = {poUsePath})
   if code != 0: stop(&"download of {url} failed: {output.strip}")
 
 proc sha1Hex(path: string): string =
@@ -69,9 +71,10 @@ proc checkJava(versionId: string, required: int) =
   let start = output.find(marker) + marker.len
   var versionEnd = start
   while versionEnd < output.len and output[versionEnd] notin {'.', '"'}: inc versionEnd
-  let major = try: parseInt(output[start ..< versionEnd]) except ValueError: 0
+  let major = try: parseInt(output[start..<versionEnd]) except ValueError: 0
   if major < required:
-    stop(&"Minecraft {versionId} needs Java {required}, but 'java' is version {major}. {hint}{required}")
+    stop(&"Minecraft {versionId} needs Java {required}, but 'java' is version {major}. " &
+         &"{hint}{required}")
 
 func trimLine(line: string): string = line.strip(leading = false, chars = {'\r'})
 
@@ -80,9 +83,10 @@ proc nonEmptyLines(text: string): seq[string] =
     let trimmed = line.strip(chars = {' ', '\t', '\r'})
     if trimmed.len > 0: result.add trimmed
 
-proc buildTestProjects(poplarPath, testsPath, serverPath: string, failed: var int): seq[TestProject] =
-  ## Builds each folder in the tests folder with poplar, and copies its datapack into the world. A copy, not a
-  ## symbolic link: Minecraft rejects datapacks that are links.
+proc buildTestProjects(poplarPath, testsPath, serverPath: string,
+                       failed: var int): seq[TestProject] =
+  ## Builds each folder in the tests folder with poplar, and copies its datapack into the world. A
+  ## copy, not a symbolic link: Minecraft rejects datapacks that are links.
   var names: seq[string]
   for kind, path in walkDir(testsPath, relative = true):
     if kind == pcDir: names.add path
@@ -99,26 +103,29 @@ proc buildTestProjects(poplarPath, testsPath, serverPath: string, failed: var in
     # `poplar-out/` holds one folder for the pack, named by poplar.json, and the zip.
     for kind, pack in walkDir(projectPath / "poplar-out"):
       if kind == pcDir: copyDir(pack, serverPath / "world" / "datapacks" / pack.lastPathPart)
-    result.add TestProject(name: name, expected: nonEmptyLines(readFile(projectPath / "expect.txt")))
+    result.add TestProject(name: name, expected: nonEmptyLines(readFile(projectPath /
+        "expect.txt")))
 
 proc serverMessage(line: string): string =
-  ## `[12:00:00] [Server thread/INFO]: [Not Secure] [Server] hello` → `hello`. `[Not Secure] ` is not always there.
-  ## Empty for any other line.
+  ## `[12:00:00] [Server thread/INFO]: [Not Secure] [Server] hello` → `hello`. `[Not Secure] ` is
+  ## not always there. Empty for any other line.
   let start = line.find("]: ")
   if start < 0: return ""
   var message = line[start + 3 .. ^1]
   message.removePrefix("[Not Secure] ")
   if not message.startsWith("[Server] "): return ""
-  trimLine(message["[Server] ".len .. ^1])
+  trimLine(message["[Server] ".len..^1])
 
 proc printLines(label: string, lines: seq[string]) =
   stderr.write &"  {label}:\n"
   for line in lines: stderr.write &"    {line}\n"
 
 proc runServer(serverPath, jarPath: string, projects: seq[TestProject]): int =
-  ## Starts the server, runs `function <name>:test` for each project, and compares the `[Server]` messages.
+  ## Starts the server, runs `function <name>:test` for each project, and compares the `[Server]`
+  ## messages.
   stderr.write "starting the Minecraft server\n"
-  # The server's stderr goes into the log too: a pipe that nothing reads could fill and stop the server.
+  # The server's stderr goes into the log too: a pipe that nothing reads could fill and stop the
+  # server.
   let server = startProcess("java", serverPath, ["-Xmx1G", "-jar", jarPath, "nogui"],
                             options = {poUsePath, poStdErrToStdOut})
   let log = server.outputStream
@@ -205,7 +212,8 @@ proc run(poplarPath, versionPath, testsPath, cachePath: string, acceptEula: bool
 when isMainModule:
   let arguments = commandLineParams()
   if arguments.len < 4:
-    stderr.write "usage: e2e <poplar> <mcmeta version.json> <tests dir> <cache dir> [--accept-eula]\n"
+    stderr.write "usage: e2e <poplar> <mcmeta version.json> <tests dir> <cache dir> " &
+                 "[--accept-eula]\n"
     quit(2)
   let failed = run(arguments[0], arguments[1], arguments[2], arguments[3],
                    arguments.len > 4 and arguments[4] == "--accept-eula")

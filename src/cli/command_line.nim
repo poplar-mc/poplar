@@ -1,5 +1,6 @@
-## Commands, flags and positional arguments: parsing the command line and printing help. It gives the same help
-## pages and messages as the zli library that Poplar 0.5 used. Help and parse errors go to stdout.
+## Commands, flags and positional arguments: parsing the command line and printing help. It gives
+## the same help pages and messages as the zli library that Poplar 0.5 used. Help and parse errors
+## go to stdout.
 
 import std/[algorithm, sequtils, strformat, strutils, tables]
 
@@ -49,7 +50,8 @@ const
 const helpFlag = Flag(name: "help", shortcut: "h", description: "Shows the help for a command",
                       default: BoolFlag(isOn: false), persistent: true)
 
-proc newCommand*(name, description: string, run: proc (invocation: Invocation), version = ""): Command =
+proc newCommand*(name, description: string, run: proc (invocation: Invocation),
+    version = ""): Command =
   Command(name: name, description: description, version: version, flags: @[helpFlag], run: run)
 
 proc addFlag*(command: Command, flag: Flag) = command.flags.add flag
@@ -59,7 +61,8 @@ proc addPositionalArg*(command: Command, arg: PositionalArg) = command.positiona
 proc addCommand*(command, subcommand: Command) =
   subcommand.parent = command
   for flag in command.flags:
-    if flag.persistent and not subcommand.flags.anyIt(it.name == flag.name): subcommand.flags.add flag
+    if flag.persistent and not subcommand.flags.anyIt(it.name ==
+        flag.name): subcommand.flags.add flag
   command.commands.add subcommand
 
 func flag*(invocation: Invocation, name: string): string =
@@ -95,7 +98,8 @@ func path(command: Command): string =
   ## `poplar build`: the command's path from the root.
   if command.parent == nil: command.name else: command.parent.path & " " & command.name
 
-func flagWidth(flag: Flag): int = flag.name.len + 2 + (if flag.shortcut.len > 0: flag.shortcut.len + 3 else: 0)
+func flagWidth(flag: Flag): int =
+  flag.name.len + 2 + (if flag.shortcut.len > 0: flag.shortcut.len + 3 else: 0)
 
 func descriptionColumn(command: Command): int =
   ## Where descriptions start, after the row indent, so commands, flags and args line up.
@@ -126,8 +130,8 @@ proc helpText*(command: Command): string =
   if command.commands.len > 0:
     result.add "\nAvailable commands:\n"
     for subcommand in command.commands.sortedByIt(it.name):
-      result.add &"   {bold}{subcommand.name}{reset}" & describe(column, subcommand.name.len, subcommand.description) &
-                 "\n"
+      result.add &"   {bold}{subcommand.name}{reset}" & describe(column, subcommand.name.len,
+                                                              subcommand.description) & "\n"
   result.add '\n'
 
   if command.flags.len > 0:
@@ -171,8 +175,8 @@ proc setFlag(command: Command, values: var Table[string, FlagValue], flag: Flag,
     values[flag.name] = TextFlag(text: value)
     return
   if value notin ["true", "false"]:
-    command.failWith(&"Invalid value for flag --{flag.name}: '{value}'\nExpected a value of type: " &
-                     flag.typeName)
+    command.failWith(&"Invalid value for flag --{flag.name}: '{value}'\n" &
+                     &"Expected a value of type: {flag.typeName}")
   values[flag.name] = BoolFlag(isOn: value == "true")
 
 proc checkPositionalArgs(command: Command, args: openArray[string]) =
@@ -181,13 +185,15 @@ proc checkPositionalArgs(command: Command, args: openArray[string]) =
     command.failWith(&"Missing {required.len - args.len} positional argument(s).\n\nExpected: " &
                      required.mapIt(it.name).join(", "))
   if args.len > command.positionalArgs.len:
-    command.failWith(&"Too many positional arguments. Expected at most {command.positionalArgs.len}, got {args.len}.")
+    command.failWith("Too many positional arguments. Expected at most " &
+                     &"{command.positionalArgs.len}, got {args.len}.")
 
 proc defaultValues(command: Command): Table[string, FlagValue] =
   for flag in command.flags: result[flag.name] = flag.default
 
 proc parse*(root: Command, arguments: openArray[string]): Invocation =
-  ## Raises `CommandLineError` after it printed the problem. A help request prints the help and gives no command.
+  ## Raises `CommandLineError` after it printed the problem. A help request prints the help and
+  ## gives no command.
   var command = root
   var values = root.defaultValues
   var positionals: seq[string]
@@ -198,7 +204,7 @@ proc parse*(root: Command, arguments: openArray[string]): Invocation =
     inc index
 
     if argument == "--":
-      positionals.add arguments[index .. ^1]
+      positionals.add arguments[index..^1]
       break
 
     # Words, "", "-" and negative numbers like -5 or -1.5 are subcommands or positional args.
@@ -218,9 +224,9 @@ proc parse*(root: Command, arguments: openArray[string]): Invocation =
       positionals.add argument
     elif argument[1] == '-':
       # --name, --name=value or --no-name
-      let body = argument[2 .. ^1]
+      let body = argument[2..^1]
       let equals = body.find('=')
-      let name = if equals >= 0: body[0 ..< equals] else: body
+      let name = if equals >= 0: body[0..<equals] else: body
       let flagIndex = command.findFlag(name)
       if flagIndex >= 0:
         let flag = command.flags[flagIndex]
@@ -236,16 +242,18 @@ proc parse*(root: Command, arguments: openArray[string]): Invocation =
         continue
 
       # Tried after the full name, so a flag named like "no-cache" still works.
-      let negated = if equals < 0 and name.startsWith("no-"): command.findFlag(name[3 .. ^1]) else: -1
+      let negated = if equals < 0 and name.startsWith("no-"): command.findFlag(name[3..^1])
+                    else: -1
       if negated < 0: command.failWith(&"Unknown flag: --{body}")
       let flag = command.flags[negated]
       if not flag.isBool:
-        command.failWith(&"Flag --{flag.name} does not accept negation as it expects type: {flag.typeName}",
-                         showHelpHint = false)
+        let message =
+          &"Flag --{flag.name} does not accept negation as it expects type: {flag.typeName}"
+        command.failWith(message, showHelpHint = false)
       values[flag.name] = BoolFlag(isOn: false)
     else:
       # -v, or a group like -vt 2 where only the last shortcut may take a value
-      let shortcuts = argument[1 .. ^1]
+      let shortcuts = argument[1..^1]
       for position, letter in shortcuts:
         let flagIndex = command.findFlag($letter)
         if flagIndex < 0: command.failWith(&"Unknown flag shortcut: -{letter}")
@@ -253,11 +261,13 @@ proc parse*(root: Command, arguments: openArray[string]): Invocation =
         if flag.isBool:
           values[flag.name] = BoolFlag(isOn: true)
         elif position < shortcuts.len - 1:
-          command.failWith(&"Flag -{letter} ({flag.name}) must be last in group since it expects a value of type: " &
-                           flag.typeName, showHelpHint = false)
+          let message = &"Flag -{letter} ({flag.name}) must be last in group since it " &
+                        &"expects a value of type: {flag.typeName}"
+          command.failWith(message, showHelpHint = false)
         else:
           if index >= arguments.len:
-            command.failWith(&"Missing value for flag -{letter} ({flag.name}) of type: {flag.typeName}")
+            command.failWith(&"Missing value for flag -{letter} ({flag.name}) of type: " &
+                             &"{flag.typeName}")
           command.setFlag(values, flag, arguments[index])
           inc index
 
@@ -269,7 +279,8 @@ proc parse*(root: Command, arguments: openArray[string]): Invocation =
   command.checkPositionalArgs(positionals)
 
 proc execute*(root: Command, arguments: openArray[string]): int =
-  ## Runs the command that the arguments name. Gives the exit code: 1 when the command line has a problem.
+  ## Runs the command that the arguments name. Gives the exit code: 1 when the command line has a
+  ## problem.
   try:
     let invocation = root.parse(arguments)
     if invocation.command != nil: invocation.command.run(invocation)

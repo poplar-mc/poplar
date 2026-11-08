@@ -6,10 +6,13 @@ let tree = loadCommandTree()
 proc failure(text: string): Option[Failure] = tree.checkText(text, []).failure
 
 test "checks the options of a selector the way the game does":
-  for text in ["execute as @e[type=zombie,tag=a,name=\"a b\",nbt={Tags:[\"x,y\"]},scores={a=1..},limit=1] run say x",
-               "execute as @e[ type = !minecraft:zombie , type = !skeleton ] run say x",
-               "execute as @e[type=#minecraft:undead,type=#self:mobs,predicate=self:lucky] run say x",
-               "execute as @e[] run say x"]:
+  let commands = [
+    "execute as @e[type=zombie,tag=a,name=\"a b\",nbt={Tags:[\"x,y\"]},scores={a=1..},limit=1] " &
+      "run say x",
+    "execute as @e[ type = !minecraft:zombie , type = !skeleton ] run say x",
+    "execute as @e[type=#minecraft:undead,type=#self:mobs,predicate=self:lucky] run say x",
+    "execute as @e[] run say x"]
+  for text in commands:
     check tree.checkText(text, ["self"]).failure.isNone
 
   let quoted = failure("execute as @e[type=\"minecraft:zombie\"] run say x").get
@@ -19,7 +22,8 @@ test "checks the options of a selector the way the game does":
     "selector option 'tag' cannot have quotes: write tag=a"
   check failure("execute as @e[type=!zombiee] run say x").get.message ==
     "unknown entity_type 'zombiee'. Did you mean 'zombie'?"
-  check failure("kill @e[tagg=a]").get.message == "unknown selector option 'tagg'. Did you mean 'tag'?"
+  check failure("kill @e[tagg=a]").get.message ==
+    "unknown selector option 'tagg'. Did you mean 'tag'?"
   check failure("kill @e[foo=1]").get.message == "unknown selector option 'foo'"
 
 test "finds ids in id arguments and selectors, not in text":
@@ -45,7 +49,9 @@ test "checks commands against the tree":
   check badNumber.at == 22
   check failure("effect give @p minecraft:poision 10").get.message ==
     "unknown mob_effect 'poision'. Did you mean 'poison'?"
-  check failure("give @s diamnod 2").get.message == "unknown item 'diamnod'. Did you mean 'diamond'?"
-  check failure("setblock ~ ~ ~ stonee[lit=true]").get.message == "unknown block 'stonee'. Did you mean 'stone'?"
+  check failure("give @s diamnod 2").get.message ==
+    "unknown item 'diamnod'. Did you mean 'diamond'?"
+  check failure("setblock ~ ~ ~ stonee[lit=true]").get.message ==
+    "unknown block 'stonee'. Did you mean 'stone'?"
   for text in ["give @s mypack:wand", "clear @s #minecraft:logs", "give @s $(item)"]:
     check failure(text).isNone

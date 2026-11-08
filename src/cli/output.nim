@@ -1,5 +1,5 @@
-## Lines for people: a green ✓ or a red ✗ at the start, and dim details. There are colors only in a terminal, and
-## not when NO_COLOR is set (https://no-color.org).
+## Lines for people: a green ✓ or a red ✗ at the start, and dim details. There are colors only in a
+## terminal, and not when NO_COLOR is set (https://no-color.org).
 
 import std/[options, strformat, strutils]
 import ../diagnostic
@@ -28,13 +28,15 @@ proc warning*(output: Output, text: string) =
   stderr.write &"{output.yellow}!{output.reset} {text}\n"
 
 proc diagnostics*(output: Output, list: openArray[Diagnostic]) =
-  ## `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position. The compiler's messages start
-  ## in lowercase, which the language server shows as it is. On the command line each line starts with a capital.
+  ## `✗ src/main.poplar:3:5  Message`, or the message alone when it has no position. The compiler's
+  ## messages start in lowercase, which the language server shows as it is. On the command line each
+  ## line starts with a capital.
   for diagnostic in list:
     let message = diagnostic.message.capitalizeAscii
     if diagnostic.position.isSome:
       let position = diagnostic.position.get
-      output.failure(&"{output.bold}{diagnostic.path}:{position.line}:{position.column}{output.reset}  {message}")
+      let place = &"{diagnostic.path}:{position.line}:{position.column}"
+      output.failure(&"{output.bold}{place}{output.reset}  {message}")
     elif diagnostic.path.len > 0:
       output.failure(&"{output.bold}{diagnostic.path}{output.reset}  {message}")
     else:
