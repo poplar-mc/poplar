@@ -2,7 +2,7 @@
 
 import std/[os, terminal]
 import project
-import cli/[check, root]
+import cli/[build, check, root]
 
 when isMainModule:
   # Development builds and the e2e harness point to `std/` with `POPLAR_STD`.
@@ -11,5 +11,6 @@ when isMainModule:
     color: not existsEnv("NO_COLOR") and stdout.isatty,
   )
   let arguments = commandLineParams()
-  if arguments.len >= 1 and arguments[0] == "check":
-    runCheck(shared, if arguments.len > 1: arguments[1] else: ".")
+  let projectPath = if arguments.len > 1: arguments[1] else: "."
+  if arguments.len >= 1 and arguments[0] == "check": runCheck(shared, projectPath)
+  if arguments.len >= 1 and arguments[0] == "build": runBuild(shared, projectPath)

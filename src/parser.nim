@@ -533,7 +533,8 @@ proc parseMcfun(parser: var Parser): Mcfun =
   parser.expectPeek(tkLeftParen)
   if not parser.peekIs(tkRightParen):
     parser.nextToken()
-    parser.fail("an mcfun has no parameter list. Pass a compound with 'f() with {name: ...}' and read it with '$(name)'")
+    parser.fail("an mcfun has no parameter list. Pass a compound with 'f() with {name: ...}' and read it with " &
+                "'$(name)'")
   parser.nextToken()
 
   parser.expectPeek(tkLeftBrace)

@@ -2,17 +2,13 @@
 ## imports `std`.
 
 import std/[algorithm, options, os, sets, strformat, strutils, tables]
-import ast, config, diagnostic, lexer, parser
+import ast, command_tree, compiler, config, datapack_writer, diagnostic, lexer, parser
 
 const outDirName* = "poplar-out"
 
 type
   Mode* = enum
     moWrite, moCheck
-
-  Origin* = enum
-    ## Where a file comes from: the project's `src/` folder or the standard library.
-    orProject, orStd
 
   Summary* = object
     ## `zipName`, the name of the pack.
@@ -27,17 +23,20 @@ type
     mode*: Mode
     ## Absolute path → the text of a file that is open in an editor. It is read instead of the file on disk.
     overlay*: Table[string, string]
+    ## The language server loads the command tree one time and passes it in. Nil loads it.
+    commandTree*: CommandTree
 
-  LoadedProgram* = object
-    origin*: Origin
-    displayPath*: string
-    program*: Program
+  LoadedProgram = object
+    origin: Origin
+    displayPath: string
+    program: Program
 
   Result* = object
     ## None when there were errors.
     summary*: Option[Summary]
     diagnostics*: seq[Diagnostic]
-    programs*: seq[LoadedProgram]
+    ## Nil when the build stopped before the compiler ran (no project, or a bad poplar.json).
+    compiler*: Compiler
     ## Display path (`src/main.poplar`, `std/math.poplar`) → absolute path, for every file that was read.
     files*: OrderedTable[string, string]
 
@@ -53,8 +52,8 @@ type
     overlay: Table[string, string]
     ## Set when a file imports `std`, so projects without it do not need the folder.
     stdRealPath: Option[string]
+    compiler: Compiler
     diagnostics: seq[Diagnostic]
-    programs: seq[LoadedProgram]
     files: OrderedTable[string, string]
 
 func functionsText*(summary: Summary): string =
@@ -153,7 +152,7 @@ proc load(loader: var Loader): bool =
       if imported.name in namespaces: continue
       loader.addError(loaded.displayPath, some(imported.position), &"no file has 'namespace {imported.name};'")
       hasErrors = true
-  loader.programs = programs
+    loader.compiler.addProgram(loaded.displayPath, loaded.program, loaded.origin)
 
   not hasErrors
 
@@ -174,15 +173,36 @@ proc build*(projectPath: string, options: Options): Result =
       return onlyDiagnostic(fileName, error.position, error.msg)
 
   if not dirExists(projectPath / "src"):
-    return onlyDiagnostic("", none(Position), &"the folder {projectPath} is not a Poplar project: it has no src/ folder")
+    return onlyDiagnostic("", none(Position),
+                          &"the folder {projectPath} is not a Poplar project: it has no src/ folder")
 
-  var loader = Loader(srcPath: projectRealPath / "src", stdPath: options.stdPath, overlay: options.overlay)
+  let commandTree = if options.commandTree != nil: options.commandTree else: loadCommandTree()
+  let compiler = initCompiler(commandTree)
+  compiler.packNamespace = packConfig.namespace
+
+  var loader = Loader(srcPath: projectRealPath / "src", stdPath: options.stdPath, overlay: options.overlay,
+                      compiler: compiler)
   let sourcesLoaded = loader.load()
+  result.compiler = compiler
   result.files = loader.files
   result.diagnostics = loader.diagnostics
-  result.programs = loader.programs
   if not sourcesLoaded: return
 
-  var functionCount = 0
-  for loaded in loader.programs: functionCount += loaded.program.mcfuns.len
-  result.summary = some(Summary(name: packConfig.zipName, functionCount: functionCount))
+  let program = compiler.compile()
+  if compiler.errors.len > 0:
+    result.diagnostics.add compiler.errors
+    return
+
+  var summary = Summary(name: packConfig.zipName, functionCount: program.functions.len)
+  if options.mode == moWrite:
+    let outPath = projectPath / outDirName
+    removeDir(outPath)
+    let packPath = outPath / packConfig.zipName
+    createDir(packPath)
+    writeDatapack(packPath, packConfig, program)
+    summary.packPath = some(outDirName / packConfig.zipName)
+
+    let zipFileName = packConfig.zipName & ".zip"
+    writeZip(packPath, outPath / zipFileName)
+    summary.zipPath = some(outDirName / zipFileName)
+  result.summary = some(summary)
