@@ -28,7 +28,7 @@ type
   EventSource* = object
     ## What starts an event. `onEvent` and `onDeath` count a criteria. A trigger is the objective name of
     ## `onTrigger`: it is disabled after each use, so `poplar/tick` enables it again. The player events are fixed
-    ## patterns (see `appendEventFunctions`).
+    ## patterns (see `addEventFunctions`).
     case
     of CriteriaSource: criteria*: string
     of TriggerSource: trigger*: string
@@ -190,7 +190,7 @@ const eventBuiltins = {"onEvent": ekCriteria, "onTrigger": ekTrigger, "onDeath":
                        "onFirstJoin": ekFirstJoin, "onJoin": ekJoin, "onRespawn": ekRespawn}.toTable
   ## The event builtins, and the kind of event each one registers.
 
-proc initCompiler*(commandTree: CommandTree): Compiler =
+proc newCompiler*(commandTree: CommandTree): Compiler =
   Compiler(commandTree: commandTree)
 
 # ---- errors and positions
@@ -393,7 +393,7 @@ func isBuiltin(name: string): bool
 func isBuiltinCall(call: Call, name: string): bool
 proc compileMcfunCall(compiler: Compiler, call: Call, declaration: McfunDeclaration, env: Environment,
                       commands: var seq[Command]): Command
-proc appendWithSavedValues(compiler: Compiler, call: Command, target: Option[Score], liveTempCount: int,
+proc addWithSavedValues(compiler: Compiler, call: Command, target: Option[Score], liveTempCount: int,
                            commands: var seq[Command])
 proc calledKey(compiler: Compiler, identifier: Identifier): Option[string]
 proc collectExpressionCalls(compiler: Compiler, expression: Expression, calls: var OrderedSet[string])
@@ -589,7 +589,7 @@ proc returnRun(command: Command): Command =
   of ReturnRunCommand, ReturnValueCommand, ReturnMacroArgumentCommand: command
   else: ReturnRunCommand(returnRun: createCommand(command))
 
-proc appendBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapper: var seq[Command],
+proc addBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapper: var seq[Command],
                     condition: Condition, setup: seq[Command], afterRuntimeBranch: bool) =
   ## Each branch returns from the wrapper, so later branches and the else body run only if no earlier branch ran.
   wrapper.add setup
@@ -618,7 +618,7 @@ proc appendBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapp
       compiler.mcfun.tempCount = 0
       var elseSetup: seq[Command]
       let elseCondition = lowerCondition(compiler, elseIf.condition, env, false, elseSetup)
-      compiler.appendBranches(elseIf, env, wrapper, elseCondition, elseSetup, isRuntime)
+      compiler.addBranches(elseIf, env, wrapper, elseCondition, elseSetup, isRuntime)
       return
     else: discard
 
@@ -641,7 +641,7 @@ proc compileIf(compiler: Compiler, ifStatement: If, env: Environment, commands: 
       if not branchesEndWithJump(ifStatement):
         compiler.fail("if one branch of an 'if' contains 'return', 'break' or 'continue', every branch must end " &
                       "with one")
-      compiler.appendBranches(ifStatement, env, commands, condition, setup, false)
+      compiler.addBranches(ifStatement, env, commands, condition, setup, false)
       return
 
     if ifStatement.elseBody.isNone and clauses.len == 1:
@@ -653,7 +653,7 @@ proc compileIf(compiler: Compiler, ifStatement: If, env: Environment, commands: 
 
     let wrapperName = compiler.newGeneratedName("if")
     var wrapper: seq[Command]
-    compiler.appendBranches(ifStatement, env, wrapper, condition, setup, false)
+    compiler.addBranches(ifStatement, env, wrapper, condition, setup, false)
     compiler.generated.add McFunction(name: wrapperName, commands: wrapper)
     commands.add generatedCall(compiler, wrapperName)
 
@@ -950,7 +950,7 @@ proc compile*(compiler: Compiler): Program =
 
   # Only the tick tag calls these, so they come after the inline pass, which removes functions that nothing calls.
   let ticks = hookNames(compiler, compiler.tickNamespaces, "tick")
-  appendEventFunctions(compiler, functions, ticks)
+  addEventFunctions(compiler, functions, ticks)
 
   let needsLoad = compiler.globals.len + compiler.dataGlobals.len > 0 or compiler.loadNamespaces.len > 0 or
                   compiler.usesStack or compiler.events.len > 0

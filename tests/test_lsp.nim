@@ -3,7 +3,7 @@ include ../src/lsp
 
 test "converts a byte column to a UTF-16 range that ends at the end of the word":
   let text = "var #é = 1;\n  /say ünknown #hp;\n"
-  let range = diagnosticRange(text, some(Position(line: 2, column: 17)), utf16)
+  let range = diagnosticRange(text, some(Position(line: 2, column: 17)), enUtf16)
   check range["start"] == %*{"line": 1, "character": 15}
   check range["end"] == %*{"line": 1, "character": 18}
 

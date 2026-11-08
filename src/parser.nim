@@ -46,13 +46,13 @@ func expectedText(tag: TokenTag): string =
   of tkExecuteSubcommands: "'(...)' after 'execute'"
   else: $tag
 
-proc appendError(parser: var Parser, diagnostic: Diagnostic) =
+proc addDiagnostic(parser: var Parser, diagnostic: Diagnostic) =
   ## Only the first error on a line is kept. Later ones on that line are usually caused by it.
   if parser.errors.len > 0 and parser.errors[^1].position.get.line == diagnostic.position.get.line: return
   parser.errors.add diagnostic
 
 proc addError(parser: var Parser, message: string) =
-  parser.appendError(Diagnostic(position: some(tokenPosition(parser.current)), message: message))
+  parser.addDiagnostic(Diagnostic(position: some(tokenPosition(parser.current)), message: message))
 
 proc fail(parser: var Parser, message: string) {.noreturn.} =
   ## Records an error and stops the statement or declaration that is being parsed.
@@ -69,7 +69,7 @@ proc nextToken(parser: var Parser) =
       if parser.peek.tag == tkIllegal: &"unexpected character '{literal}'"
       elif literal[0] == '"': "unterminated string"
       else: &"missing '{literal}'"
-    parser.appendError(Diagnostic(position: some(tokenPosition(parser.peek)), message: message))
+    parser.addDiagnostic(Diagnostic(position: some(tokenPosition(parser.peek)), message: message))
     parser.peek = parser.lexer.nextToken()
 
 proc initParser*(lexer: Lexer): Parser =
@@ -215,7 +215,7 @@ proc parseInsert(parser: var Parser, source: string, column: int): Expression =
 
   if result != nil and not insertParser.peekIs(tkEof):
     insertParser.addError(&"unexpected {insertParser.describe(insertParser.peek)} in '{{{{...}}}}'")
-  for error in insertParser.errors: parser.appendError(error)
+  for error in insertParser.errors: parser.addDiagnostic(error)
 
   if insertParser.errors.len > 0: raise newException(ReportedError, "error in an insert")
 

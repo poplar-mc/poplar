@@ -35,7 +35,7 @@ proc eventObjective(compiler: Compiler, event: Event, index: int): string =
   of TriggerSource(trigger): trigger
   else: &"{event.namespace.get(compiler.packNamespace)}.event_{index}"
 
-proc appendEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks: seq[string]) =
+proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks: seq[string]) =
   ## For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
   ## `poplar/tick` runs it for every player with a count, then the user's `tick`.
   if compiler.events.len == 0: return

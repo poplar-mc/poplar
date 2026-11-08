@@ -192,7 +192,7 @@ func dataFrameSlot(key: string): DataPath =
   ## The key in the frame of the data local `names_countdown`: `d_names_countdown`.
   inStorage(stFrame, "d_" & key)
 
-proc appendWithSavedValues(compiler: Compiler, call: Command, target: Option[Score], liveTempCount: int,
+proc addWithSavedValues(compiler: Compiler, call: Command, target: Option[Score], liveTempCount: int,
                            commands: var seq[Command]) =
   ## A recursive call runs this mcfun again, which overwrites its temps and locals. The live temps and the visible
   ## locals are saved in a frame around the call. `target` gets the result of the call, so it is not restored.
@@ -205,7 +205,7 @@ proc appendWithSavedValues(compiler: Compiler, call: Command, target: Option[Sco
     of lkData: savedData.add local.generatedName
   if target.isSome:
     for index, score in savedScores:
-      if score.eql(target.get):
+      if score == target.get:
         savedScores.delete(index)
         break
   if savedScores.len + savedData.len == 0:
@@ -343,6 +343,6 @@ proc compileCall(compiler: Compiler, call: Call, env: Environment, commands: var
   compiler.mcfun.tempCount = 0
   let command = compiler.compileMcfunCall(call, found.declaration, env, commands)
   if compiler.mcfun.liveLocals.len > 0 and compiler.canReach(found.key, compiler.mcfun.key):
-    compiler.appendWithSavedValues(command, none(Score), 0, commands)
+    compiler.addWithSavedValues(command, none(Score), 0, commands)
     return
   commands.add command

@@ -8,7 +8,7 @@ import command_tree, compiler, config, data_folders, diagnostic, environment, pr
 type
   Encoding = enum
     ## How the editor counts characters in a line.
-    utf8 = "utf-8", utf16 = "utf-16", utf32 = "utf-32"
+    enUtf8 = "utf-8", enUtf16 = "utf-16", enUtf32 = "utf-32"
 
   Analysis = ref object
     ## The last compile of one project. Hover, definition and completion read it.
@@ -86,7 +86,7 @@ const completionKeyword = 14
 const completionConstant = 21
 
 proc newLanguageServer*(stdPath: string, notify: proc (meth: string, params: JsonNode)): LanguageServer =
-  LanguageServer(stdPath: stdPath, encoding: utf16, notify: notify)
+  LanguageServer(stdPath: stdPath, encoding: enUtf16, notify: notify)
 
 # ---- positions in the editor's encoding
 
@@ -94,20 +94,20 @@ func sequenceLength(lead: char): int =
   if ord(lead) < 0x80: 1 elif ord(lead) < 0xE0: 2 elif ord(lead) < 0xF0: 3 else: 4
 
 func countCodeUnits(text: string, encoding: Encoding): int =
-  if encoding == utf8: return text.len
+  if encoding == enUtf8: return text.len
   var index = 0
   while index < text.len:
     let length = sequenceLength(text[index])
-    result += (if encoding == utf16 and length == 4: 2 else: 1)
+    result += (if encoding == enUtf16 and length == 4: 2 else: 1)
     index += length
 
 func codeUnitByteCount(text: string, count: int, encoding: Encoding): int =
   ## The bytes of the first `count` code units of `text`.
-  if encoding == utf8: return min(text.len, count)
+  if encoding == enUtf8: return min(text.len, count)
   var units = 0
   while result < text.len and units < count:
     let length = sequenceLength(text[result])
-    units += (if encoding == utf16 and length == 4: 2 else: 1)
+    units += (if encoding == enUtf16 and length == 4: 2 else: 1)
     result += length
   min(result, text.len)
 

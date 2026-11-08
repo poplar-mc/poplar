@@ -99,7 +99,7 @@ proc newTemp(compiler: Compiler): Score =
   result = compiler.tempScore(compiler.mcfun.tempCount)
   inc compiler.mcfun.tempCount
 
-proc appendOperation(commands: var seq[Command], target: Score, op: Operator, source: Score) =
+proc addOperation(commands: var seq[Command], target: Score, op: Operator, source: Score) =
   commands.add ScoreOperationCommand(scoreOperation: ScoreOperation(target: target, op: op, source: source))
 
 proc applyOperand(compiler: Compiler, target: Score, op: Operator, operand: Expression, env: Environment,
@@ -116,17 +116,17 @@ proc applyOperand(compiler: Compiler, target: Score, op: Operator, operand: Expr
       return
 
     if op in {opDiv, opMod} and number == 0: compiler.fail("division by zero")
-    appendOperation(commands, target, op, compiler.constantScore(number))
+    addOperation(commands, target, op, compiler.constantScore(number))
     return
 
   let identifier = identifierOf(operand)
   if identifier.isSome and identifier.get.kind == ikScore:
-    appendOperation(commands, target, op, compiler.scoreSource(identifier.get, env))
+    addOperation(commands, target, op, compiler.scoreSource(identifier.get, env))
     return
 
   let temp = compiler.newTemp()
   compiler.compileInto(temp, operand, env, commands)
-  appendOperation(commands, target, op, temp)
+  addOperation(commands, target, op, temp)
 
 proc compileInto(compiler: Compiler, target: Score, expression: Expression, env: Environment,
                  commands: var seq[Command]) =
@@ -147,14 +147,14 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
       return
 
     let source = compiler.resolveScore(identifier, env)
-    if source.eql(target): return
+    if source == target: return
     compiler.checkSingleEntity(identifier)
-    appendOperation(commands, target, opAssign, source)
+    addOperation(commands, target, opAssign, source)
   of PrefixExpression(prefix):
     if prefix.op != poNegate:
       compiler.fail(&"operator '{prefixOperatorText(prefix.op)}' cannot be used with scores")
     compiler.compileInto(target, prefix.operand, env, commands)
-    appendOperation(commands, target, opMul, compiler.constantScore(-1))
+    addOperation(commands, target, opMul, compiler.constantScore(-1))
   of InfixExpression(infix):
     let op = scoreOperator(infix.op)
     if op.isNone:
@@ -182,7 +182,7 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
     if not canReach(compiler, found.key, compiler.mcfun.key):
       commands.add store
       return
-    appendWithSavedValues(compiler, store, some(target), liveCount, commands)
+    addWithSavedValues(compiler, store, some(target), liveCount, commands)
   else: compiler.fail("this expression cannot be used with scores")
 
 proc compileScoreAssign(compiler: Compiler, identifier: Identifier, expression: Expression, env: Environment,
@@ -200,4 +200,4 @@ proc compileScoreAssign(compiler: Compiler, identifier: Identifier, expression: 
 
   let temp = compiler.newTemp()
   compiler.compileInto(temp, expression, env, commands)
-  appendOperation(commands, target, opAssign, temp)
+  addOperation(commands, target, opAssign, temp)

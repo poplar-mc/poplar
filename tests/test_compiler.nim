@@ -9,7 +9,7 @@ proc parseForTest(source: string): auto =
   doAssert sourceParser.errors.len == 0, sourceParser.errors[0].message
 
 proc compileForTest(source: string): Compiler =
-  result = initCompiler(tree)
+  result = newCompiler(tree)
   result.addProgram("main.poplar", parseForTest(source), orProject)
 
 proc render(program: Program, name: string): string =
@@ -505,7 +505,7 @@ execute if data storage ns:poplar {string_test:"_sword"} run say sword
 
 suite "calls":
   test "a recursive call saves the locals of an mcfun in another namespace where they are":
-    let compiler = initCompiler(tree)
+    let compiler = newCompiler(tree)
     compiler.addProgram("magic.poplar", parseForTest("""
 namespace magic;
 mcfun down() {
@@ -709,7 +709,7 @@ mcfun load() { #mana = 2; }
 mcfun heal() { #mana = #mana + 1; }
 mcfun castSpell() { ns:heal(); }
 mcfun build() { var $player = {mana: #mana}; }"""
-    let compiler = initCompiler(tree)
+    let compiler = newCompiler(tree)
     for source in [packSource, magicSource]: compiler.addProgram("main.poplar", parseForTest(source), orProject)
     let program = compiler.compile()
     check compiler.messages == @["namespace 'ns' is not imported. Add 'import ns;'"]
@@ -782,7 +782,7 @@ function ns:load
 """
     check program.tick == @["tick"]
 
-    let library = initCompiler(tree)
+    let library = newCompiler(tree)
     library.addProgram("lib.poplar", parseForTest("mcfun load() {} mcfun tick() {}"), orStd)
     let libraryProgram = library.compile()
     check libraryProgram.load.isNone

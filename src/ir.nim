@@ -175,7 +175,7 @@ type
     holder*: string
     objective*: Option[string]
     namespace*: Option[string] ## The objective is `<namespace>` or `<namespace>.<objective>`.
-    kind*: ScoreKind ## Not compared by `eql`.
+    kind*: ScoreKind ## Not compared by `==`.
 
   ScoreValue* = object
     score*: Score
@@ -262,7 +262,7 @@ func resultScore*(folder: string, namespace: Option[string]): Score =
 func localScore*(generatedName, owner: string, namespace: Option[string]): Score =
   Score(holder: generatedName, namespace: namespace, kind: LocalScore(owner: owner))
 
-func eql*(a, b: Score): bool =
+func `==`*(a, b: Score): bool =
   a.objective == b.objective and a.namespace == b.namespace and a.holder == b.holder
 
 func splitName*(name: string): (Option[string], string) =

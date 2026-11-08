@@ -202,7 +202,7 @@ proc build*(projectPath: string, options: Options): Result =
                           &"the folder {projectPath} is not a Poplar project: it has no src/ folder")
 
   let commandTree = if options.commandTree != nil: options.commandTree else: loadCommandTree()
-  let compiler = initCompiler(commandTree)
+  let compiler = newCompiler(commandTree)
   compiler.packNamespace = packConfig.namespace
 
   var loader = Loader(srcPath: projectRealPath / "src", stdPath: options.stdPath, overlay: options.overlay,

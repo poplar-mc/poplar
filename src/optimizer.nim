@@ -87,16 +87,16 @@ func checkReads(check: Check, score: Score): bool =
   of DataTest, FunctionReturnsTest: false
   # `score @s ...` in a check written by the user can name any score.
   of RawTest(raw): score.holder in raw
-  of MatchesTest(matches): matches.score.eql(score)
-  of CompareTest(compare): compare.left.eql(score) or compare.right.eql(score)
+  of MatchesTest(matches): matches.score == score
+  of CompareTest(compare): compare.left == score or compare.right == score
 
 func readsScore*(command: Command, score: Score): bool =
   case command
-  of {ScoreAddCommand, ScoreRemoveCommand}(change): change.score.eql(score)
+  of {ScoreAddCommand, ScoreRemoveCommand}(change): change.score == score
   of ScoreOperationCommand(operation):
-    operation.source.eql(score) or (operation.op != opAssign and operation.target.eql(score))
-  of ScoreToDataCommand(store): store.score.eql(score)
-  of ScoreGetCommand(read): read.eql(score)
+    operation.source == score or (operation.op != opAssign and operation.target == score)
+  of ScoreToDataCommand(store): store.score == score
+  of ScoreGetCommand(read): read == score
   of ExecuteCommand(execute):
     for check in execute.checks:
       if checkReads(check, score): return true
@@ -108,13 +108,13 @@ func readsScore*(command: Command, score: Score): bool =
 func setsScore(command: Command, score: Score): bool =
   ## Only a command that always runs counts. A write inside `execute if` may not happen.
   case command
-  of ScoreSetCommand(scoreValue): scoreValue.score.eql(score)
-  of ScoreSetMacroArgumentCommand(argument): argument.score.eql(score)
-  of ScoreOperationCommand(operation): operation.op == opAssign and operation.target.eql(score)
-  of DataToScoreCommand(store): store.score.eql(score)
+  of ScoreSetCommand(scoreValue): scoreValue.score == score
+  of ScoreSetMacroArgumentCommand(argument): argument.score == score
+  of ScoreOperationCommand(operation): operation.op == opAssign and operation.target == score
+  of DataToScoreCommand(store): store.score == score
   of StoreResultCommand(store):
     case store.target
-    of ScoreTarget(target): target.eql(score)
+    of ScoreTarget(target): target == score
     else: false
   else: false
 
@@ -227,7 +227,7 @@ func get(known: KnownScores, score: Score): Option[KnownValue] =
   let constant = constantValue(score)
   if constant.isSome: return some(numberValue(constant.get))
   for entry in known.entries:
-    if entry.score.eql(score): return some(entry.value)
+    if entry.score == score: return some(entry.value)
   none(KnownValue)
 
 func scoreWithValue(known: KnownScores, value: KnownValue): Option[Score] =
@@ -237,7 +237,7 @@ func scoreWithValue(known: KnownScores, value: KnownValue): Option[Score] =
 
 proc forget(known: var KnownScores, score: Score) =
   for index, entry in known.entries:
-    if entry.score.eql(score):
+    if entry.score == score:
       known.entries.del(index)
       return
 
@@ -385,7 +385,7 @@ func scaleDataGets(commands: seq[Command]): seq[Command] =
         case commands[index + 1]
         of ScoreOperationCommand(operation):
           let factor = constantValue(operation.source)
-          if operation.op == opMul and operation.target.eql(store.score) and factor.isSome:
+          if operation.op == opMul and operation.target == store.score and factor.isSome:
             let scale = int64(store.scale) * int64(factor.get)
             if scale in int64(low(int32)) .. int64(high(int32)):
               store.scale = int32(scale)
@@ -412,17 +412,17 @@ func definedTemp(command: Command, functionName: string): Option[Score] =
 func mergeCopy(definition, copy: Command, temp: Score): Option[Command] =
   case copy
   of ScoreToDataCommand(store):
-    if not store.score.eql(temp): return none(Command)
+    if store.score != temp: return none(Command)
     some(StoreResultCommand(storeResult: StoreResult(target: DataTarget(dataPath: store.target),
                                                      run: createCommand(definition))))
   of ReturnRunCommand(run):
     case run[]
     of ScoreGetCommand(read):
-      if not read.eql(temp): return none(Command)
+      if read != temp: return none(Command)
       some(ReturnRunCommand(returnRun: createCommand(definition)))
     else: none(Command)
   of ScoreOperationCommand(operation):
-    if operation.op != opAssign or not operation.source.eql(temp) or operation.target.eql(temp): return none(Command)
+    if operation.op != opAssign or operation.source != temp or operation.target == temp: return none(Command)
     some(StoreResultCommand(storeResult: StoreResult(target: ScoreTarget(score: operation.target),
                                                      run: createCommand(definition))))
   else: none(Command)
