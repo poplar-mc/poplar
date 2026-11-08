@@ -1,37 +1,63 @@
 name: Release
 
 # When a release is published, build Poplar for each platform and attach the archives to it.
-# Each archive holds `bin/poplar` (or `poplar.exe`) and `lib/poplar/std/`, which the compiler finds next to its binary.
+# Each archive holds `bin/poplar` (or `poplar.exe`) and `lib/poplar/std/`, which the compiler finds
+# next to its binary. Nim writes C, and `zig cc` compiles that C for every platform from one runner.
+# A pull request that changes this file runs every job except the upload.
 on:
   release:
     types: [published]
+  pull_request:
+    paths: [.github/workflows/release.yml]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Nim 2.4.0
+        run: |
+          curl -fsSL -o nim.tar.xz https://nim-lang.org/download/nim-2.4.0-linux_x64.tar.xz
+          echo "23c1c83d9031c498a2b3ad0bce153b8905710d04eb5922cf8ebd8f9d12125743  nim.tar.xz" | sha256sum -c
+          tar -xJf nim.tar.xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nim-2.4.0/bin" >> "$GITHUB_PATH"
 
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
 
       - name: Test
-        run: zig build test
+        run: nimble test
 
       - name: Build and package
         run: |
           set -eu
+          zigcc="$RUNNER_TEMP/zigcc"
+          printf '#!/bin/sh\nexec zig cc -target "$ZIG_TARGET" "$@"\n' > "$zigcc"
+          chmod +x "$zigcc"
           mkdir -p dist
-          for target in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
-            arch="${target%%-*}"
-            os="${target#*-}"
-            name="poplar-$os-$arch"
-            zig build -Doptimize=ReleaseSafe -Dtarget="$target" -p "dist/$name"
-            rm -f "dist/$name/bin/"*.pdb
+          for target in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64; do
+            os="${target%-*}"
+            arch="${target#*-}"
+            name="poplar-$target"
+            case "$os" in
+              linux) nim_os=linux; zig_target="$arch-linux-musl"; binary=poplar ;;
+              macos) nim_os=macosx; zig_target="$arch-macos"; binary=poplar ;;
+              windows) nim_os=windows; zig_target="$arch-windows-gnu"; binary=poplar.exe ;;
+            esac
+            case "$arch" in
+              x86_64) cpu=amd64 ;;
+              aarch64) cpu=arm64 ;;
+            esac
+            ZIG_TARGET="$zig_target" nim c --hints:off -d:release --os:"$nim_os" --cpu:"$cpu" \
+              --cc:clang --clang.exe:"$zigcc" --clang.linkerexe:"$zigcc" --passL:-s \
+              --nimcache:"$RUNNER_TEMP/nimcache/$name" -o:"dist/$name/bin/$binary" src/poplar.nim
+            mkdir -p "dist/$name/lib/poplar"
+            cp -r std "dist/$name/lib/poplar/std"
             cp LICENSE "dist/$name/"
             if [ "$os" = windows ]; then
               (cd "dist/$name" && zip -qr "../$name.zip" bin lib LICENSE)
@@ -40,7 +66,91 @@ jobs:
             fi
           done
 
+      # The packs that every platform must build byte for byte.
+      - name: Build the expected packs
+        run: |
+          set -eu
+          for project in examples/*/ tests/e2e/*/; do
+            dist/poplar-linux-x86_64/bin/poplar build "$project"
+          done
+          tar -czf dist/projects.tar.gz examples tests/e2e
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  check:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x86_64, runner: ubuntu-24.04 }
+          - { target: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { target: macos-x86_64, runner: macos-15-intel }
+          - { target: macos-aarch64, runner: macos-15 }
+          - { target: windows-x86_64, runner: windows-2022 }
+          - { target: windows-aarch64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+
+      - name: Unpack the archive
+        run: |
+          name="poplar-${{ matrix.target }}"
+          if [ -f "$name.zip" ]; then
+            powershell -NoProfile -Command "Expand-Archive -Path $name.zip -DestinationPath $name"
+          else
+            mkdir "$name"
+            tar -xzf "$name.tar.gz" -C "$name"
+          fi
+          tar -xzf projects.tar.gz
+          echo "POPLAR=$PWD/$name/bin/poplar" >> "$GITHUB_ENV"
+
+      # The zip lists its files in the order of the file system, so the check compares what it holds.
+      - name: Build each project and compare it with the Linux x86_64 pack
+        run: |
+          unpack() {
+            if command -v unzip > /dev/null; then
+              unzip -q "$1" -d "$2"
+            else
+              powershell -NoProfile -Command "Expand-Archive -LiteralPath '$1' -DestinationPath '$2'"
+            fi
+          }
+          "$POPLAR" --version
+          for project in examples/*/ tests/e2e/*/; do
+            mv "${project}poplar-out" "${project}expected-out"
+            "$POPLAR" build "$project"
+            diff -r -x '*.zip' "${project}expected-out" "${project}poplar-out"
+            for zip in "${project}poplar-out"/*.zip; do
+              unpack "${project}expected-out/$(basename "$zip")" "${project}expected-zip"
+              unpack "$zip" "${project}actual-zip"
+              diff -r "${project}expected-zip" "${project}actual-zip"
+            done
+          done
+
+  upload:
+    if: github.event_name == 'release'
+    needs: [build, check]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.tar.gz dist/*.zip --clobber
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" poplar-*.tar.gz poplar-*.zip \
+            --clobber --repo "${{ github.repository }}"

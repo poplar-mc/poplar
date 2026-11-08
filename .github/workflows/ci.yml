@@ -11,12 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
+      - name: Install Nim 2.4.0
+        run: |
+          curl -fsSL -o nim.tar.xz https://nim-lang.org/download/nim-2.4.0-linux_x64.tar.xz
+          echo "23c1c83d9031c498a2b3ad0bce153b8905710d04eb5922cf8ebd8f9d12125743  nim.tar.xz" | sha256sum -c
+          tar -xJf nim.tar.xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nim-2.4.0/bin" >> "$GITHUB_PATH"
 
       - name: Check the formatting
-        run: zig fmt --check src tools build.zig build.zig.zon
+        run: |
+          for file in $(git ls-files '*.nim'); do
+            nimpretty --maxLineLen:100 --out:"$RUNNER_TEMP/formatted.nim" "$file"
+            if ! cmp -s "$file" "$RUNNER_TEMP/formatted.nim"; then
+              echo "nimpretty --maxLineLen:100 changes $file"
+              exit 1
+            fi
+          done
 
       - name: Run the unit tests
-        run: zig build test
+        run: nimble test

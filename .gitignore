@@ -1,7 +1,5 @@
-# Zig
-.zig-cache/
-zig-out/
-zig-pkg/
+# Nim
+bin/
 
 # e2e: the Minecraft server and its world
 .e2e/
