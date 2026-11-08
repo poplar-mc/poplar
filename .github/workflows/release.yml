@@ -115,13 +115,26 @@ jobs:
           tar -xzf projects.tar.gz
           echo "POPLAR=$PWD/$name/bin/poplar" >> "$GITHUB_ENV"
 
+      # The zip lists its files in the order of the file system, so the check compares what it holds.
       - name: Build each project and compare it with the Linux x86_64 pack
         run: |
+          unpack() {
+            if command -v unzip > /dev/null; then
+              unzip -q "$1" -d "$2"
+            else
+              powershell -NoProfile -Command "Expand-Archive -LiteralPath '$1' -DestinationPath '$2'"
+            fi
+          }
           "$POPLAR" --version
           for project in examples/*/ tests/e2e/*/; do
             mv "${project}poplar-out" "${project}expected-out"
             "$POPLAR" build "$project"
-            diff -r "${project}expected-out" "${project}poplar-out"
+            diff -r -x '*.zip' "${project}expected-out" "${project}poplar-out"
+            for zip in "${project}poplar-out"/*.zip; do
+              unpack "${project}expected-out/$(basename "$zip")" "${project}expected-zip"
+              unpack "$zip" "${project}actual-zip"
+              diff -r "${project}expected-zip" "${project}actual-zip"
+            done
           done
 
   upload:
