@@ -60,13 +60,12 @@ proc chooseWorld(shared: Shared, invocation: Invocation, projectPath: string): O
   if flag.len > 0: return some(World(path: flag))
   if existsEnv("POPLAR_WORLD"):
     return some(World(path: expandHome(getEnv("POPLAR_WORLD")), source: " (POPLAR_WORLD from the environment)"))
-  let lookup = dot_env.read(projectPath, "POPLAR_WORLD")
-  case lookup.kind
-  of lkValue: some(World(path: expandHome(lookup.value), source: " (POPLAR_WORLD from .env)"))
-  of lkMissing: none(World)
-  of lkInvalidLine:
+  case dot_env.read(projectPath, "POPLAR_WORLD")
+  of ValueLookup(value): some(World(path: expandHome(value), source: " (POPLAR_WORLD from .env)"))
+  of MissingLookup: none(World)
+  of InvalidLineLookup(line):
     let output = shared.output
-    output.failure(&"{output.bold}{dot_env.fileName}:{lookup.line}{output.reset}  Expected KEY=VALUE")
+    output.failure(&"{output.bold}{dot_env.fileName}:{line}{output.reset}  Expected KEY=VALUE")
     fail()
 
 proc datapacksPath(output: Output, world: World): Option[string] =
@@ -135,5 +134,5 @@ proc register*(shared: Shared): Command =
       rebuild(shared, projectPath, worldCopy)
   result = newCommand("watch", "Build again each time a file in src/ or poplar.json changes", run)
   result.addPositionalArg dirArg
-  result.addFlag Flag(name: "world", kind: fkString, description: "A world folder. Each build is copied into its " &
+  result.addFlag Flag(name: "world", default: TextFlag(text: ""), description: "A world folder. Each build is copied into its " &
                       "datapacks/ folder, so /reload loads it (default: POPLAR_WORLD from the environment or .env)")

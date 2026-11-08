@@ -16,7 +16,7 @@ func macroName(path: string): string =
 
 func isIdChar(ch: char): bool = ch.isAlphaNumeric or ch in "_-./"
 
-func sharedStorage(inserts: seq[Insert]): Option[DataStorage] =
+func sharedStorage(inserts: openArray[Insert]): Option[DataStorage] =
   ## The storage that holds every insert, when each one is a whole `$` variable of the same storage: the helper can
   ## then read them from it as they are.
   var shared = none(DataStorage)
@@ -51,10 +51,10 @@ func isSameInsert(a, b: InsertSource): bool =
         left.get.selector.get("") == right.get.selector.get("")
     else: false
 
-proc isUsedMacroName(compiler: Compiler, name: string, used: seq[Insert]): bool =
+proc isUsedMacroName(compiler: Compiler, name: string, used: openArray[Insert]): bool =
   used.anyIt(it.macroName == name) or name in compiler.mcfun.macroKeys
 
-proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment, used: seq[Insert]): Insert =
+proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment, used: openArray[Insert]): Insert =
   ## Where the value of a runtime insert comes from, and its macro name. The same value again in the line gives the
   ## insert that is already there.
   let outerPosition = compiler.enterExpression(expression)
@@ -66,7 +66,7 @@ proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment,
   if identifier.isSome:
     case identifier.get.kind
     of ikData, ikEntityData:
-      let path = dataPathOf(compiler, identifier.get, env)
+      let path = compiler.dataPathOf(identifier.get, env)
       source = DataSource(path: path)
       base = macroName(path.path)
     of ikScore: base = identifier.get.name
@@ -83,7 +83,7 @@ proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment,
     inc number
   Insert(macroName: name, source: source)
 
-proc buildCommandText(compiler: Compiler, parts: seq[CommandPart], env: Environment): CommandText =
+proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart], env: Environment): CommandText =
   ## Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro line. `$(key)` in
   ## the text uses the mcfun's macro arguments.
   for part in parts:
@@ -107,9 +107,9 @@ proc buildCommandText(compiler: Compiler, parts: seq[CommandPart], env: Environm
         result.isMacro = true
         if not result.inserts.anyIt(it.macroName == insert.macroName): result.inserts.add insert
         continue
-      result.text.add valueToText(evaluate(compiler, expression, env))
+      result.text.add valueToText(compiler.evaluate(expression, env))
 
-func sourceOffset(parts: seq[CommandPart], textStarts: seq[int], at: int): int =
+func sourceOffset(parts: openArray[CommandPart], textStarts: openArray[int], at: int): int =
   ## Maps an offset in the finished command back to the source. An offset inside an insert maps to its `{{`.
   result = at
   for index, part in parts:
@@ -160,7 +160,7 @@ proc sourceNamespaceOf(compiler: Compiler, written: string): Option[string] =
   if written == compiler.scope.namespace or compiler.isImported(written): return some(written)
   none(string)
 
-proc checkBareName(compiler: Compiler, parts: seq[CommandPart], built: CommandText, column, start: int) =
+proc checkBareName(compiler: Compiler, parts: openArray[CommandPart], built: CommandText, column, start: int) =
   ## A name with no namespace means `minecraft:name`, so a name from this pack needs `self:`.
   var stop = start
   while stop < built.text.len and isIdChar(built.text[stop]): inc stop
@@ -180,7 +180,7 @@ proc checkBareName(compiler: Compiler, parts: seq[CommandPart], built: CommandTe
   compiler.failAt(at, &"'{name}' is in this pack, but with no namespace it means 'minecraft:{name}'. Write " &
                       &"'self:{sourceName}'")
 
-proc checkMinecraftText(compiler: Compiler, parts: seq[CommandPart], built: CommandText, column: int,
+proc checkMinecraftText(compiler: Compiler, parts: openArray[CommandPart], built: CommandText, column: int,
                         prefix, suffix: string): string =
   ## Checks Minecraft text against the command tree, between `prefix` and `suffix`, and changes each `self:name` and
   ## `ns:name` of a declaration into its id. `column` is where the text starts in the source.
@@ -254,7 +254,7 @@ proc callMacroHelper(compiler: Compiler, name: string, commandText: CommandText,
       defer: compiler.position = outerPosition
       let call = callOf(expression)
       if call.isSome and isStringCall(call.get):
-        compileStringInto(compiler, target, call.get, env, commands)
+        compiler.compileStringInto(target, call.get, env, commands)
         continue
       let identifier = identifierOf(expression)
       var score: Score

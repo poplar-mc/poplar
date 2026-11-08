@@ -50,7 +50,7 @@ func isResourceNameChar*(ch: char): bool = ch.isLowerAscii or ch.isDigit or ch i
 func isValidResourceName*(name: string): bool =
   name.len > 0 and name.allCharsInSet({'a' .. 'z', '0' .. '9', '_', '.', '-'})
 
-proc failWithoutPosition(message: string) {.noreturn.} =
+func failWithoutPosition(message: string) {.noreturn.} =
   raise (ref ConfigError)(msg: message, position: none(Position))
 
 # ---- JSON for pack.mcmeta
@@ -112,30 +112,30 @@ func jsonNumber(text: string): string =
 
 # ---- the field reader
 
-proc fail(reader: FieldReader, message: string) {.noreturn.} =
+func fail(reader: FieldReader, message: string) {.noreturn.} =
   let position = Position(line: reader.scanner.line, column: reader.scanner.column)
   raise (ref ConfigError)(msg: message, position: some(position))
 
-proc next(reader: var FieldReader): JsonToken =
+func next(reader: var FieldReader): JsonToken =
   try:
     reader.scanner.next()
   except JsonSyntaxError:
     reader.fail("invalid JSON")
 
 
-proc readString(reader: var FieldReader, field: string): string =
+func readString(reader: var FieldReader, field: string): string =
   let token = reader.next()
   if token.kind != jtString: reader.fail(&"\"{field}\" must be a string")
   token.text
 
-proc parseFormatNumber(reader: FieldReader, number, field: string): int =
+func parseFormatNumber(reader: FieldReader, number, field: string): int =
   try:
     result = parseInt(number)
   except ValueError:
     reader.fail(&"\"{field}\" must contain whole numbers")
   if result notin 0 .. int(high(uint32)): reader.fail(&"\"{field}\" must contain whole numbers")
 
-proc readFormat(reader: var FieldReader, field: string): PackFormat =
+func readFormat(reader: var FieldReader, field: string): PackFormat =
   ## `121` or `[121, 0]`, the same as in pack.mcmeta.
   let first = reader.next()
   case first.kind
@@ -156,7 +156,7 @@ proc readFormat(reader: var FieldReader, field: string): PackFormat =
     inc count
   if count == 0: reader.fail(&"\"{field}\" must be [major, minor]")
 
-proc writeValue(reader: var FieldReader, token: JsonToken, output: var string) =
+func writeValue(reader: var FieldReader, token: JsonToken, output: var string) =
   case token.kind
   of jtString: output.add jsonString(token.text)
   of jtNumber: output.add jsonNumber(token.text)
@@ -187,13 +187,13 @@ proc writeValue(reader: var FieldReader, token: JsonToken, output: var string) =
     output.add ']'
   of jtObjectEnd, jtArrayEnd, jtEndOfDocument: raiseAssert "the scanner does not give an end token in place of a value"
 
-proc readJson(reader: var FieldReader): string =
+func readJson(reader: var FieldReader): string =
   ## Any JSON value, for example a text component. It is written to pack.mcmeta in compact form.
   reader.writeValue(reader.next(), result)
 
 # ---- poplar.json
 
-proc validate(config: Config, hasNamespace: bool): Config =
+func validate(config: Config, hasNamespace: bool): Config =
   if config.zipName.len == 0 or config.zipName.contains({'/', '\\'}):
     failWithoutPosition(&"\"zipName\" '{config.zipName}' must not be empty or contain '/' or '\\'")
   if not isValidResourceName(config.namespace):
@@ -207,7 +207,7 @@ proc validate(config: Config, hasNamespace: bool): Config =
     failWithoutPosition("\"maxFormat\" must not be less than \"minFormat\"")
   config
 
-proc parseConfig*(json, folderName: string, latest = latestFormat): Config =
+func parseConfig*(json, folderName: string, latest = latestFormat): Config =
   ## Raises `ConfigError` with the message and position of the first problem.
   var reader = FieldReader(scanner: initJsonScanner(json))
   var zipName, namespace, description = none(string)

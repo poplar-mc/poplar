@@ -181,7 +181,7 @@ proc load(loader: var Loader): bool =
 
   not hasErrors
 
-proc onlyDiagnostic(path: string, position: Option[Position], message: string): Result =
+func onlyDiagnostic(path: string, position: Option[Position], message: string): Result =
   Result(diagnostics: @[Diagnostic(path: path, position: position, message: message)])
 
 proc build*(projectPath: string, options: Options): Result =

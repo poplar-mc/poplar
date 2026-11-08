@@ -16,7 +16,7 @@ func numberOf(value: Value): Option[int64] =
   of NumberValue(number): some(number)
   else: none(int64)
 
-proc containsRuntimeValue(expression: Expression): bool =
+func containsRuntimeValue(expression: Expression): bool =
   case expression
   of NameExpression(identifier): identifier.kind != ikCompileTime
   of MinecraftCheck, MacroKey: true
@@ -155,24 +155,24 @@ proc evaluateCall(compiler: Compiler, call: Call, env: Environment): Value =
   let name = identifier.name
   if isBuiltinCall(call, "text"):
     if call.args.len != 1: compiler.fail(&"'text' expects 1 argument, found {call.args.len}")
-    return textComponent(compiler, call.args[0], env)
-  if isStringCall(call) or isStringTest(call): return evaluateStringCall(compiler, call, env)
+    return compiler.textComponent(call.args[0], env)
+  if isStringCall(call) or isStringTest(call): return compiler.evaluateStringCall(call, env)
   if isBuiltinCall(call, "len") and call.args.len == 1:
-    let value = evaluate(compiler, call.args[0], env)
+    let value = compiler.evaluate(call.args[0], env)
     case value
     of ListValue(elements): return NumberValue(number: elements.len)
     of CompoundValue(entries): return NumberValue(number: entries.len)
     # The game counts UTF-16 units.
     of StringValue(text): return NumberValue(number: utf16Length(text).get(text.len))
     else: discard
-  if calledKey(compiler, identifier).isSome:
+  if compiler.calledKey(identifier).isSome:
     compiler.fail(&"mcfun '{name}' runs in the game, so its result is not known when the pack is built")
   if identifier.namespace.isNone and isBuiltin(name):
     compiler.fail(&"'{name}' changes data in the game, so it has no build-time value")
   compiler.fail(&"unknown function '{name}'")
 
 proc evaluatePrefix(compiler: Compiler, prefix: Prefix, env: Environment): Value =
-  let operand = evaluate(compiler, prefix.operand, env)
+  let operand = compiler.evaluate(prefix.operand, env)
   case operand
   of NumberValue(number):
     if prefix.op == poNegate: return compiler.checkedNumber(checkedSub(0, number))
@@ -203,8 +203,8 @@ proc evaluateNumbers(compiler: Compiler, op: InfixOperator, a, b: int64): Option
   else: none(Value)
 
 proc evaluateInfix(compiler: Compiler, infix: Infix, env: Environment): Value =
-  let left = evaluate(compiler, infix.left, env)
-  let right = evaluate(compiler, infix.right, env)
+  let left = compiler.evaluate(infix.left, env)
+  let right = compiler.evaluate(infix.right, env)
   let (leftTag, rightTag) = (tagName(left), tagName(right))
 
   if infix.op == ioAdd and "string" in [leftTag, rightTag]:
@@ -265,12 +265,12 @@ proc evaluate(compiler: Compiler, expression: Expression, env: Environment): Val
     StringValue(text: selector)
   of ListExpression(elements):
     var values: seq[Value]
-    for element in elements: values.add evaluate(compiler, element, env)
+    for element in elements: values.add compiler.evaluate(element, env)
     ListValue(elements: values)
   of CompoundExpression(entries):
     var values: seq[ValueEntry]
     for index, entry in entries:
       for earlier in entries[0 ..< index]:
         if earlier.key == entry.key: compiler.fail(&"key '{entry.key}' is used more than once")
-      values.add ValueEntry(key: entry.key, value: evaluate(compiler, entry.value, env))
+      values.add ValueEntry(key: entry.key, value: compiler.evaluate(entry.value, env))
     CompoundValue(entries: values)

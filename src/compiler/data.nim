@@ -70,7 +70,7 @@ func utf16ToUtf8(units: openArray[uint16]): Option[string] =
 
 # ---- paths
 
-proc isDataIdentifier(expression: Expression): bool =
+func isDataIdentifier(expression: Expression): bool =
   let identifier = identifierOf(expression)
   identifier.isSome and identifier.get.kind in {ikData, ikEntityData}
 
@@ -105,7 +105,7 @@ proc dataPath(compiler: Compiler, identifier: Identifier, env: Environment): Dat
   if identifier.namespace.isNone:
     let local = env.getLocal(lkData, root)
     if local.isSome: return compiler.dataLocal(local.get.generatedName & name[root.len .. ^1])
-  let namespace = resolveNamespace(compiler, identifier.namespace)
+  let namespace = compiler.resolveNamespace(identifier.namespace)
   let key = qualifiedKey(namespace, root)
   if key notin compiler.dataGlobals: compiler.fail(&"unknown data '${root}'")
   let global = compiler.dataGlobals[key]
@@ -121,7 +121,7 @@ proc dataPathOf(compiler: Compiler, identifier: Identifier, env: Environment): D
 proc literalTemplate(compiler: Compiler, expression: Expression, path: string, env: Environment,
                      parts: var seq[LiteralPart]): Value =
   ## The literal as a value, with `0` in the place of each runtime part.
-  if not containsRuntimeValue(expression): return evaluate(compiler, expression, env)
+  if not containsRuntimeValue(expression): return compiler.evaluate(expression, env)
 
   case expression
   of ListExpression(elements):
@@ -158,7 +158,7 @@ func isStringTest(call: Call): bool =
 
 proc constantIndex(compiler: Compiler, expression: Expression, env: Environment): int32 =
   if containsRuntimeValue(expression): compiler.failOn(expression, "the bounds of 'slice' must be constant integers")
-  compiler.toScoreValue(evaluate(compiler, expression, env))
+  compiler.toScoreValue(compiler.evaluate(expression, env))
 
 proc stringSource(compiler: Compiler, argument: Expression, env: Environment, commands: var seq[Command]): DataPath =
   ## The data that a string helper reads: a `$` path, entity
@@ -214,7 +214,7 @@ proc compileDataAssign(compiler: Compiler, target: DataPath, expression: Express
   defer: compiler.position = outerPosition
 
   if not containsRuntimeValue(expression):
-    let value = evaluate(compiler, expression, env)
+    let value = compiler.evaluate(expression, env)
     case value
     of NullValue: compiler.fail("data cannot be set to null")
     else: discard
@@ -279,7 +279,7 @@ proc textComponent(compiler: Compiler, argument: Expression, env: Environment): 
       return CompoundValue(entries: @[ValueEntry(key: "entity", value: StringValue(text: identifier.get.selector.get)),
                                       ValueEntry(key: "nbt", value: StringValue(text: identifier.get.name))])
     of ikCompileTime: discard
-  StringValue(text: valueToText(evaluate(compiler, argument, env)))
+  StringValue(text: valueToText(compiler.evaluate(argument, env)))
 
 proc listArgument(compiler: Compiler, name: string, argument: Expression, env: Environment): DataPath =
   ## The first argument of a list helper: a `$` variable or entity data.
@@ -299,7 +299,7 @@ proc compileListBuiltin(compiler: Compiler, name: string, call: Call, env: Envir
   let list = compiler.listArgument(name, call.args[0], env)
 
   let hasIndex = name in ["insert", "remove"]
-  let index = if hasIndex: compiler.toScoreValue(evaluate(compiler, call.args[1], env)) else: 0'i32
+  let index = if hasIndex: compiler.toScoreValue(compiler.evaluate(call.args[1], env)) else: 0'i32
 
   if name == "remove":
     commands.add DataRemoveCommand(dataPath: list.withPath(&"{list.path}[{index}]"))
@@ -316,7 +316,7 @@ proc compileListBuiltin(compiler: Compiler, name: string, call: Call, env: Envir
   let value = call.args[arity - 1]
 
   if not containsRuntimeValue(value):
-    let snbt = valueToSnbt(evaluate(compiler, value, env))
+    let snbt = valueToSnbt(compiler.evaluate(value, env))
     commands.add DataAddCommand(dataAdd: DataAdd(list: list, position: position, source: SnbtSource(snbt: snbt)))
     return
   if isDataIdentifier(value):
@@ -332,7 +332,7 @@ proc constantString(compiler: Compiler, expression: Expression, env: Environment
   let outerPosition = compiler.enterExpression(expression)
   defer: compiler.position = outerPosition
   if not containsRuntimeValue(expression):
-    case evaluate(compiler, expression, env)
+    case compiler.evaluate(expression, env)
     of StringValue(text): return text
     else: discard
   compiler.fail(&"the second argument of '{builtin}' must be a constant string")
@@ -368,7 +368,7 @@ proc evaluateStringCall(compiler: Compiler, call: Call, env: Environment): Value
                 elif isBuiltinCall(call, "str"): call.args.len == 1
                 else: call.args.len == 2
   if not arityOk: compiler.fail(&"'{name}' has the wrong number of arguments")
-  let firstValue = evaluate(compiler, call.args[0], env)
+  let firstValue = compiler.evaluate(call.args[0], env)
   let text = case firstValue
     of StringValue(text): text
     of NumberValue(number): $number

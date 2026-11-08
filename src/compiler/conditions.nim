@@ -71,20 +71,20 @@ func matchesCondition(score: Score, op: CompareOp, number: int64, negated: bool)
   singleCheck(Check(negated: negated, condition: MatchesTest(matches: Matches(score: score, min: rangeMin,
                                                                               max: rangeMax))))
 
-proc minecraftCheck(compiler: Compiler, parts: seq[CommandPart], column: int, env: Environment,
+proc minecraftCheck(compiler: Compiler, parts: openArray[CommandPart], column: int, env: Environment,
                     negated: bool): Condition =
   ## `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of `execute (...)`.
-  let check = buildCommandText(compiler, parts, env)
+  let check = compiler.buildCommandText(parts, env)
   if check.isMacro:
     compiler.fail("a game value in a Minecraft check is not supported yet. Use 'execute (if ...) { }'")
 
-  let text = checkMinecraftText(compiler, parts, check, column, "execute if ", " run say x")
+  let text = compiler.checkMinecraftText(parts, check, column, "execute if ", " run say x")
   singleCheck(Check(negated: negated, condition: RawTest(raw: text)))
 
 proc dataCondition(compiler: Compiler, identifier: Identifier, value: Value, negated: bool,
                    env: Environment): Condition =
   ## `$name == "Steve"` → `if data storage ns:data {name:"Steve"}`. The path becomes a nested filter.
-  let path = dataPathOf(compiler, identifier, env)
+  let path = compiler.dataPathOf(identifier, env)
   if path.path.find({'[', '"'}) >= 0:
     compiler.fail(&"a condition on '{identifier.name}' is not supported yet: the path must only have keys")
 
@@ -106,10 +106,10 @@ proc dataComparison(compiler: Compiler, dataSide, other: Expression, env: Enviro
   defer: compiler.position = outerPosition
   if containsRuntimeValue(other):
     compiler.fail("comparing two runtime values that are not numbers is not supported yet")
-  let value = evaluate(compiler, other, env)
+  let value = compiler.evaluate(other, env)
   compiler.dataCondition(identifierOf(dataSide).get, value, negated, env)
 
-proc isNbtFilterComparison(left, right: Expression): bool =
+func isNbtFilterComparison(left, right: Expression): bool =
   ## True when one side is data and the other is a compile-time value that is not a plain int.
   if not isDataIdentifier(left) and not isDataIdentifier(right): return false
   for side in [left, right]:
@@ -127,7 +127,7 @@ proc lowerOperand(compiler: Compiler, expression: Expression, env: Environment, 
   let outerPosition = compiler.enterExpression(expression)
   defer: compiler.position = outerPosition
   if not containsRuntimeValue(expression):
-    let value = evaluate(compiler, expression, env)
+    let value = compiler.evaluate(expression, env)
     case value
     of TypedNumberValue(number):
       compiler.fail(&"a score holds whole numbers with no suffix, so it cannot be compared with '{number.text}'")
@@ -172,7 +172,7 @@ proc lowerCondition(compiler: Compiler, expression: Expression, env: Environment
   let outerPosition = compiler.enterExpression(expression)
   defer: compiler.position = outerPosition
   if not containsRuntimeValue(expression):
-    let value = evaluate(compiler, expression, env)
+    let value = compiler.evaluate(expression, env)
     case value
     of BooleanValue(boolean): return ConstantCondition(isTrue: boolean != negated)
     else: compiler.fail(&"a condition must be a comparison, a data path, true or false, found {tagName(value)}")
@@ -191,12 +191,12 @@ proc lowerCondition(compiler: Compiler, expression: Expression, env: Environment
       return compiler.lowerComparison(infix, env, negated, setup)
     else: discard
   of CallExpression(call):
-    if isStringTest(call): return stringTest(compiler, call, env, negated, setup)
+    if isStringTest(call): return compiler.stringTest(call, env, negated, setup)
   of MinecraftCheck(parts): return compiler.minecraftCheck(parts, expression.position.column, env, negated)
   of NameExpression(identifier):
     # `if ($x)` is Minecraft's `if data`: the path exists, whatever its value. A bool needs `== true`.
     if identifier.kind in {ikData, ikEntityData}:
-      let path = dataPathOf(compiler, identifier, env)
+      let path = compiler.dataPathOf(identifier, env)
       return singleCheck(Check(negated: negated, condition: DataTest(dataPath: path)))
     if identifier.kind == ikScore:
       compiler.fail(&"a score needs a comparison in a condition: 'if (#{identifier.name} != 0)'")

@@ -229,7 +229,7 @@ type
     op*: CompareOp
     right*: Score
 
-proc createCommand*(command: Command): ref Command =
+func createCommand*(command: Command): ref Command =
   result = new Command
   result[] = command
 

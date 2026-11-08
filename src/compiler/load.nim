@@ -35,7 +35,7 @@ proc eventObjective(compiler: Compiler, event: Event, index: int): string =
   of TriggerSource(trigger): trigger
   else: &"{event.namespace.get(compiler.packNamespace)}.event_{index}"
 
-proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks: seq[string]) =
+proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks: openArray[string]) =
   ## For each event: `poplar/event_<n>` resets the player's score and runs the callback as `@s` at the player.
   ## `poplar/tick` runs it for every player with a count, then the user's `tick`.
   if compiler.events.len == 0: return
@@ -71,13 +71,13 @@ proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction], ticks
   for name in ticks: tick.add FunctionCommand(function: name)
   functions.add McFunction(name: "poplar/tick", commands: tick)
 
-proc isScoreRead(functions: seq[McFunction], score: Score): bool =
+func isScoreRead(functions: openArray[McFunction], score: Score): bool =
   for function in functions:
     for command in function.commands:
       if readsScore(command, score): return true
   false
 
-proc removeUnusedConstants(compiler: Compiler, functions: seq[McFunction]) =
+proc removeUnusedConstants(compiler: Compiler, functions: openArray[McFunction]) =
   ## The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
   var index = compiler.constants.len
   while index > 0:
@@ -97,7 +97,7 @@ proc mentionsGlobalHolder(command: Command, objective: string): bool =
       return run != nil and mentionsGlobalHolder(run[], objective)
   globalHolder in text and objective in text
 
-proc isGlobalValueUsed(compiler: Compiler, functions: seq[McFunction], global: GlobalScore): bool =
+proc isGlobalValueUsed(compiler: Compiler, functions: openArray[McFunction], global: GlobalScore): bool =
   ## A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text part such as
   ## `text(#mana)` names `#global` in the command text, so that counts as a use too.
   let score = globalScore(global)
@@ -107,7 +107,7 @@ proc isGlobalValueUsed(compiler: Compiler, functions: seq[McFunction], global: G
       if readsScore(command, score) or mentionsGlobalHolder(command, objective): return true
   false
 
-proc buildLoadFunction(compiler: Compiler, functions: seq[McFunction]): McFunction =
+proc buildLoadFunction(compiler: Compiler, functions: openArray[McFunction]): McFunction =
   ## Runs after all mcfuns, so that every constant they use is known.
   var commands: seq[Command]
 
@@ -176,7 +176,7 @@ proc eventName(compiler: Compiler, argument: Expression, builtin: string, kind: 
                env: Environment): string =
   ## The first argument of `onEvent` or `onTrigger`, which must be a constant string.
   var name = ""
-  case evaluate(compiler, argument, env)
+  case compiler.evaluate(argument, env)
   of StringValue(text): name = text
   else: discard
   if name.len == 0:

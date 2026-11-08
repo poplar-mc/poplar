@@ -22,13 +22,13 @@ proc argumentSnbt(compiler: Compiler, arg: Expression, env: Environment): string
   of MacroKey(key): return &"\"$({key})\""
   else: discard
 
-  let value = evaluate(compiler, arg, env)
+  let value = compiler.evaluate(arg, env)
   case value
   of NullValue: compiler.fail("null cannot be passed to an mcfun")
   else: discard
   valueToSnbt(value)
 
-func setsData(body: seq[Statement], name: string): bool =
+func setsData(body: openArray[Statement], name: string): bool =
   ## True if a statement assigns `$name`, or a raw command names
   ## it. A raw command is not read, so any mention counts.
   for statement in body:
@@ -54,7 +54,7 @@ proc nonCompoundGlobal(compiler: Compiler, identifier: Identifier, env: Environm
   ## sets can hold a compound by the time of the call, so it is not reported. None otherwise.
   if identifier.kind != ikData or pathRoot(identifier.name) != identifier.name: return none(string)
   if identifier.namespace.isNone and env.getLocal(lkData, identifier.name).isSome: return none(string)
-  let namespace = resolveNamespace(compiler, identifier.namespace)
+  let namespace = compiler.resolveNamespace(identifier.namespace)
   let key = qualifiedKey(namespace, identifier.name)
   if key notin compiler.dataGlobals: return none(string)
   let global = compiler.dataGlobals[key]
@@ -66,7 +66,7 @@ proc nonCompoundGlobal(compiler: Compiler, identifier: Identifier, env: Environm
 proc dataArguments(compiler: Compiler, value: Expression, env: Environment): FunctionWithArguments =
   ## `f() with $player`: the `$` variable is read as it is.
   let identifier = identifierOf(value).get
-  let path = dataPathOf(compiler, identifier, env)
+  let path = compiler.dataPathOf(identifier, env)
   let initial = compiler.nonCompoundGlobal(identifier, env)
   if initial.isSome:
     let name = identifier.name
@@ -74,7 +74,7 @@ proc dataArguments(compiler: Compiler, value: Expression, env: Environment): Fun
                            &"'var ${name} = {{name: {initial.get}}};'")
   DataPathArguments(dataPath: path)
 
-proc inlineCompound(compiler: Compiler, entries: seq[Entry], env: Environment): string =
+proc inlineCompound(compiler: Compiler, entries: openArray[Entry], env: Environment): string =
   var parts: seq[string]
   for entry in entries: parts.add snbtKey(entry.key) & ":" & compiler.argumentSnbt(entry.value, env)
   "{" & parts.join(",") & "}"
@@ -96,7 +96,7 @@ proc scoreOfArgument(compiler: Compiler, value: Expression, env: Environment,
   compiler.compileInto(temp, value, env, commands)
   some(temp)
 
-proc storeArguments(compiler: Compiler, entries: seq[Entry], env: Environment, commands: var seq[Command]) =
+proc storeArguments(compiler: Compiler, entries: openArray[Entry], env: Environment, commands: var seq[Command]) =
   ## Writes each key of `<ns>:poplar args`. Math is computed before any key is written, so a call inside a value
   ## cannot overwrite them.
   var entryScores: seq[Option[Score]]
@@ -115,12 +115,12 @@ proc storeArguments(compiler: Compiler, entries: seq[Entry], env: Environment, c
     if entryScores[index].isSome:
       commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: target, score: entryScores[index].get))
     elif call.isSome and isStringCall(call.get) and isRuntime:
-      compileStringInto(compiler, target, call.get, env, commands)
+      compiler.compileStringInto(target, call.get, env, commands)
     elif isDataIdentifier(value):
-      let source = dataPathOf(compiler, identifierOf(value).get, env)
+      let source = compiler.dataPathOf(identifierOf(value).get, env)
       commands.add DataCopyCommand(dataCopy: DataCopy(target: target, source: source))
     elif isLiteral and isRuntime:
-      compileLiteralAssign(compiler, target, value, env, commands)
+      compiler.compileLiteralAssign(target, value, env, commands)
     else:
       commands.add DataSetCommand(dataValue: DataValue(target: target, snbt: compiler.argumentSnbt(value, env)))
 
@@ -217,12 +217,12 @@ proc addWithSavedValues(compiler: Compiler, call: Command, target: Option[Score]
   for score in savedScores:
     commands.add ScoreToDataCommand(scoreToData: ScoreToData(target: scoreFrameSlot(score), score: score))
   for key in savedData:
-    commands.add DataCopyCommand(dataCopy: DataCopy(target: dataFrameSlot(key), source: dataLocal(compiler, key)))
+    commands.add DataCopyCommand(dataCopy: DataCopy(target: dataFrameSlot(key), source: compiler.dataLocal(key)))
   commands.add call
   for score in savedScores:
     commands.add DataToScoreCommand(dataToScore: DataToScore(source: scoreFrameSlot(score), score: score))
   for key in savedData:
-    commands.add DataCopyCommand(dataCopy: DataCopy(target: dataLocal(compiler, key), source: dataFrameSlot(key)))
+    commands.add DataCopyCommand(dataCopy: DataCopy(target: compiler.dataLocal(key), source: dataFrameSlot(key)))
   commands.add FramePopCommand()
 
 proc calledKey(compiler: Compiler, identifier: Identifier): Option[string] =
@@ -244,7 +244,7 @@ proc collectStdIds(compiler: Compiler, text: string, calls: var OrderedSet[strin
     let key = qualifiedKey(stdNamespace, text[index ..< stop])
     if key in compiler.mcfuns: calls.incl key
 
-proc collectInsertCalls(compiler: Compiler, parts: seq[CommandPart], calls: var OrderedSet[string]) =
+proc collectInsertCalls(compiler: Compiler, parts: openArray[CommandPart], calls: var OrderedSet[string]) =
   ## `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of `std:clamp`.
   for part in parts:
     case part
@@ -282,7 +282,7 @@ proc collectExpressionCalls(compiler: Compiler, expression: Expression, calls: v
     if called.isSome: calls.incl called.get
   else: discard
 
-proc collectCalls(compiler: Compiler, body: seq[Statement], calls: var OrderedSet[string]) =
+proc collectCalls(compiler: Compiler, body: openArray[Statement], calls: var OrderedSet[string]) =
   ## Finds the mcfun calls in a body. This can find calls that
   ## a compile-time branch removes later. That only adds saves.
   for statement in body:
@@ -331,14 +331,14 @@ proc compileCall(compiler: Compiler, call: Call, env: Environment, commands: var
   let name = callee.get.name
 
   if callee.get.namespace.isNone and name in eventBuiltins:
-    compileEvent(compiler, call, name, env)
+    compiler.compileEvent(call, name, env)
     return
   if isStringCall(call) or isStringTest(call):
     compiler.fail(&"'{name}' gives a value. Use it: '$x = {name}(...);' or 'if ({name}(...))'")
   if callee.get.namespace.isNone and isBuiltin(name):
-    compileListBuiltin(compiler, name, call, env, commands)
+    compiler.compileListBuiltin(name, call, env, commands)
     return
-  let found = findMcfun(compiler, callee.get)
+  let found = compiler.findMcfun(callee.get)
 
   compiler.mcfun.tempCount = 0
   let command = compiler.compileMcfunCall(call, found.declaration, env, commands)

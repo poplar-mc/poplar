@@ -72,7 +72,7 @@ const selectorOptions = ["advancements", "distance", "dx", "dy", "dz", "gamemode
                          "z"]
   ## The options of a selector, as the game knows them.
 
-proc toNode(json: JsonNode): Node =
+func toNode(json: JsonNode): Node =
   result = Node(kind: parseEnum[NodeKind]("nk" & json["type"].getStr.capitalizeAscii),
                 executable: json{"executable"}.getBool, parser: json{"parser"}.getStr)
   if json.hasKey("children"):
@@ -358,14 +358,14 @@ func describe(problem: Problem, text: string, registries: Registries): string =
 
 # ---- the walk through the tree
 
-proc fail(walk: var Walk, problem: Problem) =
+func fail(walk: var Walk, problem: Problem) =
   if walk.furthest.isSome and walk.furthest.get.at >= problem.at: return
   walk.furthest = some(problem)
 
-proc addIdStart(walk: var Walk, at: int, namesDeclaration, canBePackName: bool) =
+func addIdStart(walk: var Walk, at: int, namesDeclaration, canBePackName: bool) =
   walk.ids.add Id(at: at, namesDeclaration: namesDeclaration, canBePackName: canBePackName)
 
-proc addIdStarts(walk: var Walk, parser: string, properties: Properties, start, stop: int) =
+func addIdStarts(walk: var Walk, parser: string, properties: Properties, start, stop: int) =
   ## `self:heal` or `#magic:swords` in an id argument, and `type=#magic:undead` in a selector.
   let word = walk.text[start ..< stop]
   if isIdParser(parser, properties):
@@ -388,7 +388,7 @@ proc addIdStarts(walk: var Walk, parser: string, properties: Properties, start, 
       let key = word[keyStart ..< index].strip(chars = {' '})
       walk.addIdStart(start + value, true, key == "predicate")
 
-proc continuation(walk: Walk, node: Node): Node =
+func continuation(walk: Walk, node: Node): Node =
   ## `execute ... run` has no children, no redirect and is not executable. It continues from the root.
   if node.redirect.len > 0:
     result = walk.tree.root
@@ -403,7 +403,7 @@ func isUnknownId(walk: Walk, registry, word: string): bool =
   let id = registryId(word)
   id.isSome and registry in walk.tree.registries and id.get notin walk.tree.registries[registry]
 
-proc readCoordinates(walk: var Walk, start, count: int): Option[int] =
+func readCoordinates(walk: var Walk, start, count: int): Option[int] =
   var pos = start
   for index in 0 ..< count:
     if index > 0:
@@ -418,7 +418,7 @@ proc readCoordinates(walk: var Walk, start, count: int): Option[int] =
     pos = stop
   some(pos)
 
-proc readArgument(walk: var Walk, node: Node, pos: int): Option[int] =
+func readArgument(walk: var Walk, node: Node, pos: int): Option[int] =
   let parser = node.parser
   let text = walk.text
   let stop = readBalanced(text, pos)
@@ -463,9 +463,9 @@ proc readArgument(walk: var Walk, node: Node, pos: int): Option[int] =
   walk.fail(Problem(at: pos, expected: describeParser(parser)))
   none(int)
 
-proc matchChildren(walk: var Walk, node: Node, pos: int): bool
+func matchChildren(walk: var Walk, node: Node, pos: int): bool
 
-proc matchAfter(walk: var Walk, node: Node, stop: int): bool =
+func matchAfter(walk: var Walk, node: Node, stop: int): bool =
   if stop == walk.text.len:
     if node.executable: return true
     walk.fail(Problem(at: stop, expected: "more arguments"))
@@ -481,7 +481,7 @@ proc matchAfter(walk: var Walk, node: Node, stop: int): bool =
     return false
   walk.matchChildren(next, stop + 1)
 
-proc matchChildren(walk: var Walk, node: Node, pos: int): bool =
+func matchChildren(walk: var Walk, node: Node, pos: int): bool =
   if node.children.len == 0: return false
   var hasLiteral = false
 
@@ -504,7 +504,7 @@ proc matchChildren(walk: var Walk, node: Node, pos: int): bool =
   if hasLiteral: walk.fail(Problem(at: pos, expected: if node == walk.tree.root: "a command" else: "a subcommand"))
   false
 
-proc checkText*(tree: CommandTree, text: string, poplarNamespaces: openArray[string]): Checked =
+func checkText*(tree: CommandTree, text: string, poplarNamespaces: openArray[string]): Checked =
   ## `poplarNamespaces` are the namespaces whose ids can be Poplar names with capitals (`self:healPlayer`).
   var walk = Walk(tree: tree, text: text, poplarNamespaces: @poplarNamespaces)
   if walk.matchChildren(tree.root, 0): return Checked(ids: walk.ids)
@@ -512,5 +512,5 @@ proc checkText*(tree: CommandTree, text: string, poplarNamespaces: openArray[str
   let failure = walk.furthest.get
   Checked(failure: some(Failure(message: failure.describe(text, tree.registries), at: failure.at)))
 
-proc checkSelector*(tree: CommandTree, selector: string): Option[Failure] =
+func checkSelector*(tree: CommandTree, selector: string): Option[Failure] =
   selectorFailure(tree.registries, selector)

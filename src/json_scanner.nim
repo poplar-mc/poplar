@@ -34,33 +34,33 @@ func column*(scanner: JsonScanner): int =
   ## The column after the last byte that was read. It starts at 1.
   scanner.cursor - scanner.lineStart
 
-proc fail(scanner: JsonScanner) {.noreturn.} =
+func fail(scanner: JsonScanner) {.noreturn.} =
   raise newException(JsonSyntaxError, "invalid JSON")
 
-proc skipWhitespace(scanner: var JsonScanner) =
+func skipWhitespace(scanner: var JsonScanner) =
   while scanner.cursor < scanner.text.len and scanner.text[scanner.cursor] in {' ', '\t', '\r', '\n'}:
     if scanner.text[scanner.cursor] == '\n':
       inc scanner.line
       scanner.lineStart = scanner.cursor
     inc scanner.cursor
 
-proc expectByte(scanner: JsonScanner): char =
+func expectByte(scanner: JsonScanner): char =
   if scanner.cursor >= scanner.text.len: scanner.fail()
   scanner.text[scanner.cursor]
 
-proc take(scanner: var JsonScanner, allowed: set[char]): char =
+func take(scanner: var JsonScanner, allowed: set[char]): char =
   ## The byte at the cursor, which must be in `allowed`.
   result = scanner.expectByte()
   if result notin allowed: scanner.fail()
   inc scanner.cursor
 
-proc takeDigits(scanner: var JsonScanner) =
+func takeDigits(scanner: var JsonScanner) =
   while scanner.cursor < scanner.text.len and scanner.text[scanner.cursor].isDigit: inc scanner.cursor
 
-proc readHexDigits(scanner: var JsonScanner, allowed: openArray[set[char]]): int =
+func readHexDigits(scanner: var JsonScanner, allowed: openArray[set[char]]): int =
   for digits in allowed: result = result * 16 + parseHexInt($scanner.take(digits))
 
-proc readEscape(scanner: var JsonScanner, output: var string) =
+func readEscape(scanner: var JsonScanner, output: var string) =
   case scanner.take({'"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'})
   of 'b': output.add '\b'
   of 'f': output.add '\f'
@@ -79,7 +79,7 @@ proc readEscape(scanner: var JsonScanner, output: var string) =
     else: output.add $Rune(unit)
   else: output.add scanner.text[scanner.cursor - 1]
 
-proc readUtf8(scanner: var JsonScanner, output: var string) =
+func readUtf8(scanner: var JsonScanner, output: var string) =
   ## One UTF-8 character, checked byte by byte for overlong forms, surrogates and code points past U+10FFFF.
   const continuation = {'\x80' .. '\xBF'}
   let lead = scanner.text[scanner.cursor]
@@ -96,7 +96,7 @@ proc readUtf8(scanner: var JsonScanner, output: var string) =
   inc scanner.cursor
   for allowed in following: output.add scanner.take(allowed)
 
-proc readStringToken(scanner: var JsonScanner): JsonToken =
+func readStringToken(scanner: var JsonScanner): JsonToken =
   inc scanner.cursor
   result = JsonToken(kind: jtString)
   while true:
@@ -115,7 +115,7 @@ proc readStringToken(scanner: var JsonScanner): JsonToken =
       inc scanner.cursor
   scanner.state = ssPostValue
 
-proc readNumberToken(scanner: var JsonScanner): JsonToken =
+func readNumberToken(scanner: var JsonScanner): JsonToken =
   let start = scanner.cursor
   if scanner.text[scanner.cursor] == '-': inc scanner.cursor
   if scanner.take({'0' .. '9'}) != '0': scanner.takeDigits()
@@ -130,12 +130,12 @@ proc readNumberToken(scanner: var JsonScanner): JsonToken =
   scanner.state = ssPostValue
   JsonToken(kind: jtNumber, text: scanner.text[start ..< scanner.cursor])
 
-proc readLiteral(scanner: var JsonScanner, word: string, kind: JsonTokenKind): JsonToken =
+func readLiteral(scanner: var JsonScanner, word: string, kind: JsonTokenKind): JsonToken =
   for letter in word: discard scanner.take({letter})
   scanner.state = ssPostValue
   JsonToken(kind: kind)
 
-proc next*(scanner: var JsonScanner): JsonToken =
+func next*(scanner: var JsonScanner): JsonToken =
   ## The next token, checked against the JSON grammar.
   while true:
     case scanner.state

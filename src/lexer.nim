@@ -28,12 +28,12 @@ const conditionWords = ["biome", "block", "blocks", "data", "dimension", "entity
 
 func isLetter(ch: char): bool = ch.isAlphaAscii or ch == '_'
 
-proc readChar(lexer: var Lexer) =
+func readChar(lexer: var Lexer) =
   lexer.ch = if lexer.readPos >= lexer.input.len: '\0' else: lexer.input[lexer.readPos]
   lexer.pos = lexer.readPos
   inc lexer.readPos
 
-proc initLexer*(input: string): Lexer =
+func initLexer*(input: string): Lexer =
   result = Lexer(input: input, line: 1)
   result.readChar()
 
@@ -51,14 +51,14 @@ func startsStatement(lexer: Lexer): bool =
   ## Division cannot follow these tokens, so a `/` here starts a command.
   lexer.previousTag.isNone or lexer.previousTag.get in {tkSemicolon, tkLeftBrace, tkRightBrace}
 
-proc readInQuote(lexer: var Lexer, quote: var char) =
+func readInQuote(lexer: var Lexer, quote: var char) =
   ## One character inside a quote: an escape skips the next character, and the quote's own character closes it.
   if lexer.ch == '\\':
     lexer.readChar()
   elif lexer.ch == quote:
     quote = '\0'
 
-proc readBalanced(lexer: var Lexer, stop: char): Option[string] =
+func readBalanced(lexer: var Lexer, stop: char): Option[string] =
   ## Reads up to `stop` outside quotes and brackets, or up to the end of the line. None if a quote is still open.
   let start = lexer.pos
   var depth = 0
@@ -79,14 +79,14 @@ proc readBalanced(lexer: var Lexer, stop: char): Option[string] =
   if quote != '\0': return none(string)
   some(lexer.input[start ..< lexer.pos])
 
-proc readCommand(lexer: var Lexer): Option[string] =
+func readCommand(lexer: var Lexer): Option[string] =
   ## Reads to the `;` that ends the command. A `;` inside quotes or brackets (NBT, JSON) is part of the text.
   lexer.readChar()
   let text = lexer.readBalanced(';')
   if text.isNone: return text
   some(text.get.strip(leading = false, chars = {' ', '\t', '\r'}))
 
-proc readExecuteSubcommands(lexer: var Lexer): Token =
+func readExecuteSubcommands(lexer: var Lexer): Token =
   ## Reads `as @a at @s` from `execute (as @a at @s)`, to the matching `)`.
   ## The token starts at the text, so its column is the column of the first subcommand.
   lexer.readChar()
@@ -104,12 +104,12 @@ proc readExecuteSubcommands(lexer: var Lexer): Token =
   lexer.readChar()
   lexer.newToken(tkExecuteSubcommands, text.get.strip(leading = false, chars = {' ', '\t', '\r'}))
 
-proc readIdentifier(lexer: var Lexer): string =
+func readIdentifier(lexer: var Lexer): string =
   let start = lexer.pos
   while isLetter(lexer.ch) or lexer.ch.isDigit: lexer.readChar()
   lexer.input[start ..< lexer.pos]
 
-proc readMacroKey(lexer: var Lexer): Token =
+func readMacroKey(lexer: var Lexer): Token =
   ## Reads `$(name)`. The literal is the name.
   lexer.readChar()
   lexer.readChar()
@@ -125,7 +125,7 @@ func startsWithSource(lexer: Lexer): bool =
   while stop < lexer.input.len and isLetter(lexer.input[stop]): inc stop
   lexer.input[lexer.pos ..< stop] in ["entity", "block"]
 
-proc readSelector(lexer: var Lexer): Token =
+func readSelector(lexer: var Lexer): Token =
   ## Reads `@s` or `@a[tag=x,limit=1]`.
   let isSelector = lexer.peekChar() in {'a', 'e', 'p', 'r', 's', 'n'} and not isLetter(lexer.peekCharAt(2))
   if not isSelector:
@@ -143,7 +143,7 @@ proc readSelector(lexer: var Lexer): Token =
 
   lexer.newToken(tkSelector, lexer.input[lexer.tokenStart ..< lexer.pos])
 
-proc readDataPath(lexer: var Lexer, tag: TokenTag, start: int): Token =
+func readDataPath(lexer: var Lexer, tag: TokenTag, start: int): Token =
   ## Reads an NBT path: keys, `.`, `[0]`, `[{Slot:0b}]` and `"quoted keys"`. A `.` that is not followed by a key ends
   ## the path, so `$a..` is still a range. `start` is where the token text starts, which can be before the current
   ## character (a `ns:` prefix).
@@ -173,7 +173,7 @@ proc readDataPath(lexer: var Lexer, tag: TokenTag, start: int): Token =
   if lexer.pos == start: return lexer.newToken(tkIllegal, ".$")
   lexer.newToken(tag, lexer.input[start ..< lexer.pos])
 
-proc readVariable(lexer: var Lexer): Token =
+func readVariable(lexer: var Lexer): Token =
   ## Reads `#mana` or `$item.count`. `#magic:mana` and `$magic:item.count` name a variable of another namespace.
   let tag = if lexer.ch == '#': tkScoreIdentifier else: tkDataIdentifier
   lexer.readChar()
@@ -188,7 +188,7 @@ proc readVariable(lexer: var Lexer): Token =
   discard lexer.readIdentifier()
   lexer.newToken(tag, lexer.input[start ..< lexer.pos])
 
-proc readEntityDataPath(lexer: var Lexer): Token =
+func readEntityDataPath(lexer: var Lexer): Token =
   ## Reads `.$Inventory[0].count` after a selector. The literal is the NBT path without `.$`.
   lexer.readChar()
   lexer.readChar()
@@ -214,7 +214,7 @@ func isWordAhead(lexer: Lexer, word: string): bool =
   if stop > lexer.input.len or lexer.input[start ..< stop] != word: return false
   stop == lexer.input.len or not isLetter(lexer.input[stop]) and not lexer.input[stop].isDigit
 
-proc readConditionText(lexer: var Lexer): string =
+func readConditionText(lexer: var Lexer): string =
   ## Reads to the `)` that closes the condition part, or to an `and` or `or` word, outside brackets and quotes.
   let start = lexer.pos
   var depth = 0
@@ -236,7 +236,7 @@ proc readConditionText(lexer: var Lexer): string =
     lexer.readChar()
   lexer.input[start ..< lexer.pos].strip(leading = false, chars = {' '})
 
-proc readJsonBody(lexer: var Lexer): Token =
+func readJsonBody(lexer: var Lexer): Token =
   ## Reads `{ ... }` or `[ ... ]` over many lines, to the bracket
   ## that closes the first one. Braces in JSON strings do not count.
   let start = lexer.pos
@@ -265,7 +265,7 @@ proc readJsonBody(lexer: var Lexer): Token =
     lexer.readChar()
   Token(tag: tkUnclosed, literal: "}", line: startLine, column: startColumn)
 
-proc readString(lexer: var Lexer): Option[string] =
+func readString(lexer: var Lexer): Option[string] =
   let start = lexer.pos
   lexer.readChar()
   while lexer.ch != '"':
@@ -276,7 +276,7 @@ proc readString(lexer: var Lexer): Option[string] =
     lexer.readChar()
   some(lexer.input[start + 1 ..< lexer.pos])
 
-proc readNumber(lexer: var Lexer): string =
+func readNumber(lexer: var Lexer): string =
   ## Reads an SNBT number: `5`, `0.05`, `0.05f` or `1b`. A `.` needs a digit after it, so `1..5` is still a range.
   let start = lexer.pos
   while lexer.ch.isDigit: lexer.readChar()
@@ -289,7 +289,7 @@ proc readNumber(lexer: var Lexer): string =
   if lexer.ch in "bBsSlLfFdD" and endsAfter: lexer.readChar()
   lexer.input[start ..< lexer.pos]
 
-proc skipWhitespaceAndComments(lexer: var Lexer) =
+func skipWhitespaceAndComments(lexer: var Lexer) =
   while true:
     case lexer.ch
     of ' ', '\t', '\r':
@@ -304,7 +304,7 @@ proc skipWhitespaceAndComments(lexer: var Lexer) =
     else:
       return
 
-proc readToken(lexer: var Lexer): Token =
+func readToken(lexer: var Lexer): Token =
   lexer.skipWhitespaceAndComments()
   lexer.tokenStart = lexer.pos
 
@@ -393,6 +393,6 @@ proc readToken(lexer: var Lexer): Token =
     result = lexer.newToken(tkIllegal, $lexer.ch)
   lexer.readChar()
 
-proc nextToken*(lexer: var Lexer): Token =
+func nextToken*(lexer: var Lexer): Token =
   result = lexer.readToken()
   lexer.previousTag = some(result.tag)

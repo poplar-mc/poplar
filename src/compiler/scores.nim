@@ -61,7 +61,7 @@ proc resolveScore(compiler: Compiler, identifier: Identifier, env: Environment):
     if identifier.selector.isSome:
       compiler.fail(&"'#{identifier.name}' is local, so it has no entity values. Declare it at the top level")
     return localScore(local.get.generatedName, local.get.owner, compiler.scope.outputNamespace)
-  let namespace = resolveNamespace(compiler, identifier.namespace)
+  let namespace = compiler.resolveNamespace(identifier.namespace)
   let key = qualifiedKey(namespace, identifier.name)
   if key notin compiler.globals: compiler.fail(&"unknown score '#{identifier.name}'")
   let global = compiler.globals[key]
@@ -99,7 +99,7 @@ proc newTemp(compiler: Compiler): Score =
   result = compiler.tempScore(compiler.mcfun.tempCount)
   inc compiler.mcfun.tempCount
 
-proc addOperation(commands: var seq[Command], target: Score, op: Operator, source: Score) =
+func addOperation(commands: var seq[Command], target: Score, op: Operator, source: Score) =
   commands.add ScoreOperationCommand(scoreOperation: ScoreOperation(target: target, op: op, source: source))
 
 proc applyOperand(compiler: Compiler, target: Score, op: Operator, operand: Expression, env: Environment,
@@ -107,7 +107,7 @@ proc applyOperand(compiler: Compiler, target: Score, op: Operator, operand: Expr
   let outerPosition = compiler.enterExpression(operand)
   defer: compiler.position = outerPosition
   if not containsRuntimeValue(operand):
-    let number = compiler.toScoreValue(evaluate(compiler, operand, env))
+    let number = compiler.toScoreValue(compiler.evaluate(operand, env))
 
     if op in {opAdd, opSub} and number != low(int32):
       let scoreValue = ScoreValue(score: target, value: abs(number))
@@ -133,7 +133,7 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
   let outerPosition = compiler.enterExpression(expression)
   defer: compiler.position = outerPosition
   if not containsRuntimeValue(expression):
-    let number = compiler.toScoreValue(evaluate(compiler, expression, env))
+    let number = compiler.toScoreValue(compiler.evaluate(expression, env))
     commands.add ScoreSetCommand(scoreValue: ScoreValue(score: target, value: number))
     return
 
@@ -142,7 +142,7 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
     commands.add ScoreSetMacroArgumentCommand(scoreMacroArgument: ScoreMacroArgument(score: target, macroArgument: key))
   of NameExpression(identifier):
     if identifier.kind in {ikData, ikEntityData}:
-      let source = dataPathOf(compiler, identifier, env)
+      let source = compiler.dataPathOf(identifier, env)
       commands.add DataToScoreCommand(dataToScore: DataToScore(source: source, score: target))
       return
 
@@ -163,7 +163,7 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
     compiler.applyOperand(target, op.get, infix.right, env, commands)
   of CallExpression(call):
     if isBuiltinCall(call, "len"):
-      compileLength(compiler, target, call, env, commands)
+      compiler.compileLength(target, call, env, commands)
       return
     if isStringCall(call):
       let name = calleeName(call)
@@ -171,18 +171,18 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
     if isStringTest(call): compiler.fail(&"'{calleeName(call)}' is a condition. Use it in 'if' or 'while'")
     let callee = identifierOf(call.callee)
     if callee.isNone: compiler.fail("only an mcfun call can be used as a runtime value")
-    let found = findMcfun(compiler, callee.get)
+    let found = compiler.findMcfun(callee.get)
     # Temps made after this point hold arguments. They are not needed after the call.
     let liveCount = compiler.mcfun.tempCount
-    let run = compileMcfunCall(compiler, call, found.declaration, env, commands)
+    let run = compiler.compileMcfunCall(call, found.declaration, env, commands)
     compiler.mcfun.tempCount = liveCount
     let store = StoreResultCommand(storeResult: StoreResult(target: ScoreTarget(score: target),
                                                             run: createCommand(run)))
 
-    if not canReach(compiler, found.key, compiler.mcfun.key):
+    if not compiler.canReach(found.key, compiler.mcfun.key):
       commands.add store
       return
-    addWithSavedValues(compiler, store, some(target), liveCount, commands)
+    compiler.addWithSavedValues(store, some(target), liveCount, commands)
   else: compiler.fail("this expression cannot be used with scores")
 
 proc compileScoreAssign(compiler: Compiler, identifier: Identifier, expression: Expression, env: Environment,

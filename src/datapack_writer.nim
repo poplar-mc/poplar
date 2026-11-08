@@ -64,7 +64,7 @@ func operatorText(op: Operator): string =
   of opDiv: "/="
   of opMod: "%="
 
-proc renderCheck(text: var string, namespace: string, check: Check) =
+func renderCheck(text: var string, namespace: string, check: Check) =
   text.add(if check.negated: " unless " else: " if ")
   case check.condition
   of DataTest(dataPath): text.add "data " & dataPathText(namespace, dataPath)
@@ -82,9 +82,9 @@ proc renderCheck(text: var string, namespace: string, check: Check) =
     text.add &"score {scoreText(namespace, compare.left)} {compareText(compare.op)} " &
              scoreText(namespace, compare.right)
 
-proc renderCommand*(text: var string, namespace: string, command: Command)
+func renderCommand*(text: var string, namespace: string, command: Command)
 
-proc renderRun(text: var string, namespace: string, run: Command) =
+func renderRun(text: var string, namespace: string, run: Command) =
   ## `execute A run execute B run C` is the same as `execute A B run C`, so nested executes become one.
   const nested = " run execute "
   let start = text.len
@@ -92,7 +92,7 @@ proc renderRun(text: var string, namespace: string, run: Command) =
   text.renderCommand(namespace, run)
   if text.continuesWith(nested, start): text[start ..< start + nested.len] = " "
 
-proc renderCommand*(text: var string, namespace: string, command: Command) =
+func renderCommand*(text: var string, namespace: string, command: Command) =
   case command
   of RawCommand(raw): text.add raw
   of FunctionCommand(function): text.add "function " & functionId(namespace, function)
@@ -175,7 +175,7 @@ proc renderCommand*(text: var string, namespace: string, command: Command) =
   of ScoreGetCommand(score): text.add "scoreboard players get " & scoreText(namespace, score)
   of DataGetCommand(dataPath): text.add "data get " & dataPathText(namespace, dataPath)
 
-proc renderFunction*(namespace: string, function: McFunction): string =
+func renderFunction*(namespace: string, function: McFunction): string =
   for command in function.commands:
     var line = ""
     line.renderCommand(namespace, command)
@@ -230,10 +230,10 @@ func crc32(data: string): uint32 =
       result = if (result and 1) != 0: (result shr 1) xor 0xEDB8_8320'u32 else: result shr 1
   result = not result
 
-proc addInt[T: uint16 | uint32](bytes: var string, value: T) =
+func addInt[T: uint16 | uint32](bytes: var string, value: T) =
   for index in 0 ..< sizeof(T): bytes.add char((value shr (8 * index)) and 0xFF)
 
-proc addEntryHeader(bytes: var string, crc, size: uint32, nameLength: uint16) =
+func addEntryHeader(bytes: var string, crc, size: uint32, nameLength: uint16) =
   ## The fields that the local header and the central directory
   ## header share, from "version needed" to "name length".
   bytes.addInt zipVersion

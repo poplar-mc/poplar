@@ -98,4 +98,4 @@ proc register*(shared: Shared): Command =
     stdout.flushFile()
     runInstallScript(shared)
   result = newCommand("update", "Update Poplar to the latest release", run)
-  result.addFlag Flag(name: "yes", description: "Update without asking", kind: fkBool, default: "false")
+  result.addFlag Flag(name: "yes", description: "Update without asking", default: BoolFlag(isOn: false))

@@ -85,7 +85,7 @@ const completionFunction = 3
 const completionKeyword = 14
 const completionConstant = 21
 
-proc newLanguageServer*(stdPath: string, notify: proc (meth: string, params: JsonNode)): LanguageServer =
+func newLanguageServer*(stdPath: string, notify: proc (meth: string, params: JsonNode)): LanguageServer =
   LanguageServer(stdPath: stdPath, encoding: enUtf16, notify: notify)
 
 # ---- positions in the editor's encoding
@@ -253,7 +253,7 @@ proc analysisFor(server: LanguageServer, uri: string): Analysis =
   if server.analysis != nil and server.analysis.contains(path.get): return server.analysis
   server.analyze(uri)
 
-proc publish(server: LanguageServer, uri: string, diagnostics: seq[JsonNode]) =
+proc publish(server: LanguageServer, uri: string, diagnostics: openArray[JsonNode]) =
   server.notify("textDocument/publishDiagnostics", %*{"uri": uri, "diagnostics": diagnostics})
 
 proc check(server: LanguageServer, uri: string) =
@@ -334,7 +334,7 @@ func enclosingMcfun(compiler: Compiler, place: Place): Option[string] =
 
 func visibleLocals(compiler: Compiler, place: Place, kind: LocalKind): seq[LocalVariable] =
   ## The locals of the function at `place` that are declared above it. Block scope is not checked.
-  let owner = enclosingMcfun(compiler, place)
+  let owner = compiler.enclosingMcfun(place)
   if owner.isNone: return
   for local in compiler.locals:
     if local.local.kind != kind or local.position.line > place.line: continue
@@ -343,11 +343,11 @@ func visibleLocals(compiler: Compiler, place: Place, kind: LocalKind): seq[Local
 
 func findLocal(compiler: Compiler, place: Place, kind: LocalKind, name: string): Option[LocalVariable] =
   ## The local `name` that is visible at `place`: the nearest one declared above it in the same function.
-  for local in visibleLocals(compiler, place, kind):
+  for local in compiler.visibleLocals(place, kind):
     if local.name != name: continue
     if result.isNone or local.position.line > result.get.position.line: result = some(local)
 
-proc signature(mcfun: Mcfun): string =
+func signature(mcfun: Mcfun): string =
   ## `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
   var keys: OrderedSet[string]
   collectMacroKeys(mcfun.body, keys)
@@ -372,11 +372,11 @@ proc describe(server: LanguageServer, analysis: Analysis, word: Word, place: Pla
       if each.name == word.text: return some(&"```poplar\n{each.signature}\n```\n{each.doc}")
   let compiler = analysis.result.compiler
   if compiler == nil: return none(string)
-  let key = wordKey(compiler, place, word, pathRoot(word.text))
+  let key = compiler.wordKey(place, word, pathRoot(word.text))
   case word.kind
   of wkScore:
     if word.namespace.isNone:
-      let local = findLocal(compiler, place, lkScore, word.text)
+      let local = compiler.findLocal(place, lkScore, word.text)
       if local.isSome:
         return some(&"```poplar\nvar #{word.text}\n```\nA local in `{local.get.local.owner}`: the fake player " &
                     &"`{local.get.local.generatedName}`.")
@@ -387,7 +387,7 @@ proc describe(server: LanguageServer, analysis: Analysis, word: Word, place: Pla
   of wkData:
     let root = pathRoot(word.text)
     if word.namespace.isNone:
-      let local = findLocal(compiler, place, lkData, root)
+      let local = compiler.findLocal(place, lkData, root)
       if local.isSome:
         return some(&"```poplar\nvar ${root}\n```\nA local in `{local.get.local.owner}`: the key " &
                     &"`{local.get.local.generatedName}`.")
@@ -463,8 +463,8 @@ proc definition(server: LanguageServer, params: JsonNode): JsonNode =
   let place = placeOf(analysis, uri, line)
   var local = none(LocalVariable)
   if word.kind in {wkScore, wkData} and word.namespace.isNone:
-    local = findLocal(compiler, place, if word.kind == wkScore: lkScore else: lkData, pathRoot(word.text))
-  let key = wordKey(compiler, place, word, pathRoot(word.text))
+    local = compiler.findLocal(place, if word.kind == wkScore: lkScore else: lkData, pathRoot(word.text))
+  let key = compiler.wordKey(place, word, pathRoot(word.text))
 
   var (displayPath, declaredAt) = ("", Position())
   if local.isSome:
@@ -516,11 +516,11 @@ proc completion(server: LanguageServer, params: JsonNode): JsonNode =
   of '#':
     if compiler != nil:
       for name in compiler.globals.keys: item(completionLabel(name, own), completionVariable, "score")
-      for local in visibleLocals(compiler, place, lkScore): item(local.name, completionVariable, "local score")
+      for local in compiler.visibleLocals(place, lkScore): item(local.name, completionVariable, "local score")
   of '$':
     if compiler != nil:
       for name in compiler.dataGlobals.keys: item(completionLabel(name, own), completionVariable, "data")
-      for local in visibleLocals(compiler, place, lkData): item(local.name, completionVariable, "local data")
+      for local in compiler.visibleLocals(place, lkData): item(local.name, completionVariable, "local data")
   else:
     # A word at the start of a line, with no indent, is likely at the top level.
     if start == 0 or text[start - 1] == '\n':

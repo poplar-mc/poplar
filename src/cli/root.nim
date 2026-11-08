@@ -1,6 +1,6 @@
 ## What every command shares, and the `poplar` command itself.
 
-import std/[strformat, strutils]
+import std/strformat
 import ../config
 import command_line, output
 
@@ -30,5 +30,5 @@ proc newRootCommand*(): Command =
     if invocation.isSet("version"): stdout.write &"poplar {version} (Minecraft {minecraftVersion})\n"
     else: stdout.write invocation.command.helpText
   result = newCommand("poplar", "Compile Poplar code into Minecraft datapacks", showHelpOrVersion, version = version)
-  result.addFlag Flag(name: "version", shortcut: "v", kind: fkBool, default: "false",
+  result.addFlag Flag(name: "version", shortcut: "v", default: BoolFlag(isOn: false),
                       description: "Show the Poplar version and the Minecraft version it targets")

@@ -4,15 +4,18 @@
 import std/[algorithm, sequtils, strformat, strutils, tables]
 
 type
-  FlagKind* = enum
-    fkBool = "Bool", fkString = "String"
+  FlagValue* = object
+    ## The value of a flag. Its branch is also the kind of the flag: a bool, or a text that follows
+    ## the flag.
+    case
+    of BoolFlag: isOn*: bool
+    of TextFlag: text*: string
 
   Flag* = object
     name*: string
     shortcut*: string ## One letter, or empty.
     description*: string
-    kind*: FlagKind
-    default*: string ## `true` or `false` for a bool flag.
+    default*: FlagValue
     persistent: bool
 
   PositionalArg* = object
@@ -22,7 +25,7 @@ type
   Invocation* = object
     ## The command that runs, with its flag values and positional arguments.
     command*: Command
-    flagValues: Table[string, string]
+    flagValues: Table[string, FlagValue]
     args: seq[string]
 
   Command* = ref object
@@ -43,8 +46,8 @@ const
   reset = "\e[0m"
   padding = 5
 
-const helpFlag = Flag(name: "help", shortcut: "h", description: "Shows the help for a command", kind: fkBool,
-                      default: "false", persistent: true)
+const helpFlag = Flag(name: "help", shortcut: "h", description: "Shows the help for a command",
+                      default: BoolFlag(isOn: false), persistent: true)
 
 proc newCommand*(name, description: string, run: proc (invocation: Invocation), version = ""): Command =
   Command(name: name, description: description, version: version, flags: @[helpFlag], run: run)
@@ -59,9 +62,26 @@ proc addCommand*(command, subcommand: Command) =
     if flag.persistent and not subcommand.flags.anyIt(it.name == flag.name): subcommand.flags.add flag
   command.commands.add subcommand
 
-func flag*(invocation: Invocation, name: string): string = invocation.flagValues[name]
+func flag*(invocation: Invocation, name: string): string =
+  ## The text of a text flag.
+  case invocation.flagValues[name]
+  of TextFlag(text): text
+  of BoolFlag: ""
 
-func isSet*(invocation: Invocation, name: string): bool = invocation.flagValues[name] == "true"
+func isSet*(invocation: Invocation, name: string): bool =
+  ## True if a bool flag is on.
+  case invocation.flagValues[name]
+  of BoolFlag(isOn): isOn
+  of TextFlag: false
+
+func isBool(flag: Flag): bool =
+  case flag.default
+  of BoolFlag: true
+  of TextFlag: false
+
+func typeName(flag: Flag): string =
+  ## The type of a flag, as the help page and the messages name it.
+  if flag.isBool: "Bool" else: "String"
 
 func arg*(invocation: Invocation, name: string): string =
   ## The positional argument called `name`, or empty when it is not given.
@@ -115,9 +135,12 @@ proc helpText*(command: Command): string =
     for flag in command.flags.sortedByIt(it.name):
       result.add "   " & bold
       if flag.shortcut.len > 0: result.add &"-{flag.shortcut}, "
-      result.add &"--{flag.name}{reset}" & describe(column, flagWidth(flag), flag.description) & &" [{flag.kind}]"
-      if flag.kind == fkBool: result.add &" (default: {flag.default})"
-      elif flag.default.len > 0: result.add &" (default: \"{flag.default}\")"
+      result.add &"--{flag.name}{reset}" & describe(column, flagWidth(flag), flag.description) &
+                 &" [{flag.typeName}]"
+      case flag.default
+      of BoolFlag(isOn): result.add &" (default: {isOn})"
+      of TextFlag(text):
+        if text.len > 0: result.add &" (default: \"{text}\")"
       result.add '\n'
     result.add '\n'
 
@@ -143,12 +166,16 @@ func findFlag(command: Command, nameOrShortcut: string): int =
     if flag.shortcut == nameOrShortcut: return index
   -1
 
-proc setFlag(command: Command, values: var Table[string, string], flag: Flag, value: string) =
-  if flag.kind == fkBool and value notin ["true", "false"]:
-    command.failWith(&"Invalid value for flag --{flag.name}: '{value}'\nExpected a value of type: {flag.kind}")
-  values[flag.name] = value
+proc setFlag(command: Command, values: var Table[string, FlagValue], flag: Flag, value: string) =
+  if not flag.isBool:
+    values[flag.name] = TextFlag(text: value)
+    return
+  if value notin ["true", "false"]:
+    command.failWith(&"Invalid value for flag --{flag.name}: '{value}'\nExpected a value of type: " &
+                     flag.typeName)
+  values[flag.name] = BoolFlag(isOn: value == "true")
 
-proc checkPositionalArgs(command: Command, args: seq[string]) =
+proc checkPositionalArgs(command: Command, args: openArray[string]) =
   let required = command.positionalArgs.filterIt(it.required)
   if args.len < required.len:
     command.failWith(&"Missing {required.len - args.len} positional argument(s).\n\nExpected: " &
@@ -156,10 +183,10 @@ proc checkPositionalArgs(command: Command, args: seq[string]) =
   if args.len > command.positionalArgs.len:
     command.failWith(&"Too many positional arguments. Expected at most {command.positionalArgs.len}, got {args.len}.")
 
-proc defaultValues(command: Command): Table[string, string] =
+proc defaultValues(command: Command): Table[string, FlagValue] =
   for flag in command.flags: result[flag.name] = flag.default
 
-proc parse*(root: Command, arguments: seq[string]): Invocation =
+proc parse*(root: Command, arguments: openArray[string]): Invocation =
   ## Raises `CommandLineError` after it printed the problem. A help request prints the help and gives no command.
   var command = root
   var values = root.defaultValues
@@ -199,11 +226,11 @@ proc parse*(root: Command, arguments: seq[string]): Invocation =
         let flag = command.flags[flagIndex]
         if equals >= 0:
           command.setFlag(values, flag, body[equals + 1 .. ^1])
-        elif flag.kind == fkBool:
-          values[flag.name] = "true"
+        elif flag.isBool:
+          values[flag.name] = BoolFlag(isOn: true)
         else:
           if index >= arguments.len:
-            command.failWith(&"Missing value for flag --{flag.name} of type: {flag.kind}")
+            command.failWith(&"Missing value for flag --{flag.name} of type: {flag.typeName}")
           command.setFlag(values, flag, arguments[index])
           inc index
         continue
@@ -212,10 +239,10 @@ proc parse*(root: Command, arguments: seq[string]): Invocation =
       let negated = if equals < 0 and name.startsWith("no-"): command.findFlag(name[3 .. ^1]) else: -1
       if negated < 0: command.failWith(&"Unknown flag: --{body}")
       let flag = command.flags[negated]
-      if flag.kind != fkBool:
-        command.failWith(&"Flag --{flag.name} does not accept negation as it expects type: {flag.kind}",
+      if not flag.isBool:
+        command.failWith(&"Flag --{flag.name} does not accept negation as it expects type: {flag.typeName}",
                          showHelpHint = false)
-      values[flag.name] = "false"
+      values[flag.name] = BoolFlag(isOn: false)
     else:
       # -v, or a group like -vt 2 where only the last shortcut may take a value
       let shortcuts = argument[1 .. ^1]
@@ -223,25 +250,25 @@ proc parse*(root: Command, arguments: seq[string]): Invocation =
         let flagIndex = command.findFlag($letter)
         if flagIndex < 0: command.failWith(&"Unknown flag shortcut: -{letter}")
         let flag = command.flags[flagIndex]
-        if flag.kind == fkBool:
-          values[flag.name] = "true"
+        if flag.isBool:
+          values[flag.name] = BoolFlag(isOn: true)
         elif position < shortcuts.len - 1:
           command.failWith(&"Flag -{letter} ({flag.name}) must be last in group since it expects a value of type: " &
-                           $flag.kind, showHelpHint = false)
+                           flag.typeName, showHelpHint = false)
         else:
           if index >= arguments.len:
-            command.failWith(&"Missing value for flag -{letter} ({flag.name}) of type: {flag.kind}")
+            command.failWith(&"Missing value for flag -{letter} ({flag.name}) of type: {flag.typeName}")
           command.setFlag(values, flag, arguments[index])
           inc index
 
   result = Invocation(command: command, flagValues: values, args: positionals)
-  if values.getOrDefault("help") == "true":
+  if result.isSet("help"):
     stdout.write command.helpText
     result.command = nil
     return
   command.checkPositionalArgs(positionals)
 
-proc execute*(root: Command, arguments: seq[string]): int =
+proc execute*(root: Command, arguments: openArray[string]): int =
   ## Runs the command that the arguments name. Gives the exit code: 1 when the command line has a problem.
   try:
     let invocation = root.parse(arguments)

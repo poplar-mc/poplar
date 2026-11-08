@@ -46,20 +46,20 @@ func expectedText(tag: TokenTag): string =
   of tkExecuteSubcommands: "'(...)' after 'execute'"
   else: $tag
 
-proc addDiagnostic(parser: var Parser, diagnostic: Diagnostic) =
+func addDiagnostic(parser: var Parser, diagnostic: Diagnostic) =
   ## Only the first error on a line is kept. Later ones on that line are usually caused by it.
   if parser.errors.len > 0 and parser.errors[^1].position.get.line == diagnostic.position.get.line: return
   parser.errors.add diagnostic
 
-proc addError(parser: var Parser, message: string) =
+func addError(parser: var Parser, message: string) =
   parser.addDiagnostic(Diagnostic(position: some(tokenPosition(parser.current)), message: message))
 
-proc fail(parser: var Parser, message: string) {.noreturn.} =
+func fail(parser: var Parser, message: string) {.noreturn.} =
   ## Records an error and stops the statement or declaration that is being parsed.
   parser.addError(message)
   raise newException(ReportedError, message)
 
-proc nextToken(parser: var Parser) =
+func nextToken(parser: var Parser) =
   ## Illegal and unclosed tokens are reported here and skipped, so they do not cause more errors later.
   parser.current = parser.peek
   parser.peek = parser.lexer.nextToken()
@@ -72,7 +72,7 @@ proc nextToken(parser: var Parser) =
     parser.addDiagnostic(Diagnostic(position: some(tokenPosition(parser.peek)), message: message))
     parser.peek = parser.lexer.nextToken()
 
-proc initParser*(lexer: Lexer): Parser =
+func initParser*(lexer: Lexer): Parser =
   result = Parser(lexer: lexer, endOfInput: "end of file")
   result.nextToken()
   result.nextToken()
@@ -81,7 +81,7 @@ func currentIs(parser: Parser, tag: TokenTag): bool = parser.current.tag == tag
 
 func peekIs(parser: Parser, tag: TokenTag): bool = parser.peek.tag == tag
 
-proc expectPeek(parser: var Parser, tag: TokenTag) =
+func expectPeek(parser: var Parser, tag: TokenTag) =
   if not parser.peekIs(tag): parser.fail(&"expected {expectedText(tag)}, found {parser.describe(parser.peek)}")
   parser.nextToken()
 
@@ -134,9 +134,9 @@ func currentIdentifier(parser: Parser): Option[Identifier] =
 
 # ---- expressions
 
-proc parseExpression(parser: var Parser, precedence: Precedence): Expression
+func parseExpression(parser: var Parser, precedence: Precedence): Expression
 
-proc parseNamespaceName(parser: var Parser): string =
+func parseNamespaceName(parser: var Parser): string =
   ## `bs.math`: identifiers joined by `.`, starting at the current token.
   result = parser.current.literal
   while parser.peekIs(tkDot):
@@ -144,14 +144,14 @@ proc parseNamespaceName(parser: var Parser): string =
     parser.expectPeek(tkIdentifier)
     result.add "." & parser.current.literal
 
-proc parseQualifiedName(parser: var Parser): Identifier =
+func parseQualifiedName(parser: var Parser): Identifier =
   ## `magic:heal` or `bs.math:clamp` as a value or a callee.
   let namespace = parser.parseNamespaceName()
   parser.expectPeek(tkColon)
   parser.expectPeek(tkIdentifier)
   Identifier(name: parser.current.literal, kind: ikCompileTime, namespace: some(namespace))
 
-proc parseIdentifier(parser: var Parser): Identifier =
+func parseIdentifier(parser: var Parser): Identifier =
   ## Reads `x`, `#x`, `$x`, an entity score such as `@s.#mana`, or entity data such as `@s.$Health`.
   if parser.currentIs(tkIdentifier) and (parser.peekIs(tkColon) or parser.peekIs(tkDot)):
     return parser.parseQualifiedName()
@@ -167,7 +167,7 @@ proc parseIdentifier(parser: var Parser): Identifier =
   let (name, namespace) = splitNamespace(parser.current.literal)
   Identifier(name: name, kind: ikScore, selector: some(selector), namespace: namespace)
 
-proc decodeString(parser: var Parser, literal: string): string =
+func decodeString(parser: var Parser, literal: string): string =
   ## Only `\"` and `\\` are allowed, because a string ends up in a one-line command or in SNBT.
   if '\\' notin literal: return literal
   var index = 0
@@ -182,7 +182,7 @@ proc decodeString(parser: var Parser, literal: string): string =
       result.add escaped
     inc index
 
-proc parseNumber(parser: var Parser, position: Position): Expression =
+func parseNumber(parser: var Parser, position: Position): Expression =
   let literal = parser.current.literal
   let numberType = case literal[^1].toLowerAscii
     of 'b': some(ntByte)
@@ -202,7 +202,7 @@ proc parseNumber(parser: var Parser, position: Position): Expression =
     parser.fail(&"a {numberType.get} is a whole number, so '{literal}' cannot have a fraction")
   TypedNumberExpression(position: position, typedNumber: number)
 
-proc parseInsert(parser: var Parser, source: string, column: int): Expression =
+func parseInsert(parser: var Parser, source: string, column: int): Expression =
   var insertLexer = initLexer(source)
   insertLexer.line = parser.current.line
   insertLexer.firstLineColumn = column - 1
@@ -219,7 +219,7 @@ proc parseInsert(parser: var Parser, source: string, column: int): Expression =
 
   if insertParser.errors.len > 0: raise newException(ReportedError, "error in an insert")
 
-proc parseCommandParts(parser: var Parser, text: string, textColumn: int): seq[CommandPart] =
+func parseCommandParts(parser: var Parser, text: string, textColumn: int): seq[CommandPart] =
   ## Splits command text into plain text and `{{expr}}` inserts. `textColumn` is the column where `text` starts in the
   ## file, so an expression in an insert has its real position.
   var pos = 0
@@ -236,7 +236,7 @@ proc parseCommandParts(parser: var Parser, text: string, textColumn: int): seq[C
 
   if pos < text.len: result.add TextPart(offset: pos, text: text[pos .. ^1])
 
-proc parseListLiteral(parser: var Parser): seq[Expression] =
+func parseListLiteral(parser: var Parser): seq[Expression] =
   ## `[1, 2, 3]`
   while not parser.peekIs(tkRightBracket):
     parser.nextToken()
@@ -245,7 +245,7 @@ proc parseListLiteral(parser: var Parser): seq[Expression] =
     parser.nextToken()
   parser.expectPeek(tkRightBracket)
 
-proc parseCompoundLiteral(parser: var Parser): seq[Entry] =
+func parseCompoundLiteral(parser: var Parser): seq[Entry] =
   ## `{hp: 20, "custom name": "x"}`
   while not parser.peekIs(tkRightBrace):
     parser.nextToken()
@@ -260,7 +260,7 @@ proc parseCompoundLiteral(parser: var Parser): seq[Entry] =
     parser.nextToken()
   parser.expectPeek(tkRightBrace)
 
-proc parsePrefix(parser: var Parser): Expression =
+func parsePrefix(parser: var Parser): Expression =
   let start = parser.current
   let position = tokenPosition(start)
   case start.tag
@@ -301,7 +301,7 @@ proc parsePrefix(parser: var Parser): Expression =
   else:
     parser.fail(&"expected an expression, found {parser.describe(start)}")
 
-proc parseCall(parser: var Parser, callee: Expression): Expression =
+func parseCall(parser: var Parser, callee: Expression): Expression =
   var args: seq[Expression]
   if parser.peekIs(tkRightParen):
     parser.nextToken()
@@ -324,7 +324,7 @@ proc parseCall(parser: var Parser, callee: Expression): Expression =
 
   CallExpression(position: callee.position, call: Call(callee: callee, args: args, with: with))
 
-proc parseInfix(parser: var Parser, left: Expression): Expression =
+func parseInfix(parser: var Parser, left: Expression): Expression =
   if parser.currentIs(tkLeftParen): return parser.parseCall(left)
 
   let op = infixOperator(parser.current.tag)
@@ -333,7 +333,7 @@ proc parseInfix(parser: var Parser, left: Expression): Expression =
   let right = parser.parseExpression(precedence)
   InfixExpression(position: left.position, infix: Infix(op: op, left: left, right: right))
 
-proc parseExpression(parser: var Parser, precedence: Precedence): Expression =
+func parseExpression(parser: var Parser, precedence: Precedence): Expression =
   result = parser.parsePrefix()
   while not parser.peekIs(tkSemicolon) and precedence < precedenceOf(parser.peek.tag):
     parser.nextToken()
@@ -341,9 +341,9 @@ proc parseExpression(parser: var Parser, precedence: Precedence): Expression =
 
 # ---- statements
 
-proc parseStatement(parser: var Parser): Statement
+func parseStatement(parser: var Parser): Statement
 
-proc skipStatement(parser: var Parser) =
+func skipStatement(parser: var Parser) =
   ## Skips the rest of a broken statement, so one mistake gives one error.
   var depth = 0
   while not parser.currentIs(tkEof):
@@ -356,7 +356,7 @@ proc skipStatement(parser: var Parser) =
     if depth == 0 and parser.peekIs(tkRightBrace): return
     parser.nextToken()
 
-proc parseBlock(parser: var Parser): seq[Statement] =
+func parseBlock(parser: var Parser): seq[Statement] =
   parser.nextToken()
   while not parser.currentIs(tkRightBrace):
     if parser.currentIs(tkEof): parser.fail(&"expected '}}', found {parser.endOfInput}")
@@ -366,13 +366,13 @@ proc parseBlock(parser: var Parser): seq[Statement] =
       parser.skipStatement()
     parser.nextToken()
 
-proc parseCondition(parser: var Parser): Expression =
+func parseCondition(parser: var Parser): Expression =
   parser.expectPeek(tkLeftParen)
   parser.nextToken()
   result = parser.parseExpression(lowestPrecedence)
   parser.expectPeek(tkRightParen)
 
-proc parseVarDecl(parser: var Parser): VarDecl =
+func parseVarDecl(parser: var Parser): VarDecl =
   parser.nextToken()
   let target = parser.currentIdentifier()
   if target.isNone: parser.fail(&"expected a variable name, found {parser.describe(parser.current)}")
@@ -382,7 +382,7 @@ proc parseVarDecl(parser: var Parser): VarDecl =
   parser.expectPeek(tkSemicolon)
   VarDecl(target: target.get, value: value)
 
-proc parseIf(parser: var Parser): If =
+func parseIf(parser: var Parser): If =
   let condition = parser.parseCondition()
   parser.expectPeek(tkLeftBrace)
   let thenBody = parser.parseBlock()
@@ -398,7 +398,7 @@ proc parseIf(parser: var Parser): If =
       elseBody = some(parser.parseBlock())
   If(condition: condition, thenBody: thenBody, elseBody: elseBody)
 
-proc parseFor(parser: var Parser): For =
+func parseFor(parser: var Parser): For =
   parser.expectPeek(tkLeftParen)
   parser.nextToken()
   let start = parser.parseExpression(lowestPrecedence)
@@ -415,7 +415,7 @@ proc parseFor(parser: var Parser): For =
   parser.expectPeek(tkLeftBrace)
   For(start: start, stop: stop, capture: capture, body: parser.parseBlock())
 
-proc parseStatement(parser: var Parser): Statement =
+func parseStatement(parser: var Parser): Statement =
   let position = tokenPosition(parser.current)
   let isAssignment = (parser.currentIdentifier().isSome and parser.peekIs(tkEql)) or parser.currentIs(tkSelector)
   if isAssignment:
@@ -467,7 +467,7 @@ proc parseStatement(parser: var Parser): Statement =
 
 # ---- declarations
 
-proc skipToDeclaration(parser: var Parser) =
+func skipToDeclaration(parser: var Parser) =
   ## Skips the rest of a broken declaration, so a statement in its body is not read as a declaration. It stops after
   ## the `;`, `}` or JSON body that ends the declaration, or before a word that starts a new one.
   var depth = if parser.currentIs(tkLeftBrace): 1 else: 0
@@ -488,7 +488,7 @@ proc skipToDeclaration(parser: var Parser) =
     parser.nextToken()
     if endsDeclaration: return
 
-proc parseNamespaceStatement(parser: var Parser): NamespaceName =
+func parseNamespaceStatement(parser: var Parser): NamespaceName =
   ## `namespace combat;`
   let position = tokenPosition(parser.current)
   parser.expectPeek(tkIdentifier)
@@ -496,13 +496,13 @@ proc parseNamespaceStatement(parser: var Parser): NamespaceName =
   parser.expectPeek(tkSemicolon)
   NamespaceName(name: name, position: position)
 
-proc parseImport(parser: var Parser): NamespaceName =
+func parseImport(parser: var Parser): NamespaceName =
   ## `import magic;`
   if parser.peekIs(tkString):
     parser.fail("imports are by namespace: 'import magic;'. A file is part of the pack when it is in src/")
   parser.parseNamespaceStatement()
 
-proc parseDataFile(parser: var Parser): DataFile =
+func parseDataFile(parser: var Parser): DataFile =
   ## `predicate isSneaking { ... }` or `lootTable "minecraft:entities/zombie"
   ## { ... }`. The Compiler checks the type word.
   let typeWord = parser.current.literal
@@ -522,7 +522,7 @@ proc parseDataFile(parser: var Parser): DataFile =
   DataFile(typeWord: typeWord, name: name, json: parser.current.literal, position: position,
            jsonPosition: tokenPosition(parser.current))
 
-proc parseMcfun(parser: var Parser): Mcfun =
+func parseMcfun(parser: var Parser): Mcfun =
   if not parser.currentIs(tkMcfun):
     parser.fail(&"expected 'import', 'var', 'mcfun' or a data file, found {parser.describe(parser.current)}")
   parser.expectPeek(tkIdentifier)
@@ -539,7 +539,7 @@ proc parseMcfun(parser: var Parser): Mcfun =
   parser.expectPeek(tkLeftBrace)
   Mcfun(name: name, body: parser.parseBlock(), position: position)
 
-proc parseDeclaration(parser: var Parser, declarations: var Declarations) =
+func parseDeclaration(parser: var Parser, declarations: var Declarations) =
   case parser.current.tag
   of tkNamespace:
     parser.fail("'namespace' must be the first statement of the file")
@@ -553,7 +553,7 @@ proc parseDeclaration(parser: var Parser, declarations: var Declarations) =
   else:
     declarations.mcfuns.add parser.parseMcfun()
 
-proc parseProgram*(parser: var Parser): Program =
+func parseProgram*(parser: var Parser): Program =
   if parser.currentIs(tkNamespace):
     try:
       result.namespace = some(parser.parseNamespaceStatement())

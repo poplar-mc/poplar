@@ -190,7 +190,7 @@ const eventBuiltins = {"onEvent": ekCriteria, "onTrigger": ekTrigger, "onDeath":
                        "onFirstJoin": ekFirstJoin, "onJoin": ekJoin, "onRespawn": ekRespawn}.toTable
   ## The event builtins, and the kind of event each one registers.
 
-proc newCompiler*(commandTree: CommandTree): Compiler =
+func newCompiler*(commandTree: CommandTree): Compiler =
   Compiler(commandTree: commandTree)
 
 # ---- errors and positions
@@ -252,7 +252,7 @@ proc newGeneratedName(compiler: Compiler, kind: string): string =
 
 # ---- macro keys
 
-proc collectTextMacroKeys(text: string, keys: var OrderedSet[string]) =
+func collectTextMacroKeys(text: string, keys: var OrderedSet[string]) =
   var rest = text
   while true:
     let start = rest.find("$(")
@@ -262,15 +262,15 @@ proc collectTextMacroKeys(text: string, keys: var OrderedSet[string]) =
     keys.incl rest[start + 2 ..< stop]
     rest = rest[stop + 1 .. ^1]
 
-proc collectExpressionMacroKeys(expression: Expression, keys: var OrderedSet[string])
+func collectExpressionMacroKeys(expression: Expression, keys: var OrderedSet[string])
 
-proc collectPartsMacroKeys(parts: seq[CommandPart], keys: var OrderedSet[string]) =
+func collectPartsMacroKeys(parts: openArray[CommandPart], keys: var OrderedSet[string]) =
   for part in parts:
     case part
     of TextPart(text): collectTextMacroKeys(text, keys)
     of InsertPart(insert): collectExpressionMacroKeys(insert, keys)
 
-proc collectExpressionMacroKeys(expression: Expression, keys: var OrderedSet[string]) =
+func collectExpressionMacroKeys(expression: Expression, keys: var OrderedSet[string]) =
   case expression
   of MacroKey(key): keys.incl key
   of PrefixExpression(prefix): collectExpressionMacroKeys(prefix.operand, keys)
@@ -290,7 +290,7 @@ proc collectExpressionMacroKeys(expression: Expression, keys: var OrderedSet[str
   of MinecraftCheck(parts): collectPartsMacroKeys(parts, keys)
   else: discard
 
-proc collectMacroKeys*(body: seq[Statement], keys: var OrderedSet[string]) =
+func collectMacroKeys*(body: openArray[Statement], keys: var OrderedSet[string]) =
   ## The `$(name)` keys that a body uses, in expressions and in Minecraft text.
   for statement in body:
     case statement
@@ -323,20 +323,20 @@ type Jumps* = object
   ## cannot have one. A `return` leaves every level.
   hasReturn*, hasBreak*, hasContinue*: bool
 
-proc merge(jumps: var Jumps, other: Jumps) =
+func merge(jumps: var Jumps, other: Jumps) =
   jumps.hasReturn = jumps.hasReturn or other.hasReturn
   jumps.hasBreak = jumps.hasBreak or other.hasBreak
   jumps.hasContinue = jumps.hasContinue or other.hasContinue
 
 func any(jumps: Jumps): bool = jumps.hasReturn or jumps.hasBreak or jumps.hasContinue
 
-func jumpsIn*(body: seq[Statement]): Jumps
+func jumpsIn*(body: openArray[Statement]): Jumps
 
 func jumpsInIf(ifStatement: If): Jumps =
   result = jumpsIn(ifStatement.thenBody)
   result.merge(jumpsIn(ifStatement.elseBody.get(@[])))
 
-func jumpsIn*(body: seq[Statement]): Jumps =
+func jumpsIn*(body: openArray[Statement]): Jumps =
   for statement in body:
     case statement
     of ReturnStatement: result.hasReturn = true
@@ -350,7 +350,7 @@ func jumpsIn*(body: seq[Statement]): Jumps =
 
 func branchesEndWithJump(ifStatement: If): bool
 
-func endsWithJump(body: seq[Statement]): bool =
+func endsWithJump(body: openArray[Statement]): bool =
   if body.len == 0: return false
   case body[^1]
   of ReturnStatement, BreakStatement, ContinueStatement: true
@@ -376,7 +376,7 @@ proc evaluate(compiler: Compiler, expression: Expression, env: Environment): Val
 proc compileInto(compiler: Compiler, target: Score, expression: Expression, env: Environment,
                  commands: var seq[Command])
 func utf16Length(text: string): Option[int]
-proc isDataIdentifier(expression: Expression): bool
+func isDataIdentifier(expression: Expression): bool
 proc dataPathOf(compiler: Compiler, identifier: Identifier, env: Environment): DataPath
 func isStringCall(call: Call): bool
 func isStringTest(call: Call): bool
@@ -402,11 +402,11 @@ func qualifiedKey(namespace, name: string): string
 proc resolveNamespace(compiler: Compiler, namespace: Option[string]): string
 proc findMcfun(compiler: Compiler, identifier: Identifier): FoundMcfun
 proc compileEvent(compiler: Compiler, call: Call, builtin: string, env: Environment)
-proc buildCommandText(compiler: Compiler, parts: seq[CommandPart], env: Environment): CommandText
-proc checkMinecraftText(compiler: Compiler, parts: seq[CommandPart], built: CommandText, column: int,
+proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart], env: Environment): CommandText
+proc checkMinecraftText(compiler: Compiler, parts: openArray[CommandPart], built: CommandText, column: int,
                         prefix, suffix: string): string
 proc scopeOf(compiler: Compiler, namespace: string, imports: seq[NamespaceName]): Scope
-proc compileJumpBody(compiler: Compiler, body: seq[Statement], env: Environment,
+proc compileJumpBody(compiler: Compiler, body: openArray[Statement], env: Environment,
                      loop: Option[string]): Option[Command]
 proc compileStatement(compiler: Compiler, statement: Statement, env: Environment, commands: var seq[Command])
 
@@ -415,7 +415,7 @@ include compiler/[values, scores, conditions, data, calls, declarations, load, m
 # ---- statements
 
 proc scopeOf(compiler: Compiler, namespace: string, imports: seq[NamespaceName]): Scope =
-  Scope(namespace: namespace, imports: imports, outputNamespace: outputNamespace(compiler, namespace))
+  Scope(namespace: namespace, imports: imports, outputNamespace: compiler.outputNamespace(namespace))
 
 proc resultScore(compiler: Compiler): Score =
   ## The value of a `return` inside a `while` or `execute (...)` body, on its way out.
@@ -428,7 +428,7 @@ proc onBodyReturn(compiler: Compiler, bodyName: string): Command =
   let checks = @[Check(negated: false, condition: FunctionReturnsTest(function: bodyName))]
   ExecuteCommand(execute: Execute(checks: checks, run: createCommand(passOn)))
 
-proc compileBlock(compiler: Compiler, body: seq[Statement], env: Environment, commands: var seq[Command]) =
+proc compileBlock(compiler: Compiler, body: openArray[Statement], env: Environment, commands: var seq[Command]) =
   let outerLiveCount = compiler.mcfun.liveLocals.len
   defer: compiler.mcfun.liveLocals.setLen(outerLiveCount)
 
@@ -440,7 +440,7 @@ proc compileBlock(compiler: Compiler, body: seq[Statement], env: Environment, co
                                      message: "code after 'return', 'break' or 'continue' is never run")
       return
 
-proc compileBodyAsCommand(compiler: Compiler, body: seq[Statement], env: Environment,
+proc compileBodyAsCommand(compiler: Compiler, body: openArray[Statement], env: Environment,
                           kind: string): Option[Command] =
   ## `kind` names a generated function for a body with more than one command: `if` or `execute`.
   let branchEnv = Environment(outer: env, runtimeBranch: true)
@@ -453,9 +453,9 @@ proc compileBodyAsCommand(compiler: Compiler, body: seq[Statement], env: Environ
   else:
     let name = compiler.newGeneratedName(kind)
     compiler.generated.add McFunction(name: name, commands: bodyCommands)
-    some(generatedCall(compiler, name))
+    some(compiler.generatedCall(name))
 
-proc compileJumpBody(compiler: Compiler, body: seq[Statement], env: Environment,
+proc compileJumpBody(compiler: Compiler, body: openArray[Statement], env: Environment,
                      loop: Option[string]): Option[Command] =
   ## Compiles an `execute (...)` body. A body that can `return` is always a function, called as
   ## `if function ...`: it returns 1 for each entity that returns from the mcfun, and then the mcfun returns.
@@ -511,9 +511,9 @@ proc declareLocal(compiler: Compiler, kind: LocalKind, varDecl: VarDecl, env: En
   of lkScore:
     compiler.mcfun.tempCount = 0
     let target = localScore(generatedName, compiler.mcfun.name, compiler.scope.outputNamespace)
-    compileInto(compiler, target, varDecl.value, env, commands)
+    compiler.compileInto(target, varDecl.value, env, commands)
   of lkData:
-    compileDataAssign(compiler, dataLocal(compiler, generatedName), varDecl.value, env, commands)
+    compiler.compileDataAssign(compiler.dataLocal(generatedName), varDecl.value, env, commands)
 
   env.declareLocal(name, local)
   compiler.mcfun.liveLocals.add local
@@ -536,10 +536,10 @@ proc compileVarDecl(compiler: Compiler, varDecl: VarDecl, env: Environment, comm
     compiler.fail(&"'{name}' is a build-time constant, but this value only exists in the game. Use 'var #{name}' " &
                   &"for a score or 'var ${name}' for data")
 
-  let value = evaluate(compiler, varDecl.value, env)
+  let value = compiler.evaluate(varDecl.value, env)
   if not env.declare(name, value): compiler.fail(&"'{name}' is already declared")
 
-proc collectDataLocalNames(body: seq[Statement], names: var OrderedSet[string]) =
+func collectDataLocalNames(body: openArray[Statement], names: var OrderedSet[string]) =
   for statement in body:
     case statement
     of VarDeclStatement(varDecl):
@@ -552,45 +552,45 @@ proc collectDataLocalNames(body: seq[Statement], names: var OrderedSet[string]) 
     of ExecuteStatement(execute): collectDataLocalNames(execute.body, names)
     else: discard
 
-proc localCleanup(compiler: Compiler, body: seq[Statement]): seq[Command] =
+proc localCleanup(compiler: Compiler, body: openArray[Statement]): seq[Command] =
   ## `data remove` for each data local declared anywhere in the body. A failed `set from` keeps the old value, so
   ## without this a local could hold a value from an earlier call. `data remove` on a missing key fails without
   ## effect. A score local needs nothing: every score write (`set`, `operation`, `store result`) overwrites it, and a
   ## failure writes 0.
   var names: OrderedSet[string]
   collectDataLocalNames(body, names)
-  for name in names: result.add DataRemoveCommand(dataPath: dataLocal(compiler, compiler.localKey(name)))
+  for name in names: result.add DataRemoveCommand(dataPath: compiler.dataLocal(compiler.localKey(name)))
 
 proc compileAssign(compiler: Compiler, assign: Assign, env: Environment, commands: var seq[Command]) =
   case assign.target.kind
   of ikCompileTime: discard
   of ikScore:
-    compileScoreAssign(compiler, assign.target, assign.value, env, commands)
+    compiler.compileScoreAssign(assign.target, assign.value, env, commands)
     return
   of ikData:
-    compileDataAssign(compiler, dataPath(compiler, assign.target, env), assign.value, env, commands)
+    compiler.compileDataAssign(compiler.dataPath(assign.target, env), assign.value, env, commands)
     return
   of ikEntityData:
-    compileDataAssign(compiler, entityDataPath(compiler, assign.target), assign.value, env, commands)
+    compiler.compileDataAssign(compiler.entityDataPath(assign.target), assign.value, env, commands)
     return
 
   if containsRuntimeValue(assign.value): compiler.fail("a runtime value cannot be stored in a compile-time variable")
 
-  let value = evaluate(compiler, assign.value, env)
+  let value = compiler.evaluate(assign.value, env)
   case env.assign(assign.target.name, value)
   of arAssigned: discard
   of arNotFound: compiler.fail(&"unknown name '{assign.target.name}'")
   of arCrossesRuntimeBranch:
     compiler.fail(&"cannot change compile-time '{assign.target.name}' inside a runtime 'if' or 'execute'")
 
-proc returnRun(command: Command): Command =
+func returnRun(command: Command): Command =
   ## Wraps a command in `return run`, unless it already returns.
   case command
   of ReturnRunCommand, ReturnValueCommand, ReturnMacroArgumentCommand: command
   else: ReturnRunCommand(returnRun: createCommand(command))
 
 proc addBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapper: var seq[Command],
-                    condition: Condition, setup: seq[Command], afterRuntimeBranch: bool) =
+                    condition: Condition, setup: openArray[Command], afterRuntimeBranch: bool) =
   ## Each branch returns from the wrapper, so later branches and the else body run only if no earlier branch ran.
   wrapper.add setup
 
@@ -617,7 +617,7 @@ proc addBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapper:
       compiler.position = elseBody[0].position
       compiler.mcfun.tempCount = 0
       var elseSetup: seq[Command]
-      let elseCondition = lowerCondition(compiler, elseIf.condition, env, false, elseSetup)
+      let elseCondition = compiler.lowerCondition(elseIf.condition, env, false, elseSetup)
       compiler.addBranches(elseIf, env, wrapper, elseCondition, elseSetup, isRuntime)
       return
     else: discard
@@ -628,7 +628,7 @@ proc addBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapper:
 proc compileIf(compiler: Compiler, ifStatement: If, env: Environment, commands: var seq[Command]) =
   compiler.mcfun.tempCount = 0
   var setup: seq[Command]
-  let condition = lowerCondition(compiler, ifStatement.condition, env, false, setup)
+  let condition = compiler.lowerCondition(ifStatement.condition, env, false, setup)
 
   case condition
   of ConstantCondition(isTrue):
@@ -655,14 +655,14 @@ proc compileIf(compiler: Compiler, ifStatement: If, env: Environment, commands: 
     var wrapper: seq[Command]
     compiler.addBranches(ifStatement, env, wrapper, condition, setup, false)
     compiler.generated.add McFunction(name: wrapperName, commands: wrapper)
-    commands.add generatedCall(compiler, wrapperName)
+    commands.add compiler.generatedCall(wrapperName)
 
 proc compileReturn(compiler: Compiler, value: Expression, env: Environment, commands: var seq[Command]) =
   ## `value` is nil for a `return;` with no value.
   if compiler.mcfun.returnThroughBody:
     let target = compiler.resultScore()
     compiler.mcfun.tempCount = 0
-    if value != nil: compileInto(compiler, target, value, env, commands)
+    if value != nil: compiler.compileInto(target, value, env, commands)
     else: commands.add ScoreSetCommand(scoreValue: ScoreValue(score: target, value: 0))
     commands.add compiler.mcfun.cleanup
     commands.add ReturnValueCommand(returnValue: 1)
@@ -674,7 +674,7 @@ proc compileReturn(compiler: Compiler, value: Expression, env: Environment, comm
     return
 
   if not containsRuntimeValue(value):
-    let number = compiler.toScoreValue(evaluate(compiler, value, env))
+    let number = compiler.toScoreValue(compiler.evaluate(value, env))
     commands.add compiler.mcfun.cleanup
     commands.add ReturnValueCommand(returnValue: number)
     return
@@ -689,7 +689,7 @@ proc compileReturn(compiler: Compiler, value: Expression, env: Environment, comm
   # The value can read a local, so it is computed before the locals are removed.
   if compiler.mcfun.cleanup.len > 0:
     let temp = compiler.newTemp()
-    compileInto(compiler, temp, value, env, commands)
+    compiler.compileInto(temp, value, env, commands)
     commands.add compiler.mcfun.cleanup
     commands.add ReturnRunCommand(returnRun: createCommand(ScoreGetCommand(score: temp)))
     return
@@ -698,12 +698,12 @@ proc compileReturn(compiler: Compiler, value: Expression, env: Environment, comm
   let identifier = identifierOf(value)
   if identifier.isSome:
     case identifier.get.kind
-    of ikData, ikEntityData: read = some(DataGetCommand(dataPath: dataPathOf(compiler, identifier.get, env)))
-    of ikScore: read = some(ScoreGetCommand(score: scoreSource(compiler, identifier.get, env)))
+    of ikData, ikEntityData: read = some(DataGetCommand(dataPath: compiler.dataPathOf(identifier.get, env)))
+    of ikScore: read = some(ScoreGetCommand(score: compiler.scoreSource(identifier.get, env)))
     of ikCompileTime: discard
   if read.isNone:
     let temp = compiler.newTemp()
-    compileInto(compiler, temp, value, env, commands)
+    compiler.compileInto(temp, value, env, commands)
     read = some(ScoreGetCommand(score: temp))
   commands.add ReturnRunCommand(returnRun: createCommand(read.get))
 
@@ -716,7 +716,7 @@ proc compileWhile(compiler: Compiler, whileLoop: While, env: Environment, comman
 
   compiler.mcfun.tempCount = 0
   var testCommands: seq[Command]
-  let condition = lowerCondition(compiler, whileLoop.condition, env, false, testCommands)
+  let condition = compiler.lowerCondition(whileLoop.condition, env, false, testCommands)
   var clauses: seq[seq[Check]]
   case condition
   of ConstantCondition(isTrue):
@@ -733,7 +733,7 @@ proc compileWhile(compiler: Compiler, whileLoop: While, env: Environment, comman
   let readsTestResult = canReturn or jumps.hasContinue
 
   # `return run` stops the next clause from running the body again, and passes a return of the body on.
-  let callBody = generatedCall(compiler, bodyName)
+  let callBody = compiler.generatedCall(bodyName)
   let runBody = createCommand(if clauses.len > 1 or canReturn: ReturnRunCommand(returnRun: createCommand(callBody))
                               else: callBody)
   for checks in clauses:
@@ -747,7 +747,7 @@ proc compileWhile(compiler: Compiler, whileLoop: While, env: Environment, comman
 
   var bodyCommands: seq[Command]
   compiler.compileBlock(whileLoop.body, Environment(outer: env, runtimeBranch: true), bodyCommands)
-  let callTest = generatedCall(compiler, testName)
+  let callTest = compiler.generatedCall(testName)
   bodyCommands.add(if canReturn: ReturnRunCommand(returnRun: createCommand(callTest)) else: callTest)
 
   compiler.mcfun.loop = outerLoop
@@ -776,8 +776,8 @@ proc compileWhile(compiler: Compiler, whileLoop: While, env: Environment, comman
   commands.add ExecuteCommand(execute: Execute(checks: checks, run: passOn))
 
 proc evaluateRange(compiler: Compiler, forLoop: For, env: Environment): (int64, int64) =
-  let start = evaluate(compiler, forLoop.start, env)
-  let stop = evaluate(compiler, forLoop.stop, env)
+  let start = compiler.evaluate(forLoop.start, env)
+  let stop = compiler.evaluate(forLoop.stop, env)
   let (startNumber, stopNumber) = (numberOf(start), numberOf(stop))
   if startNumber.isNone or stopNumber.isNone: compiler.fail("range bounds must be whole numbers")
   if startNumber.get > stopNumber.get:
@@ -807,7 +807,7 @@ proc compileStatement(compiler: Compiler, statement: Statement, env: Environment
     compiler.position = expression.position
     let call = callOf(expression)
     if call.isNone: compiler.fail("only calls can be used as statements")
-    compileCall(compiler, call.get, env, commands)
+    compiler.compileCall(call.get, env, commands)
   of VarDeclStatement(varDecl): compiler.compileVarDecl(varDecl, env, commands)
   of AssignStatement(assign): compiler.compileAssign(assign, env, commands)
   of ForStatement(forLoop): compiler.compileFor(forLoop, env, commands)
@@ -817,15 +817,15 @@ proc compileStatement(compiler: Compiler, statement: Statement, env: Environment
     commands.add ReturnValueCommand(returnValue: 0)
   of ContinueStatement:
     if compiler.mcfun.loop.isNone: compiler.fail("'continue' must be inside a 'while' (not in 'execute (...)')")
-    commands.add ReturnRunCommand(returnRun: createCommand(generatedCall(compiler, compiler.mcfun.loop.get)))
+    commands.add ReturnRunCommand(returnRun: createCommand(compiler.generatedCall(compiler.mcfun.loop.get)))
   of WhileStatement(whileLoop): compiler.compileWhile(whileLoop, env, commands)
   of IfStatement(ifStatement): compiler.compileIf(ifStatement, env, commands)
-  of CommandStatement(command): compileCommand(compiler, command, statement.position.column + 1, env, commands)
-  of ExecuteStatement(execute): compileExecute(compiler, execute, env, commands)
+  of CommandStatement(command): compiler.compileCommand(command, statement.position.column + 1, env, commands)
+  of ExecuteStatement(execute): compiler.compileExecute(execute, env, commands)
 
 # ---- mcfuns and programs
 
-proc forwardedArguments(keys: OrderedSet[string]): Option[string] =
+func forwardedArguments(keys: OrderedSet[string]): Option[string] =
   ## `{a:"$(a)",b:"$(b)"}`, or none when the mcfun uses no macro arguments.
   if keys.len == 0: return none(string)
   var forwarded: seq[string]
@@ -844,7 +844,7 @@ proc compileMcfun(compiler: Compiler, mcfunKey: string, declaration: McfunDeclar
   let path = functionPath(mcfun.name)
   if not isValidResourceName(path):
     compiler.fail(&"mcfun name '{mcfun.name}' must only use letters, 0-9, '_', '.' and '-'")
-  let pathKey = functionName(compiler, declaration.namespace, path)
+  let pathKey = compiler.functionName(declaration.namespace, path)
   if pathKey in paths:
     compiler.fail(&"mcfun '{paths[pathKey]}' and '{mcfun.name}' have the same file name '{path}.mcfunction'")
   paths[pathKey] = mcfun.name
@@ -891,13 +891,15 @@ proc addProgram*(compiler: Compiler, path: string, program: ast.Program, origin:
       compiler.addError("the namespace 'std' belongs to the standard library")
       return
 
-  discard compiler.namespaceImports.hasKeyOrPut(compiler.scope.namespace, initOrderedSet[string]())
+  var imports = compiler.namespaceImports.getOrDefault(compiler.scope.namespace)
   for imported in program.imports:
     compiler.position = imported.position
     if imported.name == compiler.scope.namespace:
       compiler.addError(&"a file does not import its own namespace '{imported.name}'")
       continue
-    compiler.namespaceImports[compiler.scope.namespace].incl imported.name
+    imports.incl imported.name
+  # A namespace with no imports is stored too: the keys decide the order of `load` and `tick`.
+  compiler.namespaceImports[compiler.scope.namespace] = imports
 
   for mcfun in program.mcfuns:
     if origin == orProject:
@@ -912,25 +914,25 @@ proc addProgram*(compiler: Compiler, path: string, program: ast.Program, origin:
     let key = qualifiedKey(compiler.scope.namespace, mcfun.name)
     let declaration = McfunDeclaration(path: path, mcfun: mcfun, origin: origin, namespace: compiler.scope.namespace,
                                        imports: program.imports,
-                                       irName: functionName(compiler, compiler.scope.namespace, mcfun.name))
+                                       irName: compiler.functionName(compiler.scope.namespace, mcfun.name))
     if key in compiler.mcfuns:
-      addDuplicateError(compiler, compiler.mcfuns[key], declaration)
+      compiler.addDuplicateError(compiler.mcfuns[key], declaration)
       continue
     compiler.mcfuns[key] = declaration
 
   for global in program.globals:
     compiler.position = global.position
-    recover: addGlobal(compiler, global.decl)
+    recover: compiler.addGlobal(global.decl)
 
   for dataFile in program.dataFiles:
     compiler.position = dataFile.position
-    recover: addDataFile(compiler, dataFile)
+    recover: compiler.addDataFile(dataFile)
 
 proc compile*(compiler: Compiler): Program =
   compiler.poplarNamespaces = @["self"] & compiler.namespaceImports.keys.toSeq
   var functions: seq[McFunction]
-  buildCallGraph(compiler)
-  let used = reachableFromProject(compiler)
+  compiler.buildCallGraph()
+  let used = compiler.reachableFromProject()
   var paths: Table[string, string]
 
   for mcfunKey, declaration in compiler.mcfuns:
@@ -946,17 +948,17 @@ proc compile*(compiler: Compiler): Program =
 
   for function in functions.mitems: function.commands = optimizeFunction(function.name, function.commands)
   functions = inlineSmallFunctions(functions)
-  removeUnusedConstants(compiler, functions)
+  compiler.removeUnusedConstants(functions)
 
   # Only the tick tag calls these, so they come after the inline pass, which removes functions that nothing calls.
-  let ticks = hookNames(compiler, compiler.tickNamespaces, "tick")
-  addEventFunctions(compiler, functions, ticks)
+  let ticks = compiler.hookNames(compiler.tickNamespaces, "tick")
+  compiler.addEventFunctions(functions, ticks)
 
   let needsLoad = compiler.globals.len + compiler.dataGlobals.len > 0 or compiler.loadNamespaces.len > 0 or
                   compiler.usesStack or compiler.events.len > 0
   Program(
     functions: functions,
-    load: if needsLoad: some(buildLoadFunction(compiler, functions)) else: none(McFunction),
+    load: if needsLoad: some(compiler.buildLoadFunction(functions)) else: none(McFunction),
     tick: if compiler.events.len > 0: @["poplar/tick"] else: ticks,
     dataFiles: compiler.dataFiles,
   )

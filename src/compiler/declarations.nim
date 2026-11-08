@@ -33,7 +33,7 @@ func isValidNamespace(name: string): bool =
   ## A resource name with no `-`, because `namespace x;` is Poplar code, where `-` is the minus sign.
   isValidResourceName(name) and '-' notin name
 
-proc jsonErrorPosition(dataFile: ast.DataFile): Option[Position] =
+func jsonErrorPosition(dataFile: ast.DataFile): Option[Position] =
   ## Where the JSON body stops being valid, as a line and column in the source file.
   var scanner = initJsonScanner(dataFile.json)
   try:
@@ -118,7 +118,7 @@ proc addDuplicateError(compiler: Compiler, existing, later: McfunDeclaration) =
 proc addDataGlobal(compiler: Compiler, decl: VarDecl) =
   let name = decl.target.name
   if pathRoot(name).len != name.len: compiler.fail(&"'var' declares a whole variable. Set '${name}' in an mcfun")
-  let value = evaluate(compiler, decl.value, Environment())
+  let value = compiler.evaluate(decl.value, Environment())
   case value
   of NullValue: compiler.fail("a data variable cannot start as null")
   else: discard
@@ -145,7 +145,7 @@ proc addGlobal(compiler: Compiler, decl: VarDecl) =
     return
   of ikEntityData: compiler.fail("entity data cannot be declared. Set it in an mcfun: '@s.$path = ...;'")
 
-  let initialValue = compiler.toScoreValue(evaluate(compiler, decl.value, Environment()))
+  let initialValue = compiler.toScoreValue(compiler.evaluate(decl.value, Environment()))
 
   let name = decl.target.name
   let key = qualifiedKey(compiler.scope.namespace, name)
