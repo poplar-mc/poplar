@@ -1,111 +1,94 @@
-namespace std;
+namespace std
 
 // Math on ints. Each one is an mcfun that reads its macro arguments: `std:min() with {a: #hp, b: 10}`.
 // They keep no state, so std adds no objectives to a pack.
 
 // The value without its sign: `abs() with {x: -5}` is 5.
-mcfun abs() {
-    if ($(x) < 0) { return -$(x); }
-    return $(x);
-}
+mcfun abs:
+    if $(x) < 0: return -$(x)
+    return $(x)
 
 // 1 for a positive `x`, -1 for a negative `x`, 0 for 0.
-mcfun sign() {
-    if ($(x) > 0) { return 1; }
-    if ($(x) < 0) { return -1; }
-    return 0;
-}
+mcfun sign:
+    if $(x) > 0: return 1
+    if $(x) < 0: return -1
+    return 0
 
 // The smaller of `a` and `b`.
-mcfun min() {
-    if ($(a) < $(b)) { return $(a); }
-    return $(b);
-}
+mcfun min:
+    if $(a) < $(b): return $(a)
+    return $(b)
 
 // The larger of `a` and `b`.
-mcfun max() {
-    if ($(a) > $(b)) { return $(a); }
-    return $(b);
-}
+mcfun max:
+    if $(a) > $(b): return $(a)
+    return $(b)
 
 // `x`, moved into `low..high` (both included).
-mcfun clamp() {
-    if ($(x) < $(low)) { return $(low); }
-    if ($(x) > $(high)) { return $(high); }
-    return $(x);
-}
+mcfun clamp:
+    if $(x) < $(low): return $(low)
+    if $(x) > $(high): return $(high)
+    return $(x)
 
 // `base` to the power of `exponent`, by squaring. A negative exponent gives 1. Overflow wraps, as all score math does.
-mcfun pow() {
-    var #result = 1;
-    var #factor = $(base);
-    var #rest = $(exponent);
-    while (#rest > 0) {
-        if (#rest % 2 == 1) { #result = #result * #factor; }
-        #factor = #factor * #factor;
-        #rest = #rest / 2;
-    }
-    return #result;
-}
+mcfun pow:
+    var #result = 1
+    var #factor = $(base)
+    var #rest = $(exponent)
+    while #rest > 0:
+        if #rest % 2 == 1: #result = #result * #factor
+        #factor = #factor * #factor
+        #rest = #rest / 2
+    return #result
 
 // The integer square root, rounded down, by Newton's method. A negative `x` gives 0.
-mcfun sqrt() {
-    if ($(x) < 2) { return max() with {a: $(x), b: 0}; }
-    var #root = $(x);
-    var #next = ($(x) + 1) / 2;
-    while (#next < #root) {
-        #root = #next;
-        #next = (#root + $(x) / #root) / 2;
-    }
-    return #root;
-}
+mcfun sqrt:
+    if $(x) < 2: return max() with {a: $(x), b: 0}
+    var #root = $(x)
+    var #next = ($(x) + 1) / 2
+    while #next < #root:
+        #root = #next
+        #next = (#root + $(x) / #root) / 2
+    return #root
 
 // The value `t / scale` of the way from `a` to `b`: `lerp() with {a: 0, b: 100, t: 250, scale: 1000}` is 25.
-mcfun lerp() {
-    return $(a) + ($(b) - $(a)) * $(t) / $(scale);
-}
+mcfun lerp:
+    return $(a) + ($(b) - $(a)) * $(t) / $(scale)
 
 // A random int in `low..high`, both included. Minecraft's `random value` needs at least 2 values,
 // so `random() with {low: 5, high: 5}` gives 5 without it.
-mcfun random() {
-    if ($(high) <= $(low)) { return $(low); }
-    /return run random value $(low)..$(high);
-}
+mcfun random:
+    if $(high) <= $(low): return $(low)
+    /return run random value $(low)..$(high)
 
 // A random index into a list of int weights: `weightedRandom() with {weights: [1, 3]}` gives 1 three times as often as 0.
-mcfun weightedRandom() {
-    /data modify storage self:std searched set value $(weights);
-    var #total = 0;
-    var $left = $searched;
-    while (len($left) > 0) {
-        #total = #total + $left[0];
-        remove($left, 0);
-    }
-    var #roll = random() with {low: 0, high: #total - 1};
-    var #index = 0;
-    while (len($searched) > 1) {
-        #roll = #roll - $searched[0];
-        if (#roll < 0) { return #index; }
-        remove($searched, 0);
-        #index = #index + 1;
-    }
-    return #index;
-}
+mcfun weightedRandom:
+    /data modify storage self:std searched set value $(weights)
+    var #total = 0
+    var $left = $searched
+    while len($left) > 0:
+        #total = #total + $left[0]
+        remove($left, 0)
+    var #roll = random() with {low: 0, high: #total - 1}
+    var #index = 0
+    while len($searched) > 1:
+        #roll = #roll - $searched[0]
+        if #roll < 0: return #index
+        remove($searched, 0)
+        #index = #index + 1
+    return #index
 
 // The sine of an angle in degrees, in thousandths: `sin() with {degrees: 30}` is 500. Bhaskara's approximation,
 // within 2 thousandths.
-mcfun sin() {
-    var #angle = $(degrees) % 360;
-    var #sign = 1;
-    if (#angle >= 180) {
-        #angle = #angle - 180;
-        #sign = -1;
-    }
-    var #product = #angle * (180 - #angle);
-    return #sign * 4000 * #product / (40500 - #product);
-}
+mcfun sin:
+    var #angle = $(degrees) % 360
+    var #sign = 1
+    if #angle >= 180:
+        #angle = #angle - 180
+        #sign = -1
+    var #product = #angle * (180 - #angle)
+    return #sign * 4000 * #product / (40500 - #product)
 
 // The cosine of an angle in degrees, in thousandths: `cos() with {degrees: 60}` is 500.
-mcfun cos() {
-    return sin() with {degrees: $(degrees) + 90};
-}
+mcfun cos:
+    return sin() with {degrees: $(degrees) + 90}

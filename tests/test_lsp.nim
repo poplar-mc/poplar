@@ -33,7 +33,7 @@ test "an open document with an error gets a diagnostic, and loses it when it is 
   var written: seq[JsonNode]
   let server = newLanguageServer("no-std", proc (meth: string, params: JsonNode) =
     written.add params)
-  let source = "namespace test;\nmcfun f() {\n  #nope = 1;\n}\n"
+  let source = "namespace test\nmcfun f:\n  #nope = 1\n"
   discard server.handle("textDocument/didOpen", %*{
     "textDocument": {"uri": uri, "languageId": "poplar", "version": 1, "text": source}})
   check written[^1]["diagnostics"][0]["range"] ==
@@ -42,5 +42,5 @@ test "an open document with an error gets a diagnostic, and loses it when it is 
   written.setLen(0)
   discard server.handle("textDocument/didChange", %*{
     "textDocument": {"uri": uri, "version": 2},
-    "contentChanges": [{"text": "namespace test;\nmcfun f() {}\n"}]})
+    "contentChanges": [{"text": "namespace test\nmcfun f:\n"}]})
   check written[^1]["diagnostics"].len == 0

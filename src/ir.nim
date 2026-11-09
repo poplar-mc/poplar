@@ -260,7 +260,7 @@ func constantScore*(value: int32): Score =
   Score(holder: "#poplar.c" & $value, kind: ConstantScore(constant: value))
 
 func resultScore*(folder: string, namespace: Option[string]): Score =
-  ## The value of a `return` inside a `while` or `execute (...)` body.
+  ## The value of a `return` inside a `while` or `execute` body.
   Score(holder: "#poplar." & folder & ".result", namespace: namespace)
 
 func localScore*(generatedName, owner: string, namespace: Option[string]): Score =

@@ -1,4 +1,4 @@
-# Minecraft text: `/commands`, `execute (...)`, `{{...}}` inserts and macro lines, and `self:` ids.
+# Minecraft text: commands, `execute` subcommands, `{{...}}` inserts, macro lines and `self:` ids.
 # Part of compiler.nim.
 
 func isWholeDataVar(insert: Insert): bool =
@@ -85,6 +85,15 @@ proc runtimeInsert(compiler: Compiler, expression: Expression, env: Environment,
     inc number
   Insert(macroName: name, source: source)
 
+func hasUnclosedMacroKey(text: string): bool =
+  ## True when a `$(` has no `)` after it, so it names no macro argument.
+  var start = text.find("$(")
+  while start >= 0:
+    let stop = text.find(')', start)
+    if stop < 0: return true
+    start = text.find("$(", stop)
+  false
+
 proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart],
     env: Environment): CommandText =
   ## Joins text and `{{...}}` inserts. A `{{#x}}` insert becomes `$(x)` and makes the text a macro
@@ -94,6 +103,8 @@ proc buildCommandText(compiler: Compiler, parts: openArray[CommandPart],
     case part
     of TextPart(text):
       result.text.add text
+      if hasUnclosedMacroKey(text):
+        compiler.fail("'$(' needs the name of a macro argument and a ')', such as '$(count)'")
       if "$(" in text: result.usesMacroKeys = true
     of InsertPart(expression):
       let outerPosition = compiler.enterExpression(expression)
@@ -307,10 +318,10 @@ proc compileExecute(compiler: Compiler, execute: ast.Execute, env: Environment,
   let canReturn = jumpsIn(execute.body).hasReturn
   if canReturn:
     if compiler.mcfun.forwardedArgs.isSome:
-      compiler.fail("'return' inside 'execute (...)' in an mcfun that uses macro arguments is " &
+      compiler.fail("'return' inside an 'execute' body in an mcfun that uses macro arguments is " &
                     "not supported yet")
     if subcommands.isMacro:
-      compiler.fail("'return' inside 'execute (...)' with a data insert is not supported yet")
+      compiler.fail("'return' inside an 'execute' body with a data insert is not supported yet")
 
   let run = compiler.compileJumpBody(execute.body, env, none(string))
   if run.isNone: return

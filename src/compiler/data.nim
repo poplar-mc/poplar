@@ -148,7 +148,7 @@ proc literalTemplate(compiler: Compiler, expression: Expression, path: string, e
 
 proc compileLiteralAssign(compiler: Compiler, target: DataPath, expression: Expression,
                           env: Environment, commands: var seq[Command]) =
-  ## `$pos = [#x, #y, 0];` sets the literal with a `0` for each runtime part, then stores each part
+  ## `$pos = [#x, #y, 0]` sets the literal with a `0` for each runtime part, then stores each part
   ## at its path.
   var parts: seq[LiteralPart]
   let literal = compiler.literalTemplate(expression, "", env, parts)
@@ -312,7 +312,7 @@ proc listArgument(compiler: Compiler, name: string, argument: Expression,
 proc compileListBuiltin(compiler: Compiler, name: string, call: Call, env: Environment,
                         commands: var seq[Command]) =
   ## `append($list, v)`, `prepend($list, v)`, `insert($list, i, v)` and `remove($list, i)`.
-  if name == "len": compiler.fail("'len' gives a value. Use it as one: '#n = len($list);'")
+  if name == "len": compiler.fail("'len' gives a value. Use it as one: '#n = len($list)'")
   let arity = if name == "insert": 3 else: 2
   if call.args.len != arity:
     compiler.fail(&"'{name}' expects {arity} arguments, found {call.args.len}")

@@ -122,7 +122,7 @@ type
     case
     of VarDeclStatement: varDecl*: VarDecl
     of AssignStatement: assign*: Assign
-    of ReturnStatement: returned*: Expression ## Nil for a `return;` with no value.
+    of ReturnStatement: returned*: Expression ## Nil for a `return` with no value.
     of BreakStatement, ContinueStatement: discard
     of IfStatement: ifStatement*: If
     of ForStatement: forLoop*: For
@@ -132,7 +132,7 @@ type
     of ExpressionStatement: expression*: Expression
 
   NamespaceName* = object
-    ## `import magic;` or `namespace magic;`: a namespace name and where it is written.
+    ## `import magic` or `namespace magic`: a namespace name and where it is written.
     name*: string
     position*: Position
 
@@ -140,8 +140,14 @@ type
     decl*: VarDecl
     position*: Position
 
+  Constant* = object
+    ## `const maxMana = 100`: a build-time value for the mcfuns of its file.
+    name*: string
+    value*: Expression
+    position*: Position
+
   DataFileName* = object
-    ## `isSneaking` is the file `is_sneaking`, and a constant with its id.
+    ## `isSneaking` is the file `is_sneaking`, which Minecraft text names as `self:isSneaking`.
     ## `"minecraft:entities/zombie"` is the resource id as written.
     case
     of IdentifierName: identifier*: string
@@ -162,10 +168,11 @@ type
 
   Program* = object
     namespace*: Option[NamespaceName]
-      ## `namespace combat;`, the first statement of every file. None when it is missing.
+      ## `namespace combat`, the first statement of every file. None when it is missing.
     imports*: seq[NamespaceName]
     mcfuns*: seq[Mcfun]
     globals*: seq[Global]
+    constants*: seq[Constant]
     dataFiles*: seq[DataFile]
 
 func suffix*(numberType: NumberType): string =

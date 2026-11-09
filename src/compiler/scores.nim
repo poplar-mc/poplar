@@ -177,7 +177,7 @@ proc compileInto(compiler: Compiler, target: Score, expression: Expression, env:
     if isStringCall(call):
       let name = calleeName(call)
       compiler.fail(&"'{name}' gives a string, so it cannot be a score. Store it in data: " &
-                    &"'$x = {name}(...);'")
+                    &"'$x = {name}(...)'")
     if isStringTest(call):
       compiler.fail(&"'{calleeName(call)}' is a condition. Use it in 'if' or 'while'")
     let callee = identifierOf(call.callee)

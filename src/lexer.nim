@@ -1,6 +1,10 @@
 ## Changes source text into tokens, one at a time, as the parser asks for them. Raw text is one
-## token: a command after `/`, `execute (...)` subcommands, and a data file JSON body (a top-level
+## token: a command after `/`, the subcommands of `execute`, and a data file JSON body (a top-level
 ## `{` after a name).
+##
+## The lines give tokens too, as in Python: `tkNewline` ends a line that has a statement,
+## `tkIndent` starts a block and `tkDedent` ends one. Inside `()`, `[]` and `{}`, a line break is
+## only whitespace.
 
 import std/[options, strutils]
 import token
@@ -13,19 +17,20 @@ type
     line*: int
     lineStart, tokenStart: int
     previousTag: Option[TokenTag]
-    braceDepth: int
-      ## The number of `{` that are open, so that a `{` or `[` at the top level after a name starts
-      ## a data file body.
-    conditionParenDepth: int
-      ## The open `(` of an `if` or `while` condition, counted
-      ## from its first `(`. Zero outside a condition.
+    hasLines: bool      ## False for a `{{...}}` insert, which is part of one line.
+    nesting: int        ## The open `(`, `[` and `{`. Inside them, a line break is only whitespace.
+    indents: seq[int]   ## The indentation of each open block, starting with the top level (0).
+    pending: seq[Token] ## Layout tokens that are ready, such as a second `tkDedent`.
+    atLineStart: bool   ## True until the indentation of the line is checked.
+    lineHasToken: bool  ## True when the line has a token, so its end gives a `tkNewline`.
+    inCondition: bool
+      ## True from `if`, `elif` or `while` to the block colon. A Minecraft check can start there.
     firstLineColumn*: int
       ## Added to the column of each token on the first line: the column where a `{{...}}` insert
       ## starts in its file.
 
 const conditionWords = ["biome", "block", "blocks", "data", "dimension", "entity", "function",
-                        "items", "loaded",
-                        "predicate", "score", "slots", "stopwatch"]
+                        "items", "loaded", "predicate", "score", "slots", "stopwatch"]
   ## The `execute if` subcommands of Minecraft 26.3. In a condition, `block ~ ~-1 ~ stone` is raw
   ## text.
 
@@ -36,8 +41,8 @@ func readChar(lexer: var Lexer) =
   lexer.pos = lexer.readPos
   inc lexer.readPos
 
-func initLexer*(input: string): Lexer =
-  result = Lexer(input: input, line: 1)
+func initLexer*(input: string, hasLines = true): Lexer =
+  result = Lexer(input: input, line: 1, hasLines: hasLines, indents: @[0], atLineStart: true)
   result.readChar()
 
 func peekCharAt(lexer: Lexer, distance: int): char =
@@ -48,12 +53,19 @@ func peekChar(lexer: Lexer): char = lexer.peekCharAt(1)
 
 func newToken(lexer: Lexer, tag: TokenTag, literal: string): Token =
   let offset = if lexer.lineStart == 0: lexer.firstLineColumn else: 0
-  Token(tag: tag, literal: literal, line: lexer.line, column: lexer.tokenStart - lexer.lineStart +
-      1 + offset)
+  let column = lexer.tokenStart - lexer.lineStart + 1 + offset
+  Token(tag: tag, literal: literal, line: lexer.line, column: column)
 
 func startsStatement(lexer: Lexer): bool =
   ## Division cannot follow these tokens, so a `/` here starts a command.
-  lexer.previousTag.isNone or lexer.previousTag.get in {tkSemicolon, tkLeftBrace, tkRightBrace}
+  lexer.previousTag.isNone or
+    lexer.previousTag.get in {tkNewline, tkIndent, tkDedent, tkBlockColon}
+
+func isBlockColon(lexer: Lexer): bool =
+  ## A `:` followed by a space, a comment or the end of the line starts a block.
+  if lexer.ch != ':': return false
+  let next = lexer.peekChar()
+  next in {' ', '\t', '\r', '\n', '\0'} or (next == '/' and lexer.peekCharAt(2) == '/')
 
 func readInQuote(lexer: var Lexer, quote: var char) =
   ## One character inside a quote: an escape skips the next character, and the quote's own character
@@ -85,31 +97,63 @@ func readBalanced(lexer: var Lexer, stop: char): Option[string] =
   if quote != '\0': return none(string)
   some(lexer.input[start..<lexer.pos])
 
+func readRawText(lexer: var Lexer, toBlockColon: bool): Option[string] =
+  ## Reads Minecraft text to the end of the line, or to the block colon outside quotes and
+  ## brackets. None if a quote is still open.
+  let start = lexer.pos
+  var depth = 0
+  var quote = '\0'
+  while lexer.ch notin {'\n', '\0'}:
+    if quote != '\0':
+      lexer.readInQuote(quote)
+    elif toBlockColon and depth == 0 and lexer.isBlockColon():
+      break
+    else:
+      case lexer.ch
+      of '"', '\'': quote = lexer.ch
+      of '[', '{', '(': inc depth
+      of ']', '}', ')': depth = max(depth - 1, 0)
+      else: discard
+    lexer.readChar()
+
+  if quote != '\0': return none(string)
+  some(lexer.input[start..<lexer.pos].strip(leading = false, chars = {' ', '\t', '\r'}))
+
 func readCommand(lexer: var Lexer): Option[string] =
-  ## Reads to the `;` that ends the command. A `;` inside quotes or brackets (NBT, JSON) is part of
-  ## the text.
+  ## Reads a command after its `/`, to the end of the line.
   lexer.readChar()
-  let text = lexer.readBalanced(';')
-  if text.isNone: return text
-  some(text.get.strip(leading = false, chars = {' ', '\t', '\r'}))
+  lexer.readRawText(toBlockColon = false)
+
+func closingParen(text: string): int =
+  ## The index of the `)` that closes the `(` at the start of `text`, or -1.
+  var depth = 0
+  var quote = '\0'
+  for index, ch in text:
+    if quote != '\0':
+      if ch == quote: quote = '\0'
+      continue
+    case ch
+    of '"', '\'': quote = ch
+    of '(', '[', '{': inc depth
+    of ')', ']', '}':
+      dec depth
+      if depth == 0: return (if ch == ')': index else: -1)
+    else: discard
+  -1
 
 func readExecuteSubcommands(lexer: var Lexer): Token =
-  ## Reads `as @a at @s` from `execute (as @a at @s)`, to the matching `)`.
-  ## The token starts at the text, so its column is the column of the first subcommand.
-  lexer.readChar()
-  while lexer.ch in {' ', '\t'}: lexer.readChar()
-  lexer.tokenStart = lexer.pos
-
-  let text = lexer.readBalanced(')')
+  ## Reads `as @a at @s` from `execute as @a at @s:`, to the block colon. One pair of parentheses
+  ## around all of it is removed, so `execute (as @a):` works too. The token starts at the text, so
+  ## its column is the column of the first subcommand.
+  let text = lexer.readRawText(toBlockColon = true)
   if text.isNone: return lexer.newToken(tkUnclosed, "\"")
-  if lexer.ch != ')':
-    # Lex the rest of the line again as normal tokens, so a `{` on it still opens the body.
-    lexer.readPos = lexer.tokenStart
-    lexer.readChar()
-    return lexer.newToken(tkUnclosed, ")")
-
-  lexer.readChar()
-  lexer.newToken(tkExecuteSubcommands, text.get.strip(leading = false, chars = {' ', '\t', '\r'}))
+  var subcommands = text.get
+  if subcommands.startsWith('(') and closingParen(subcommands) == subcommands.high:
+    let inner = subcommands[1 ..< ^1]
+    let innerText = inner.strip()
+    if innerText.len > 0: lexer.tokenStart += 1 + inner.find(innerText)
+    subcommands = innerText
+  lexer.newToken(tkExecuteSubcommands, subcommands)
 
 func readIdentifier(lexer: var Lexer): string =
   let start = lexer.pos
@@ -206,11 +250,12 @@ func readEntityDataPath(lexer: var Lexer): Token =
   lexer.readDataPath(tkEntityData, lexer.pos)
 
 func startsConditionCheck(lexer: Lexer): bool =
-  ## A check starts a condition part (after `(`, `and`, `or` or `!`) with one of the words, then a
-  ## space and something that is not an operator. So `block == 1` and `(block)` still read `block`
-  ## as a name.
-  if lexer.conditionParenDepth == 0 or lexer.previousTag.isNone: return false
-  if lexer.previousTag.get notin {tkLeftParen, tkAnd, tkOr, tkBang}: return false
+  ## A check starts a condition part (after `if`, `elif`, `while`, `(`, `and`, `or` or `!`) with one
+  ## of the words, then a space and something that is not an operator. So `block == 1` and
+  ## `(block)` still read `block` as a name.
+  if not lexer.inCondition or lexer.previousTag.isNone: return false
+  if lexer.previousTag.get notin {tkIf, tkElif, tkWhile, tkLeftParen, tkAnd, tkOr, tkBang}:
+    return false
 
   var stop = lexer.pos
   while stop < lexer.input.len and isLetter(lexer.input[stop]): inc stop
@@ -218,7 +263,7 @@ func startsConditionCheck(lexer: Lexer): bool =
   if stop >= lexer.input.len or lexer.input[stop] != ' ': return false
   while stop < lexer.input.len and lexer.input[stop] == ' ': inc stop
   if stop >= lexer.input.len: return false
-  lexer.input[stop] notin "=<>!)+-*/%,;"
+  lexer.input[stop] notin "=<>!)+-*/%,;:"
 
 func isWordAhead(lexer: Lexer, word: string): bool =
   let start = lexer.pos + 1
@@ -227,8 +272,8 @@ func isWordAhead(lexer: Lexer, word: string): bool =
   stop == lexer.input.len or not isLetter(lexer.input[stop]) and not lexer.input[stop].isDigit
 
 func readConditionText(lexer: var Lexer): string =
-  ## Reads to the `)` that closes the condition part, or to an `and` or `or` word, outside brackets
-  ## and quotes.
+  ## Reads to the `)` that closes the condition part, to an `and` or `or` word, or to the block
+  ## colon, outside brackets and quotes.
   let start = lexer.pos
   var depth = 0
   var quote = '\0'
@@ -245,6 +290,8 @@ func readConditionText(lexer: var Lexer): string =
         dec depth
       of ' ':
         if depth == 0 and (lexer.isWordAhead("and") or lexer.isWordAhead("or")): break
+      of ':':
+        if depth == 0 and lexer.isBlockColon(): break
       else: discard
     lexer.readChar()
   lexer.input[start..<lexer.pos].strip(leading = false, chars = {' '})
@@ -304,64 +351,120 @@ func readNumber(lexer: var Lexer): string =
   if lexer.ch in "bBsSlLfFdD" and endsAfter: lexer.readChar()
   lexer.input[start..<lexer.pos]
 
-func skipWhitespaceAndComments(lexer: var Lexer) =
+func startNextLine(lexer: var Lexer) =
+  inc lexer.line
+  lexer.readChar()
+  lexer.lineStart = lexer.pos
+
+func skipSpaceAndComments(lexer: var Lexer) =
+  ## Skips spaces and `//` comments. A line break is skipped too, unless it can end a statement:
+  ## in code with lines, outside brackets.
   while true:
     case lexer.ch
     of ' ', '\t', '\r':
       lexer.readChar()
     of '\n':
-      inc lexer.line
-      lexer.readChar()
-      lexer.lineStart = lexer.pos
+      if lexer.hasLines and lexer.nesting == 0: return
+      lexer.startNextLine()
     of '/':
       if lexer.peekChar() != '/': return
       while lexer.ch notin {'\n', '\0'}: lexer.readChar()
     else:
       return
 
-func readToken(lexer: var Lexer): Token =
-  lexer.skipWhitespaceAndComments()
-  lexer.tokenStart = lexer.pos
+func readLayout(lexer: var Lexer): Option[Token] =
+  ## The layout token before the next real token, if there is one: the end of a line, or the
+  ## change of indentation at the start of one. Blank and comment-only lines give none.
+  while lexer.ch == '\n':
+    if lexer.lineHasToken:
+      lexer.lineHasToken = false
+      return some(lexer.newToken(tkNewline, ""))
+    lexer.startNextLine()
+    lexer.atLineStart = true
+    lexer.skipSpaceAndComments()
+    lexer.tokenStart = lexer.pos
 
+  if lexer.ch == '\0':
+    if lexer.lineHasToken:
+      lexer.lineHasToken = false
+      return some(lexer.newToken(tkNewline, ""))
+    if lexer.indents.len > 1:
+      lexer.indents.setLen(lexer.indents.len - 1)
+      return some(lexer.newToken(tkDedent, ""))
+    return none(Token)
+
+  if not lexer.atLineStart: return none(Token)
+  lexer.atLineStart = false
+  let indentation = lexer.input[lexer.lineStart..<lexer.pos]
+  # Errors come first, so the last token before the line is a layout token and a `/` there still
+  # starts a command.
+  var tokens, changes: seq[Token]
+  if '\t' in indentation: tokens.add lexer.newToken(tkLayoutError, "indent with spaces, not tabs")
+
+  let width = indentation.len
+  if width > lexer.indents[^1]:
+    lexer.indents.add width
+    changes.add lexer.newToken(tkIndent, "")
+  else:
+    while width < lexer.indents[^1]:
+      lexer.indents.setLen(lexer.indents.len - 1)
+      changes.add lexer.newToken(tkDedent, "")
+    if width != lexer.indents[^1]:
+      tokens.add lexer.newToken(tkLayoutError,
+                                "this line's indentation does not match any line above it")
+
+  tokens.add changes
+  if tokens.len == 0: return none(Token)
+  lexer.pending.add tokens[1..^1]
+  some(tokens[0])
+
+func readToken(lexer: var Lexer): Token =
+  lexer.skipSpaceAndComments()
+  lexer.tokenStart = lexer.pos
+  if lexer.hasLines and lexer.nesting == 0:
+    let layout = lexer.readLayout()
+    if layout.isSome: return layout.get
+  if lexer.previousTag == some(tkExecute): return lexer.readExecuteSubcommands()
+
+  # A `{` or `[` after a name at the top level starts a data file body.
+  let startsJsonBody = lexer.nesting == 0 and lexer.indents.len == 1 and
+                       lexer.previousTag in [some(tkIdentifier), some(tkString)]
   case lexer.ch
   of '(':
-    if lexer.previousTag == some(tkExecute): return lexer.readExecuteSubcommands()
-    let opensCondition = lexer.previousTag in [some(tkIf), some(tkWhile)]
-    if opensCondition or lexer.conditionParenDepth > 0: inc lexer.conditionParenDepth
+    inc lexer.nesting
     result = lexer.newToken(tkLeftParen, "(")
-  of '@':
-    return lexer.readSelector()
   of ')':
-    lexer.conditionParenDepth = max(lexer.conditionParenDepth - 1, 0)
+    lexer.nesting = max(lexer.nesting - 1, 0)
     result = lexer.newToken(tkRightParen, ")")
   of '{':
-    let afterName = lexer.previousTag in [some(tkIdentifier), some(tkString)]
-    if lexer.braceDepth == 0 and afterName: return lexer.readJsonBody()
-    inc lexer.braceDepth
+    if startsJsonBody: return lexer.readJsonBody()
+    inc lexer.nesting
     result = lexer.newToken(tkLeftBrace, "{")
   of '}':
-    lexer.braceDepth = max(lexer.braceDepth - 1, 0)
+    lexer.nesting = max(lexer.nesting - 1, 0)
     result = lexer.newToken(tkRightBrace, "}")
+  of '[':
+    if startsJsonBody: return lexer.readJsonBody()
+    inc lexer.nesting
+    result = lexer.newToken(tkLeftBracket, "[")
+  of ']':
+    lexer.nesting = max(lexer.nesting - 1, 0)
+    result = lexer.newToken(tkRightBracket, "]")
+  of '@':
+    return lexer.readSelector()
   of ',':
     result = lexer.newToken(tkComma, ",")
   of '.':
-    if lexer.previousTag == some(tkSelector) and lexer.peekChar() ==
-        '$': return lexer.readEntityDataPath()
+    if lexer.previousTag == some(tkSelector) and lexer.peekChar() == '$':
+      return lexer.readEntityDataPath()
     if lexer.peekChar() == '.':
       lexer.readChar()
       result = lexer.newToken(tkDotDot, "..")
     else:
       result = lexer.newToken(tkDot, ".")
-  of '|':
-    result = lexer.newToken(tkPipe, "|")
-  of '[':
-    let afterName = lexer.previousTag in [some(tkIdentifier), some(tkString)]
-    if lexer.braceDepth == 0 and afterName: return lexer.readJsonBody()
-    result = lexer.newToken(tkLeftBracket, "[")
-  of ']':
-    result = lexer.newToken(tkRightBracket, "]")
   of ':':
-    result = lexer.newToken(tkColon, ":")
+    let isBlockColon = lexer.nesting == 0 and lexer.isBlockColon()
+    result = lexer.newToken(if isBlockColon: tkBlockColon else: tkColon, ":")
   of '$', '#':
     if lexer.ch == '$' and lexer.peekChar() == '(': return lexer.readMacroKey()
     if isLetter(lexer.peekChar()): return lexer.readVariable()
@@ -398,10 +501,9 @@ func readToken(lexer: var Lexer): Token =
   else:
     if isLetter(lexer.ch):
       if lexer.startsWithSource():
-        let text = lexer.readBalanced(';')
+        let text = lexer.readRawText(toBlockColon = false)
         if text.isNone: return lexer.newToken(tkUnclosed, "\"")
-        let trimmed = text.get.strip(leading = false, chars = {' ', '\t', '\r'})
-        return lexer.newToken(tkWithSource, trimmed)
+        return lexer.newToken(tkWithSource, text.get)
       if lexer.startsConditionCheck():
         return lexer.newToken(tkConditionText, lexer.readConditionText())
       let literal = lexer.readIdentifier()
@@ -412,5 +514,15 @@ func readToken(lexer: var Lexer): Token =
   lexer.readChar()
 
 func nextToken*(lexer: var Lexer): Token =
-  result = lexer.readToken()
+  if lexer.pending.len > 0:
+    result = lexer.pending[0]
+    lexer.pending.delete(0)
+  else:
+    result = lexer.readToken()
+
+  case result.tag
+  of tkIf, tkElif, tkWhile: lexer.inCondition = true
+  of tkBlockColon, tkNewline: lexer.inCondition = false
+  else: discard
+  if result.tag notin {tkNewline, tkIndent, tkDedent, tkEof}: lexer.lineHasToken = true
   lexer.previousTag = some(result.tag)

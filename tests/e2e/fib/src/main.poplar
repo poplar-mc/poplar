@@ -1,28 +1,24 @@
-namespace fib;
+namespace fib
 
-var #result = 0;
-var $result = 0;
+var #result = 0
+var $result = 0
 
-mcfun fib() {
-    if ($(n) <= 1) {
-        return $(n);
-    } else {
-        return fib() with {n: $(n) - 1} + fib() with {n: $(n) - 2};
-    }
-}
+mcfun fib:
+    if $(n) <= 1:
+        return $(n)
+    else:
+        return fib() with {n: $(n) - 1} + fib() with {n: $(n) - 2}
 
 // `n` is in a temp while the recursive call runs, so the call needs a stack frame.
-mcfun fact() {
-    if ($(n) <= 1) { return 1; }
-    return $(n) * fact() with {n: $(n) - 1};
-}
+mcfun fact:
+    if $(n) <= 1: return 1
+    return $(n) * fact() with {n: $(n) - 1}
 
-mcfun test() {
-    #result = fib() with {n: 10};
-    $result = #result;
-    /say fib(10) = {{$result}};
+mcfun test:
+    #result = fib() with {n: 10}
+    $result = #result
+    /say fib(10) = {{$result}}
 
-    #result = fact() with {n: 5};
-    $result = #result;
-    /say fact(5) = {{$result}};
-}
+    #result = fact() with {n: 5}
+    $result = #result
+    /say fact(5) = {{$result}}

@@ -1,25 +1,23 @@
 // Two namespaces with the same names, calling each other in code and from commands.
-namespace namespaces;
+namespace namespaces
 
-import combat;
-import magic;
-import std;
+import combat
+import magic
+import std
 
-mcfun load() {
-    #magic:order = #magic:order * 10 + 3;
-}
+mcfun load:
+    #magic:order = #magic:order * 10 + 3
 
-mcfun test() {
+mcfun test:
     // Each load adds its digit at /reload: magic, then combat (which imports magic), then this namespace.
-    /say load order {{#magic:order}};
-    combat:heal();
-    magic:heal();
-    /function combat:heal;
-    /function magic:castSpell;
-    /function magic:cast_spell;
-    #combat:mana = 7;
-    combat:report();
-    /say clamp {{ std:clamp() with {x: 30, low: 0, high: 20} }};
-    if (predicate combat:isLucky) { /say lucky; }
-    magic:keepLocals();
-}
+    /say load order {{#magic:order}}
+    combat:heal()
+    magic:heal()
+    /function combat:heal
+    /function magic:castSpell
+    /function magic:cast_spell
+    #combat:mana = 7
+    combat:report()
+    /say clamp {{ std:clamp() with {x: 30, low: 0, high: 20} }}
+    if predicate combat:isLucky: /say lucky
+    magic:keepLocals()

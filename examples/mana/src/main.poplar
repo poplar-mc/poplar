@@ -1,33 +1,26 @@
 // Every player has mana that regenerates each tick. `/trigger cast` spends 30 of it on a speed boost.
-namespace mana;
+namespace mana
 
-var #mana = 0;
-var #maxMana = 100;
+var #mana = 0
+var #maxMana = 100
 
-mcfun load() {
-    onTrigger("cast", cast);
-}
+mcfun load:
+    onTrigger("cast", cast)
 
-mcfun tick() {
-    execute (as @a) {
-        regen();
-    }
-}
+mcfun tick:
+    execute as @a:
+        regen()
 
 // Runs as each player. `@s.#mana` is the player's own mana.
-mcfun regen() {
-    if (@s.#mana < #maxMana) {
-        @s.#mana = @s.#mana + 1;
-    }
-    /title @s actionbar {{["Mana: ", text(@s.#mana), "/", text(#maxMana)]}};
-}
+mcfun regen:
+    if @s.#mana < #maxMana:
+        @s.#mana = @s.#mana + 1
+    /title @s actionbar {{["Mana: ", text(@s.#mana), "/", text(#maxMana)]}}
 
-mcfun cast() {
-    if (@s.#mana < 30) {
-        /tellraw @s {text: "Not enough mana", color: "red"};
-        return;
-    }
-    @s.#mana = @s.#mana - 30;
-    /effect give @s speed 5 1;
-    /tellraw @s {text: "Whoosh!", color: "aqua"};
-}
+mcfun cast:
+    if @s.#mana < 30:
+        /tellraw @s {text: "Not enough mana", color: "red"}
+        return
+    @s.#mana = @s.#mana - 30
+    /effect give @s speed 5 1
+    /tellraw @s {text: "Whoosh!", color: "aqua"}

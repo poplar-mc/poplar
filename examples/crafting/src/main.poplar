@@ -1,5 +1,5 @@
 // Data files are JSON, so output from a generator such as misode.github.io pastes in as it is.
-namespace crafting;
+namespace crafting
 
 // Any stick-like item works in the recipe below.
 itemTag handles { "values": ["minecraft:stick", "minecraft:blaze_rod", "minecraft:breeze_rod"] }
@@ -29,7 +29,6 @@ advancement craftedTrident {
   "rewards": { "function": "crafting:first_trident" }
 }
 
-mcfun firstTrident() {
-    /tellraw @s {text: "You crafted a trident!", color: "aqua"};
-    if (predicate self:lucky) { /give @s minecraft:diamond; }
-}
+mcfun firstTrident:
+    /tellraw @s {text: "You crafted a trident!", color: "aqua"}
+    if predicate self:lucky: /give @s minecraft:diamond

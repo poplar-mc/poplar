@@ -1,20 +1,19 @@
 // The smallest pack: a greeting when the pack loads.
-namespace hello;
+namespace hello
 
-var #loads = 0;
+// A constant only exists while the pack is built. `{{...}}` writes it into a command.
+const name = "Poplar"
 
-mcfun load() {
-    #loads = #loads + 1;
+var #loads = 0
 
-    // A constant only exists while the pack is built. `{{...}}` writes it into the command.
-    var name = "Poplar";
-    /say Hello from {{name}}!;
+mcfun load:
+    #loads = #loads + 1
+
+    /say Hello from {{name}}!
 
     // A score is read in the game, so this line becomes a macro line.
-    /say This pack has loaded {{#loads}} times;
+    /say This pack has loaded {{#loads}} times
 
     // `for` repeats its body while the pack is built: three `say` commands.
-    for (1..4) |step| {
-        /say Step {{step}};
-    }
-}
+    for step in 1..4:
+        /say Step {{step}}

@@ -76,7 +76,7 @@ proc dataArguments(compiler: Compiler, value: Expression, env: Environment): Fun
   if initial.isSome:
     let name = identifier.name
     compiler.failOn(value, &"'with' needs a compound, but '${name}' is {initial.get}. Declare it " &
-                           &"as a compound: 'var ${name} = {{name: {initial.get}}};'")
+                           &"as a compound: 'var ${name} = {{name: {initial.get}}}'")
   DataPathArguments(dataPath: path)
 
 proc inlineCompound(compiler: Compiler, entries: openArray[Entry], env: Environment): string =
@@ -265,7 +265,7 @@ proc collectStdIds(compiler: Compiler, text: string, calls: var OrderedSet[strin
 
 proc collectInsertCalls(compiler: Compiler, parts: openArray[CommandPart],
                         calls: var OrderedSet[string]) =
-  ## `/say {{double(2)}};` calls `double` too, and `/function std:clamp {...};` is a use of
+  ## `/say {{double(2)}}` calls `double` too, and `/function std:clamp {...}` is a use of
   ## `std:clamp`.
   for part in parts:
     case part
@@ -356,7 +356,7 @@ proc compileCall(compiler: Compiler, call: Call, env: Environment, commands: var
     compiler.compileEvent(call, name, env)
     return
   if isStringCall(call) or isStringTest(call):
-    compiler.fail(&"'{name}' gives a value. Use it: '$x = {name}(...);' or 'if ({name}(...))'")
+    compiler.fail(&"'{name}' gives a value. Use it: '$x = {name}(...)' or 'if {name}(...):'")
   if callee.get.namespace.isNone and isBuiltin(name):
     compiler.compileListBuiltin(name, call, env, commands)
     return

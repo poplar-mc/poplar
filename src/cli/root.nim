@@ -6,7 +6,7 @@ import command_line, output
 
 type Shared* = object
   ## What `main` passes to every command.
-  stdPath*: string ## The folder of the standard library, which `import std;` loads.
+  stdPath*: string ## The folder of the standard library, which `import std` loads.
   color*: bool
 
 const version* = poplarVersion
