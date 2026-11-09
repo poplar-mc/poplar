@@ -1,7 +1,7 @@
 ## Small rewrites of the IR, as in bolt-expressions. `optimizeFunction` runs the passes in order on
 ## each function.
 
-import std/[math, options, sets, strutils]
+import std/[math, options, sets, strutils, tables]
 import datapack_writer, ir
 
 type
@@ -18,6 +18,15 @@ type
   KnownScores = object
     ## The scores with a known value at one point in a function.
     entries: seq[KnownScore]
+
+  ScoreReads* = object
+    scores: HashSet[Score]
+    rawCheckText: string ## The checks written by the user, which can name any score.
+
+  CallCounts = object
+    calls: CountTable[string] ## The number of commands that call each function.
+    returnValueReads: CountTable[string]
+      ## The number of commands that use the return value of each function.
 
 func runOf*(command: Command): ref Command =
   ## The command that an `execute`, `store result` or `return run` runs. Nil for other commands.
@@ -82,28 +91,51 @@ func runsCheckedCode(execute: Execute): bool =
     else: discard
   false
 
-func checkReads(check: Check, score: Score): bool =
-  case check.condition
-  of DataTest, FunctionReturnsTest: false
-  # `score @s ...` in a check written by the user can name any score.
-  of RawTest(raw): score.holder in raw
-  of MatchesTest(matches): matches.score == score
-  of CompareTest(compare): compare.left == score or compare.right == score
-
-func readsScore*(command: Command, score: Score): bool =
+func addScoresRead(command: Command, scores: var seq[Score], rawChecks: var seq[string]) =
+  ## Adds the scores that the command reads. A check written by the user (`score @s ...`) can name
+  ## any score, so its text goes in `rawChecks`.
   case command
-  of {ScoreAddCommand, ScoreRemoveCommand}(change): change.score == score
+  of {ScoreAddCommand, ScoreRemoveCommand}(change): scores.add change.score
   of ScoreOperationCommand(operation):
-    operation.source == score or (operation.op != opAssign and operation.target == score)
-  of ScoreToDataCommand(store): store.score == score
-  of ScoreGetCommand(read): read == score
+    scores.add operation.source
+    if operation.op != opAssign: scores.add operation.target
+  of ScoreToDataCommand(store): scores.add store.score
+  of ScoreGetCommand(read): scores.add read
   of ExecuteCommand(execute):
     for check in execute.checks:
-      if checkReads(check, score): return true
-    readsScore(execute.run[], score)
+      case check.condition
+      of DataTest, FunctionReturnsTest: discard
+      of RawTest(raw): rawChecks.add raw
+      of MatchesTest(matches): scores.add matches.score
+      of CompareTest(compare):
+        scores.add compare.left
+        scores.add compare.right
+    addScoresRead(execute.run[], scores, rawChecks)
   else:
     let run = runOf(command)
-    run != nil and readsScore(run[], score)
+    if run != nil: addScoresRead(run[], scores, rawChecks)
+
+func readsScore(command: Command, score: Score): bool =
+  var scores: seq[Score]
+  var rawChecks: seq[string]
+  addScoresRead(command, scores, rawChecks)
+  if score in scores: return true
+  for raw in rawChecks:
+    if score.holder in raw: return true
+  false
+
+func scoreReads*(functions: openArray[McFunction]): ScoreReads =
+  ## The scores that any command reads, so that a check of many scores scans the program one time.
+  var scores: seq[Score]
+  var rawChecks: seq[string]
+  for function in functions:
+    for command in function.commands: addScoresRead(command, scores, rawChecks)
+  result.scores = scores.toHashSet
+  # A holder never has a line break, so it is in the joined text only if it is in one check.
+  result.rawCheckText = rawChecks.join("\n")
+
+func isRead*(reads: ScoreReads, score: Score): bool =
+  score in reads.scores or score.holder in reads.rawCheckText
 
 func setsScore(command: Command, score: Score): bool =
   ## Only a command that always runs counts. A write inside `execute if` may not happen.
@@ -134,15 +166,18 @@ func canReturn(command: Command): bool =
   of ExecuteRawCommand(execute): canReturn(execute.run[])
   else: false
 
-func callsFunction(command: Command, name: string): bool =
+func calledFunctions(command: Command): seq[string] =
+  ## The functions that the command calls, each one time.
   case command
-  of FunctionCommand(called): called == name
-  of FunctionWithCommand(call): call.name == name
+  of FunctionCommand(called): result = @[called]
+  of FunctionWithCommand(call): result = @[call.name]
   of ExecuteCommand(execute):
-    checkedFunction(execute) == some(name) or callsFunction(execute.run[], name)
+    result = calledFunctions(execute.run[])
+    let checked = checkedFunction(execute)
+    if checked.isSome and checked.get notin result: result.add checked.get
   else:
     let run = runOf(command)
-    run != nil and callsFunction(run[], name)
+    if run != nil: result = calledFunctions(run[])
 
 func readsTempsOf(name: string, temp: Score): bool =
   # A `macro_<n>` helper holds one user command, so it never reads a temp.
@@ -509,25 +544,27 @@ func optimizeFunction*(functionName: string, commands: openArray[Command]): seq[
 
 # ---- across functions
 
-func smallBody(functions: openArray[McFunction], caller, name: string): Option[Command] =
-  if not isGenerated(name) or caller == name: return none(Command)
+func smallBodies(functions: openArray[McFunction]): Table[string, Command] =
+  ## The command of each generated function that has one command, which cannot return.
   for function in functions:
-    if function.name != name: continue
-    if function.commands.len != 1 or canReturn(function.commands[0]): return none(Command)
-    return some(function.commands[0])
-  none(Command)
+    if isGenerated(function.name) and function.commands.len == 1 and
+       not canReturn(function.commands[0]):
+      result[function.name] = function.commands[0]
 
-func inlineCall(functions: openArray[McFunction], caller: string,
+func smallBody(bodies: Table[string, Command], caller, name: string): Option[Command] =
+  if caller != name and name in bodies: some(bodies[name]) else: none(Command)
+
+func inlineCall(bodies: Table[string, Command], caller: string,
                 command: Command): Option[Command] =
   case command
-  of FunctionCommand(name): smallBody(functions, caller, name)
+  of FunctionCommand(name): smallBody(bodies, caller, name)
   # A generated function gets the arguments of its mcfun, so `$(arg)` means the same in the caller.
   of FunctionWithCommand(call):
     case call.arguments
-    of CompoundArguments: smallBody(functions, caller, call.name)
+    of CompoundArguments: smallBody(bodies, caller, call.name)
     else: none(Command)
   of ExecuteCommand(execute):
-    let run = inlineCall(functions, caller, execute.run[])
+    let run = inlineCall(bodies, caller, execute.run[])
     if run.isNone: return none(Command)
     case run.get
     of ExecuteCommand(inner):
@@ -535,38 +572,39 @@ func inlineCall(functions: openArray[McFunction], caller: string,
     else:
       some(ExecuteCommand(execute: Execute(checks: execute.checks, run: createCommand(run.get))))
   of ExecuteRawCommand(execute):
-    let run = inlineCall(functions, caller, execute.run[])
+    let run = inlineCall(bodies, caller, execute.run[])
     if run.isNone: return none(Command)
     some(ExecuteRawCommand(executeRaw: ExecuteRaw(subcommands: execute.subcommands,
         run: createCommand(run.get))))
   else: none(Command)
 
-func callCount(functions: openArray[McFunction], name: string): int =
-  for function in functions:
-    for command in function.commands:
-      if callsFunction(command, name): inc result
-
-func readsReturnValue(command: Command, name: string): bool =
-  case command
-  of StoreResultCommand(store): callsFunction(store.run[], name)
-  of ReturnRunCommand(run): callsFunction(run[], name)
-  of ExecuteCommand(execute):
-    checkedFunction(execute) == some(name) or readsReturnValue(execute.run[], name)
-  of ExecuteRawCommand(execute): readsReturnValue(execute.run[], name)
-  else: false
-
-func isReturnValueRead(functions: openArray[McFunction], name: string): bool =
-  ## True when a command uses the return value of `name`: `store result ... run function`,
+func returnValuesRead(command: Command): seq[string] =
+  ## The functions whose return value the command uses: `store result ... run function`,
   ## `if function`, or `return run function`.
-  for function in functions:
-    for command in function.commands:
-      if readsReturnValue(command, name): return true
-  false
+  case command
+  of StoreResultCommand(store): result = calledFunctions(store.run[])
+  of ReturnRunCommand(run): result = calledFunctions(run[])
+  of ExecuteCommand(execute):
+    result = returnValuesRead(execute.run[])
+    let checked = checkedFunction(execute)
+    if checked.isSome and checked.get notin result: result.add checked.get
+  of ExecuteRawCommand(execute): result = returnValuesRead(execute.run[])
+  else: discard
 
-func inlineTailCalls(functions: var seq[McFunction]) =
+func add(counts: var CallCounts, command: Command, change = 1) =
+  for name in calledFunctions(command): counts.calls.inc(name, change)
+  for name in returnValuesRead(command): counts.returnValueReads.inc(name, change)
+
+func callCounts(functions: openArray[McFunction]): CallCounts =
+  for function in functions:
+    for command in function.commands: result.add command
+
+func inlineTailCalls(functions: var seq[McFunction], counts: var CallCounts) =
   ## A generated function that is called once, as the last command of its caller, is put in its
   ## place, even when it can return: leaving the caller there is what happens anyway. Not when
   ## something reads the caller's return value.
+  var indexes: Table[string, int]
+  for index, function in functions: indexes[function.name] = index
   for function in functions.mitems:
     let commands = function.commands
     if commands.len == 0: continue
@@ -580,28 +618,30 @@ func inlineTailCalls(functions: var seq[McFunction]) =
       of CompoundArguments: calleeName = call.name
       else: continue
     else: continue
-    if not isGenerated(calleeName) or calleeName == function.name: continue
-    if callCount(functions, calleeName) != 1 or isReturnValueRead(functions,
-        function.name): continue
-    for candidate in functions:
-      if candidate.name == calleeName:
-        function.commands = commands[0 ..< commands.len - 1] & candidate.commands
-        break
+    if not isGenerated(calleeName) or calleeName == function.name or calleeName notin indexes:
+      continue
+    if counts.calls[calleeName] != 1 or counts.returnValueReads[function.name] > 0: continue
+    let calleeCommands = functions[indexes[calleeName]].commands
+    counts.add(commands[^1], -1)
+    for command in calleeCommands: counts.add command
+    function.commands = commands[0 ..< commands.len - 1] & calleeCommands
 
 func inlineSmallFunctions*(functions: openArray[McFunction]): seq[McFunction] =
   ## A generated function with one command is put where it is called, and the function is removed. A
   ## command that can return is not moved, because the `return` would then leave the caller.
   # One pass with the original bodies, so that functions that call each other cannot grow forever.
+  let bodies = smallBodies(functions)
   var inlined = @functions
   for function in inlined.mitems:
     var commands: seq[Command]
     for command in function.commands:
-      commands.add inlineCall(functions, function.name, command).get(command)
+      commands.add inlineCall(bodies, function.name, command).get(command)
     function.commands = commands
-  inlineTailCalls(inlined)
+  var counts = callCounts(inlined)
+  inlineTailCalls(inlined, counts)
 
   for function in inlined:
-    if not isGenerated(function.name) or callCount(inlined, function.name) > 0: result.add function
+    if not isGenerated(function.name) or counts.calls[function.name] > 0: result.add function
   for function in result.mitems:
     function.commands = optimizeFunction(function.name, function.commands)
 

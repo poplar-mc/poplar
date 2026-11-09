@@ -1,6 +1,6 @@
 ## Checks command text against the command tree of mcmeta, and finds the ids in it.
 
-import std/[json, math, options, strformat, strutils, tables]
+import std/[math, options, parsejson, streams, strformat, strutils, tables]
 import config
 
 type
@@ -72,26 +72,73 @@ const selectorOptions = ["advancements", "distance", "dx", "dy", "dz", "gamemode
                          "x_rotation", "y", "y_rotation", "z"]
   ## The options of a selector, as the game knows them.
 
-func toNode(json: JsonNode): Node =
-  result = Node(kind: parseEnum[NodeKind]("nk" & json["type"].getStr.capitalizeAscii),
-                executable: json{"executable"}.getBool, parser: json{"parser"}.getStr)
-  if json.hasKey("children"):
-    for name, child in json["children"]: result.children[name] = toNode(child)
-  if json.hasKey("redirect"):
-    for name in json["redirect"]: result.redirect.add name.getStr
-  let properties = json{"properties"}
-  if properties != nil:
-    if properties.hasKey("min"): result.properties.min = some(properties["min"].getFloat)
-    if properties.hasKey("max"): result.properties.max = some(properties["max"].getFloat)
-    if properties.hasKey("type"): result.properties.kind = some(properties["type"].getStr)
-    if properties.hasKey("registry"):
-      result.properties.registry = some(properties["registry"].getStr)
+# Each build loads the tree, so the JSON goes straight into the nodes, one event at a time. A
+# `JsonNode` tree in between makes the load take about twice as long.
+
+proc advance(parser: var JsonParser) =
+  parser.next()
+  if parser.kind in {jsonError, jsonEof}: raiseAssert "bad mcmeta JSON: " & parser.errorMsg
+
+iterator objectKeys(parser: var JsonParser): string =
+  ## Each key of the object at the current event. The loop body reads the value.
+  parser.advance()
+  while parser.kind != jsonObjectEnd:
+    let key = parser.str
+    parser.advance()
+    yield key
+    parser.advance()
+
+iterator arrayStrings(parser: var JsonParser): string =
+  parser.advance()
+  while parser.kind != jsonArrayEnd:
+    yield parser.str
+    parser.advance()
+
+proc skipValue(parser: var JsonParser) =
+  var depth = 0
+  while true:
+    case parser.kind
+    of jsonObjectStart, jsonArrayStart: inc depth
+    of jsonObjectEnd, jsonArrayEnd: dec depth
+    else: discard
+    if depth == 0: return
+    parser.advance()
+
+proc readNode(parser: var JsonParser): Node =
+  result = Node()
+  for key in parser.objectKeys:
+    case key
+    of "type": result.kind = parseEnum[NodeKind]("nk" & parser.str.capitalizeAscii)
+    of "executable": result.executable = parser.kind == jsonTrue
+    of "parser": result.parser = parser.str
+    of "children":
+      for name in parser.objectKeys: result.children[name] = parser.readNode()
+    of "redirect":
+      for name in parser.arrayStrings: result.redirect.add name
+    of "properties":
+      for property in parser.objectKeys:
+        case property
+        of "min": result.properties.min = some(parseFloat(parser.str))
+        of "max": result.properties.max = some(parseFloat(parser.str))
+        of "type": result.properties.kind = some(parser.str)
+        of "registry": result.properties.registry = some(parser.str)
+        else: parser.skipValue()
+    else: parser.skipValue()
 
 proc loadCommandTree*(): CommandTree =
-  result = CommandTree(root: toNode(parseJson(commandsJson)))
-  for registry, ids in parseJson(registriesJson).pairs:
-    result.registries[registry] = @[]
-    for id in ids: result.registries[registry].add id.getStr
+  var parser: JsonParser
+  parser.open(newStringStream(commandsJson), "commands.json")
+  parser.advance()
+  result = CommandTree(root: parser.readNode())
+  parser.close()
+
+  parser.open(newStringStream(registriesJson), "registries.json")
+  parser.advance()
+  for registry in parser.objectKeys:
+    var ids: seq[string]
+    for id in parser.arrayStrings: ids.add id
+    result.registries[registry] = ids
+  parser.close()
 
 # ---- numbers in command text
 

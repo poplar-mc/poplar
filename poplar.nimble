@@ -1,6 +1,6 @@
 import std/[os, strutils]
 
-version = "0.7.0"
+version = "0.7.1"
 author = "Jordan Baron"
 description = "A programming language that compiles to Minecraft Java datapacks"
 license = "MIT"
