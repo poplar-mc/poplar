@@ -75,43 +75,50 @@ proc addEventFunctions(compiler: Compiler, functions: var seq[McFunction],
   for name in ticks: tick.add FunctionCommand(function: name)
   functions.add McFunction(name: "poplar/tick", commands: tick)
 
-func isScoreRead(functions: openArray[McFunction], score: Score): bool =
-  for function in functions:
-    for command in function.commands:
-      if readsScore(command, score): return true
-  false
-
 proc removeUnusedConstants(compiler: Compiler, functions: openArray[McFunction]) =
   ## The optimizer can remove the last use of a constant, for example `*= #poplar.c1`.
+  let reads = scoreReads(functions)
   var index = compiler.constants.len
   while index > 0:
     dec index
-    if not isScoreRead(functions, constantScore(compiler.constants[index])):
+    if not reads.isRead(constantScore(compiler.constants[index])):
       compiler.constants.delete(index)
 
-proc mentionsGlobalHolder(command: Command, objective: string): bool =
-  let text = case command
-    of RawCommand(raw): raw
-    of MacroCommand(macroLine): macroLine
-    of FunctionWithCommand(call):
-      case call.arguments
-      of CompoundArguments(compound): compound
-      else: return false
-    else:
-      let run = runOf(command)
-      return run != nil and mentionsGlobalHolder(run[], objective)
-  globalHolder in text and objective in text
+func userText(command: Command): string =
+  ## The text of a user command, a macro line or the compound of a call, which can name any score.
+  case command
+  of RawCommand(raw): raw
+  of MacroCommand(macroLine): macroLine
+  of FunctionWithCommand(call):
+    case call.arguments
+    of CompoundArguments(compound): compound
+    else: ""
+  else:
+    let run = runOf(command)
+    if run == nil: "" else: userText(run[])
 
-proc isGlobalValueUsed(compiler: Compiler, functions: openArray[McFunction],
-    global: GlobalScore): bool =
+func addQuotedStrings(text: string, strings: var HashSet[string]) =
+  ## Each `"..."` from a quote to the next quote, with the quotes.
+  var start = text.find('"')
+  while start >= 0:
+    let finish = text.find('"', start + 1)
+    if finish < 0: return
+    strings.incl text[start .. finish]
+    start = finish
+
+proc usedGlobals(compiler: Compiler, functions: openArray[McFunction]): HashSet[string] =
   ## A score that is only used on entities (`@s.#mana`) needs no initial value on `#global`. A text
-  ## part such as `text(#mana)` names `#global` in the command text, so that counts as a use too.
-  let score = globalScore(global)
-  let objective = &"\"{global.outputNamespace.get(compiler.packNamespace)}.{global.name}\""
+  ## part such as `text(#mana)` names `#global` and the objective in the command text, so that
+  ## counts as a use too.
+  let reads = scoreReads(functions)
+  var quotedInText: HashSet[string]
   for function in functions:
     for command in function.commands:
-      if readsScore(command, score) or mentionsGlobalHolder(command, objective): return true
-  false
+      let text = userText(command)
+      if globalHolder in text: addQuotedStrings(text, quotedInText)
+  for key, global in compiler.globals:
+    let objective = &"\"{global.outputNamespace.get(compiler.packNamespace)}.{global.name}\""
+    if reads.isRead(globalScore(global)) or objective in quotedInText: result.incl key
 
 proc buildLoadFunction(compiler: Compiler, functions: openArray[McFunction]): McFunction =
   ## Runs after all mcfuns, so that every constant they use is known.
@@ -145,8 +152,9 @@ proc buildLoadFunction(compiler: Compiler, functions: openArray[McFunction]): Mc
     commands.add ScoreSetCommand(scoreValue: ScoreValue(score: compiler.constantScore(constant),
         value: constant))
 
-  for global in compiler.globals.values:
-    if not compiler.isGlobalValueUsed(functions, global): continue
+  let used = compiler.usedGlobals(functions)
+  for key, global in compiler.globals:
+    if key notin used: continue
     commands.add ScoreSetIfUnsetCommand(scoreValue: ScoreValue(score: globalScore(global),
         value: global.initialValue))
 

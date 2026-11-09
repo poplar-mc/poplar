@@ -3,7 +3,7 @@
 ## A function name is `ns:path`, or only `path` in the pack namespace (Poplar's own files and the
 ## namespace of `poplar.json`). A score or data path with no namespace is in the pack namespace too.
 
-import std/[options, strutils]
+import std/[hashes, options, strutils]
 
 type
   Program* = object
@@ -268,6 +268,10 @@ func localScore*(generatedName, owner: string, namespace: Option[string]): Score
 
 func `==`*(a, b: Score): bool =
   a.objective == b.objective and a.namespace == b.namespace and a.holder == b.holder
+
+func hash*(score: Score): Hash =
+  ## Like `==`, it leaves out the kind.
+  !$(hash(score.holder) !& hash(score.objective.get("")) !& hash(score.namespace.get("")))
 
 func splitName*(name: string): (Option[string], string) =
   ## `combat:poplar/heal/if_0` → `combat` and `poplar/heal/if_0`. A name without `:` is in the pack
