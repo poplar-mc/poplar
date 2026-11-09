@@ -1,3 +1,3 @@
 // The Poplar standard library: math.poplar and lists.poplar. `import std;` loads every file here; `std:clamp() with {x: #hp, low: 0, high: 20}` calls one.
 // An mcfun here is only written into the pack when the project calls it, as `<pack namespace>:std/<name>`.
-namespace std;
+namespace std

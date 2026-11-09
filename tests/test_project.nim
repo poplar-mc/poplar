@@ -7,16 +7,16 @@ test "builds every file in src/, and std when a file imports it":
   createDir(folder / "src" / "lib")
   createDir(folder / "std")
   writeFile(folder / "poplar.json", "{\"namespace\": \"game\"}")
-  writeFile(folder / "src" / "main.poplar", "namespace game;\nimport std;\nmcfun one() {}\n")
-  writeFile(folder / "src" / "lib" / "two.poplar", "namespace game;\nmcfun two() {}\n")
-  writeFile(folder / "std" / "std.poplar", "namespace std;\nmcfun three() {}\n")
+  writeFile(folder / "src" / "main.poplar", "namespace game\nimport std\nmcfun one:\n")
+  writeFile(folder / "src" / "lib" / "two.poplar", "namespace game\nmcfun two:\n")
+  writeFile(folder / "std" / "std.poplar", "namespace std\nmcfun three:\n")
 
   let options = Options(stdPath: folder / "std", mode: moCheck)
   let built = build(folder, options)
   check built.diagnostics.len == 0
   check built.compiler.mcfuns.len == 3
 
-  writeFile(folder / "src" / "broken.poplar", "import magic;\nmcfun three() {}\n")
+  writeFile(folder / "src" / "broken.poplar", "import magic\nmcfun three:\n")
   check build(folder, options).summary.isNone
 
 test "only the std mcfuns that the project calls are written, under std/":
@@ -25,11 +25,20 @@ test "only the std mcfuns that the project calls are written, under std/":
   createDir(folder / "src")
   createDir(folder / "std")
   writeFile(folder / "poplar.json", "{\"namespace\": \"ns\"}")
-  writeFile(folder / "src" / "main.poplar", "namespace ns;\nimport std;\n" &
-            "mcfun main() { /say {{ std:double() with {x: 2} }}; /function std:fromCommand; }\n")
-  writeFile(folder / "std" / "std.poplar", "namespace std;\n" &
-            "mcfun double() { return twice() with {x: $(x)}; }\n" &
-            "mcfun twice() { return $(x) * 2; }\nmcfun fromCommand() {}\nmcfun unused() {}\n")
+  writeFile(folder / "src" / "main.poplar", """
+namespace ns
+import std
+mcfun main:
+    /say {{ std:double() with {x: 2} }}
+    /function std:fromCommand
+""")
+  writeFile(folder / "std" / "std.poplar", """
+namespace std
+mcfun double: return twice() with {x: $(x)}
+mcfun twice: return $(x) * 2
+mcfun fromCommand:
+mcfun unused:
+""")
 
   let built = build(folder, Options(stdPath: folder / "std", mode: moCheck))
   check built.diagnostics.len == 0

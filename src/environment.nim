@@ -1,4 +1,4 @@
-## The names that are visible in a scope: compile-time vars and the locals of an mcfun.
+## The names that are visible in a scope: constants, `for` variables and the locals of an mcfun.
 
 import std/[options, tables]
 import ast
@@ -28,16 +28,14 @@ type
     generatedName*: string
     owner*: string ## The mcfun that the local belongs to.
 
-  AssignResult* = enum
-    arAssigned, arNotFound, arCrossesRuntimeBranch
-
   Environment* = ref object
     store: Table[string, Value]
     scoreLocals: Table[string, Local]
     dataLocals: Table[string, Local]
     outer*: Environment
     runtimeBranch*: bool
-      ## True for the scope of a runtime `if` body. Compile-time vars from outside it cannot change.
+      ## True for the scope of a body that runs in the game only sometimes, such as a runtime
+      ## `if`. An event cannot be registered there.
 
 func get*(environment: Environment, name: string): Option[Value] =
   if name in environment.store: return some(environment.store[name])
@@ -60,13 +58,3 @@ func getLocal*(environment: Environment, kind: LocalKind, name: string): Option[
 proc declareLocal*(environment: Environment, name: string, local: Local) =
   if local.kind == lkScore: environment.scoreLocals[name] = local
   else: environment.dataLocals[name] = local
-
-proc assign*(environment: Environment, name: string, value: Value): AssignResult =
-  if name in environment.store:
-    environment.store[name] = value
-    return arAssigned
-
-  let outer = environment.outer
-  if outer == nil: return arNotFound
-  if environment.runtimeBranch and outer.get(name).isSome: return arCrossesRuntimeBranch
-  outer.assign(name, value)

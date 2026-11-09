@@ -16,7 +16,7 @@ type
     packPath*, zipPath*: Option[string] ## `poplar-out/<zipName>`, or none for `moCheck`.
 
   Options* = object
-    stdPath*: string ## The folder of the standard library, which `import std;` loads.
+    stdPath*: string ## The folder of the standard library, which `import std` loads.
     mode*: Mode
     overlay*: Table[string, string]
       ## Absolute path → the text of a file that is open in an editor. It is read instead of the
@@ -72,7 +72,7 @@ func namespaceFromName*(name: string): string =
   ## `My Pack` → `my_pack`. A namespace may only use a-z, 0-9, `_`, `.` and `-`.
   for ch in name:
     let lower = ch.toLowerAscii
-    # No `-`: the namespace is also written in `namespace x;`, where `-` is the minus sign.
+    # No `-`: the namespace is also written in `namespace x`, where `-` is the minus sign.
     result.add(if lower.isLowerAscii or lower.isDigit or lower in {'_', '.'}: lower else: '_')
 
 proc writeNewFile(path, data: string) =
@@ -87,8 +87,8 @@ proc writeNewProject*(folder, name: string) =
                "{\n  \"$schema\": \"./poplar.schema.json\",\n  \"zipName\": " & jsonString(name) &
                ",\n  \"namespace\": \"" & namespace & "\"\n}\n")
   writeNewFile(folder / "poplar.schema.json", schemaJson)
-  writeNewFile(folder / "src" / "main.poplar", &"namespace {namespace};\n\n" &
-               &"mcfun load() {{\n    /say Hello from {namespace}!;\n}}\n")
+  writeNewFile(folder / "src" / "main.poplar",
+               &"namespace {namespace}\n\nmcfun load:\n    /say Hello from {namespace}!\n")
   writeNewFile(folder / ".gitignore", outDirName & "/\n.env\n")
 
 proc installedStdPath*(): string =
@@ -137,7 +137,7 @@ proc parse(loader: var Loader, file: SourceFile, hasErrors: var bool): Option[Lo
     # A broken `namespace` line already has its own error.
     if fileParser.errors.len == 0:
       loader.addError(displayPath, some(Position(line: 1, column: 1)), "a file must start with " &
-                                                                       "'namespace <name>;'")
+                                                                       "'namespace <name>'")
     hasErrors = true
     return none(LoadedProgram)
   some(LoadedProgram(origin: file.origin, displayPath: displayPath, program: program))
@@ -182,7 +182,7 @@ proc load(loader: var Loader): bool =
     for imported in loaded.program.imports:
       if imported.name in namespaces: continue
       loader.addError(loaded.displayPath, some(imported.position),
-          &"no file has 'namespace {imported.name};'")
+          &"no file has 'namespace {imported.name}'")
       hasErrors = true
     loader.compiler.addProgram(loaded.displayPath, loaded.program, loaded.origin)
 

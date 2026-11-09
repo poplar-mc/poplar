@@ -1,30 +1,25 @@
-namespace showoff;
+namespace showoff
 
-var $shown = {};
+var $shown = {}
 
-mcfun load() {
-    onTrigger("showoff", show);
-}
+mcfun load:
+    onTrigger("showoff", show)
 
-mcfun show() {
-    $shown = {};
-    $shown.hover_event = @s.$SelectedItem;
-    $shown.hover_event.action = "show_item";
+mcfun show:
+    $shown = {}
+    $shown.hover_event = @s.$SelectedItem
+    $shown.hover_event.action = "show_item"
 
-    if (@s.$SelectedItem.components."minecraft:custom_name") {
-        $shown.name = @s.$SelectedItem.components."minecraft:custom_name";
-        named() with $shown;
-    } else {
-        $shown.id = slice(@s.$SelectedItem.id, 10);
-        unnamed() with $shown;
-    }
-}
+    if @s.$SelectedItem.components."minecraft:custom_name":
+        $shown.name = @s.$SelectedItem.components."minecraft:custom_name"
+        named() with $shown
+    else:
+        $shown.id = slice(@s.$SelectedItem.id, 10)
+        unnamed() with $shown
 
 // `$shown` is the macro compound, so `$(hover_event)` is `$shown.hover_event`.
-mcfun named() {
-    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {nbt: "shown.name", storage: "showoff:data", interpret: true, color: "aqua", italic: true, hover_event: $(hover_event)}, {text: "]", color: "aqua"}];
-}
+mcfun named:
+    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {nbt: "shown.name", storage: "showoff:data", interpret: true, color: "aqua", italic: true, hover_event: $(hover_event)}, {text: "]", color: "aqua"}]
 
-mcfun unnamed() {
-    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {color: "aqua", translate: "block.minecraft.$(id)", fallback: "%s", with: [{translate: "item.minecraft.$(id)"}], hover_event: $(hover_event)}, {text: "]", color: "aqua"}];
-}
+mcfun unnamed:
+    /tellraw @a [{selector: "@s", color: "yellow"}, {text: " is showing off their ", color: "white"}, {text: "[", color: "aqua"}, {color: "aqua", translate: "block.minecraft.$(id)", fallback: "%s", with: [{translate: "item.minecraft.$(id)"}], hover_event: $(hover_event)}, {text: "]", color: "aqua"}]

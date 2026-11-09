@@ -1,21 +1,18 @@
 // `/trigger held` describes the item in your hand, with the string helpers.
-namespace toolkit;
+namespace toolkit
 
-mcfun describeHeld() {
+mcfun describeHeld:
     // A bare data path in `if` checks that it exists, the same as `execute if data`.
-    if (!@s.$SelectedItem) {
-        /tellraw @s {text: "Your hand is empty", color: "gray"};
-        return;
-    }
+    if !@s.$SelectedItem:
+        /tellraw @s {text: "Your hand is empty", color: "gray"}
+        return
 
     // "minecraft:diamond_sword" → "diamond_sword". The local is removed when the function ends.
-    var $name = slice(@s.$SelectedItem.id, 10);
+    var $name = slice(@s.$SelectedItem.id, 10)
 
-    if (endsWith(@s.$SelectedItem.id, "_sword")) {
-        /tellraw @s {{["A sword: ", text($name)]}};
-    } else if (startsWith($name, "golden_")) {
-        /tellraw @s {{["Something shiny: ", text($name)]}};
-    } else {
-        /tellraw @s {{["You hold ", text($name), ", ", text(@s.$SelectedItem.count), " of them"]}};
-    }
-}
+    if endsWith(@s.$SelectedItem.id, "_sword"):
+        /tellraw @s {{["A sword: ", text($name)]}}
+    elif startsWith($name, "golden_"):
+        /tellraw @s {{["Something shiny: ", text($name)]}}
+    else:
+        /tellraw @s {{["You hold ", text($name), ", ", text(@s.$SelectedItem.count), " of them"]}}

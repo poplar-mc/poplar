@@ -75,11 +75,11 @@ func matchesCondition(score: Score, op: CompareOp, number: int64, negated: bool)
 proc minecraftCheck(compiler: Compiler, parts: openArray[CommandPart], column: int,
                     env: Environment, negated: bool): Condition =
   ## `block ~ ~-1 ~ stone` → `if block ~ ~-1 ~ stone`, checked like the subcommands of
-  ## `execute (...)`.
+  ## `execute`.
   let check = compiler.buildCommandText(parts, env)
   if check.isMacro:
     compiler.fail("a game value in a Minecraft check is not supported yet. " &
-                  "Use 'execute (if ...) { }'")
+                  "Use 'execute if ...:'")
 
   let text = compiler.checkMinecraftText(parts, check, column, "execute if ", " run say x")
   singleCheck(Check(negated: negated, condition: RawTest(raw: text)))

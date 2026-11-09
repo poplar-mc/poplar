@@ -79,7 +79,7 @@ const builtins = [
           doc: "A substring: from `start` (included) to `end` (not included, optional). Negative " &
                "bounds count from the end. One `data modify ... set string` command."),
   Builtin(name: "str", signature: "str(value)",
-          doc: "A number, score or math as a string: `$label = str(#kills);`."),
+          doc: "A number, score or math as a string: `$label = str(#kills)`."),
   Builtin(name: "startsWith", signature: "startsWith(text, \"prefix\")",
           doc: "A condition: the text starts with a constant prefix."),
   Builtin(name: "endsWith", signature: "endsWith(text, \"suffix\")",
@@ -369,11 +369,11 @@ func findLocal(compiler: Compiler, place: Place, kind: LocalKind,
     if result.isNone or local.position.line > result.get.position.line: result = some(local)
 
 func signature(mcfun: Mcfun): string =
-  ## `mcfun clamp() with {x, low, high}`: the macro keys that the body uses.
+  ## `mcfun clamp with {x, low, high}`: the macro keys that the body uses.
   var keys: OrderedSet[string]
   collectMacroKeys(mcfun.body, keys)
-  if keys.len == 0: &"mcfun {mcfun.name}()"
-  else: &"mcfun {mcfun.name}() with {{{toSeq(keys).join(\", \")}}}"
+  if keys.len == 0: &"mcfun {mcfun.name}"
+  else: &"mcfun {mcfun.name} with {{{toSeq(keys).join(\", \")}}}"
 
 func docComment(source: string, line: int): string =
   ## The `//` lines right above line `line` (1-based), without the slashes.
@@ -406,7 +406,7 @@ proc describe(server: LanguageServer, analysis: Analysis, word: Word,
                     &"the fake player `{local.get.local.generatedName}`.")
     if key notin compiler.globals: return none(string)
     let global = compiler.globals[key]
-    some(&"```poplar\nvar #{word.text} = {global.initialValue};\n```\nA score in the objective " &
+    some(&"```poplar\nvar #{word.text} = {global.initialValue}\n```\nA score in the objective " &
          &"`{global.outputNamespace.get(compiler.packNamespace)}.{global.name}`.")
   of wkData:
     let root = pathRoot(word.text)
@@ -417,7 +417,7 @@ proc describe(server: LanguageServer, analysis: Analysis, word: Word,
                     &"`{local.get.local.generatedName}`.")
     if key notin compiler.dataGlobals: return none(string)
     let global = compiler.dataGlobals[key]
-    some(&"```poplar\nvar ${root} = {global.initialSnbt};\n```\nIn the storage " &
+    some(&"```poplar\nvar ${root} = {global.initialSnbt}\n```\nIn the storage " &
          &"`{global.outputNamespace.get(compiler.packNamespace)}:data`.")
   of wkName:
     if key in compiler.namedDataFiles:

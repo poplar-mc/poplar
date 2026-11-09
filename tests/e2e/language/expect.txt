@@ -9,6 +9,7 @@ scaled = 1000
 item stone
 quote = a "b" \ c
 for = 10
+const = 42
 stone x3
 typed = 200
 path = 20

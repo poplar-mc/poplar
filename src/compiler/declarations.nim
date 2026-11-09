@@ -30,10 +30,10 @@ proc resolveNamespace(compiler: Compiler, namespace: Option[string]): string =
   if namespace.isNone: return compiler.scope.namespace
   let name = namespace.get
   if name == compiler.scope.namespace or compiler.isImported(name): return name
-  compiler.fail(&"namespace '{name}' is not imported. Add 'import {name};'")
+  compiler.fail(&"namespace '{name}' is not imported. Add 'import {name}'")
 
 func isValidNamespace(name: string): bool =
-  ## A resource name with no `-`, because `namespace x;` is Poplar code, where `-` is the minus
+  ## A resource name with no `-`, because `namespace x` is Poplar code, where `-` is the minus
   ## sign.
   isValidResourceName(name) and '-' notin name
 
@@ -127,11 +127,21 @@ proc addDuplicateError(compiler: Compiler, existing, later: McfunDeclaration) =
   compiler.addError(&"function '{later.mcfun.name}' is already defined at " &
                     &"{other.path}:{other.mcfun.position.line}")
 
-proc addDataGlobal(compiler: Compiler, decl: VarDecl) =
+proc addConstant(compiler: Compiler, constant: Constant, constants: Environment) =
+  ## `const maxMana = 100`. Its value can use the constants above it in the same file.
+  let name = constant.name
+  if containsRuntimeValue(constant.value):
+    compiler.fail(&"'{name}' is a build-time constant, but this value only exists in the game. " &
+                  &"Use 'var #{name}' for a score or 'var ${name}' for data")
+  let value = compiler.evaluate(constant.value, constants)
+  if not constants.declare(name, value):
+    compiler.fail(&"constant '{name}' is already declared in this file")
+
+proc addDataGlobal(compiler: Compiler, decl: VarDecl, constants: Environment) =
   let name = decl.target.name
   if pathRoot(name).len != name.len:
     compiler.fail(&"'var' declares a whole variable. Set '${name}' in an mcfun")
-  let value = compiler.evaluate(decl.value, Environment())
+  let value = compiler.evaluate(decl.value, constants)
   case value
   of NullValue: compiler.fail("a data variable cannot start as null")
   else: discard
@@ -147,22 +157,22 @@ proc addDataGlobal(compiler: Compiler, decl: VarDecl) =
                                          outputNamespace: compiler.scope.outputNamespace,
                                          storage: storageOf(compiler.scope.namespace))
 
-proc addGlobal(compiler: Compiler, decl: VarDecl) =
+proc addGlobal(compiler: Compiler, decl: VarDecl, constants: Environment) =
+  ## A top-level `var #x` or `var $x`. Its value can use the constants of the file.
   if decl.target.namespace.isSome:
     let namespace = decl.target.namespace.get
     compiler.fail(&"'{namespace}:' cannot be declared here. Declare it in a file with " &
-                  &"'namespace {namespace};'")
+                  &"'namespace {namespace}'")
   case decl.target.kind
   of ikScore: discard
-  of ikCompileTime:
-    compiler.fail("only score (#) and data ($) variables can be declared at the top level")
+  of ikCompileTime: raiseAssert "the parser gives 'var' only with '#' or '$'"
   of ikData:
-    compiler.addDataGlobal(decl)
+    compiler.addDataGlobal(decl, constants)
     return
   of ikEntityData:
-    compiler.fail("entity data cannot be declared. Set it in an mcfun: '@s.$path = ...;'")
+    compiler.fail("entity data cannot be declared. Set it in an mcfun: '@s.$path = ...'")
 
-  let initialValue = compiler.toScoreValue(compiler.evaluate(decl.value, Environment()))
+  let initialValue = compiler.toScoreValue(compiler.evaluate(decl.value, constants))
 
   let name = decl.target.name
   let key = qualifiedKey(compiler.scope.namespace, name)

@@ -1,260 +1,251 @@
-namespace language;
+namespace language
 
-import std;
+import std
 
-var #x = 0;
-var #loaded = 0;
-var #i = 0;
-var #sum = 0;
-var $item = "stone";
-var $count = 0;
-var $tag = "poplar_e2e";
-var $copy = 0;
-var $ratio = 0f;
-var $stats = {hp: 0, name: "Steve"};
-var $pos = [0, 0];
-var $names = [];
-var $flag = true;
-var $src = {};
-var $sid = "minecraft:diamond";
-var $small = 0.05f;
-var $typed = {myNum: 0.05f, count: 1b, big: 5L, little: 5s, plain: 0.5, whole: 20d};
+// A build-time constant: every mcfun in this file can read it.
+const base = 6
 
-mcfun show() {
-    /say $(label) = $(value);
-}
+var #x = 0
+var #loaded = 0
+var #i = 0
+var #sum = 0
+var $item = "stone"
+var $count = 0
+var $tag = "poplar_e2e"
+var $copy = 0
+var $ratio = 0f
+var $stats = {hp: 0, name: "Steve"}
+var $pos = [0, 0]
+var $names = []
+var $flag = true
+var $src = {}
+var $sid = "minecraft:diamond"
+var $small = 0.05f
+var $typed = {myNum: 0.05f, count: 1b, big: 5L, little: 5s, plain: 0.5, whole: 20d}
+
+mcfun show:
+    /say $(label) = $(value)
 
 // No chunk stays loaded without a player, and `forceload` loads it only on a later tick.
-mcfun load() {
-    #loaded = 1;
-    /forceload add 0 0;
-}
+mcfun load:
+    #loaded = 1
+    /forceload add 0 0
 
-mcfun grade() {
-    if ($(score) >= 90) { return 1; } else if ($(score) >= 50) { return 2; } else { return 3; }
-}
+mcfun grade:
+    if $(score) >= 90: return 1
+    elif $(score) >= 50: return 2
+    else: return 3
 
 // A data variable and a macro key in one command.
-mcfun labelItem() {
-    /say {{$item}} x$(n);
-}
+mcfun labelItem:
+    /say {{$item}} x$(n)
 
 // A data insert in execute, in an mcfun that uses a macro argument.
-mcfun markVia() {
-    execute (as @e[tag={{$tag}}]) { @s.$data.param = $(v); }
-}
+mcfun markVia:
+    execute as @e[tag={{$tag}}]: @s.$data.param = $(v)
 
 // 1 + 3 + 5 + 7 + 9: `while (true)` with `break` and `continue`.
-mcfun oddSum() {
-    #i = 0;
-    #sum = 0;
-    while (true) {
-        #i = #i + 1;
-        if (#i > 9) { break; }
-        if (#i % 2 == 0) { continue; }
-        #sum = #sum + #i;
-    }
-}
+mcfun oddSum:
+    #i = 0
+    #sum = 0
+    while true:
+        #i = #i + 1
+        if #i > 9: break
+        if #i % 2 == 0: continue
+        #sum = #sum + #i
 
 // `return` from inside a loop, in an mcfun that uses a macro argument.
-mcfun firstSquareOver() {
-    #i = 1;
-    while (#i < 100) {
-        if (#i * #i > $(limit)) { return #i; }
-        #i = #i + 1;
-    }
-    return -1;
-}
+mcfun firstSquareOver:
+    #i = 1
+    while #i < 100:
+        if #i * #i > $(limit): return #i
+        #i = #i + 1
+    return -1
 
 // `return` from inside `execute (...)`: the first entity that matches.
-mcfun anyStrong() {
-    execute (as @e[tag=poplar_e2e]) {
-        if (@s.#x > 5) { return 1; }
-    }
-    return 0;
-}
+mcfun anyStrong:
+    execute as @e[tag=poplar_e2e]:
+        if @s.#x > 5: return 1
+    return 0
 
 // The optimizer cannot know the value of a call, so the math below runs in the game.
-mcfun three() {
-    return 3;
-}
+mcfun three:
+    return 3
 
-mcfun test() {
-    show() with {label: "loaded", value: #loaded};
+mcfun test:
+    show() with {label: "loaded", value: #loaded}
 
-    #x = three();
-    #x = (#x + 4) * 2 - #x % 2;
-    show() with {label: "math", value: #x};
+    #x = three()
+    #x = (#x + 4) * 2 - #x % 2
+    show() with {label: "math", value: #x}
 
-    #x = 10 - #x;
-    show() with {label: "temp", value: #x};
+    #x = 10 - #x
+    show() with {label: "temp", value: #x}
 
-    show() with {label: "grade", value: grade() with {score: 95} * 100 + grade() with {score: 60} * 10 + grade() with {score: 10}};
+    show() with {label: "grade", value: grade() with {score: 95} * 100 + grade() with {score: 60} * 10 + grade() with {score: 10}}
 
-    if (#x < 0 and !(#x == -5)) { show() with {label: "logic", value: 1}; } else { show() with {label: "logic", value: 0}; }
+    if #x < 0 and !(#x == -5): show() with {label: "logic", value: 1}
+    else: show() with {label: "logic", value: 0}
 
-    #x = 0;
-    while (#x < 5) { #x = #x + 1; }
-    show() with {label: "while", value: #x};
+    #x = 0
+    while #x < 5: #x = #x + 1
+    show() with {label: "while", value: #x}
 
-    $count = #x * 2;
-    #x = $count + 1;
-    show() with {label: "data", value: #x};
-    #x = $count * 100;
-    show() with {label: "scaled", value: #x};
-    /say item {{$item}};
-    show() with {label: "quote", value: "a \"b\" \\ c"};
-    // `for` runs when the pack is built: 1 + 2 + 3 + 4.
-    var total = 0;
-    for (1..5) |i| { total = total + i; }
-    show() with {label: "for", value: total};
-    labelItem() with {n: 3};
+    $count = #x * 2
+    #x = $count + 1
+    show() with {label: "data", value: #x}
+    #x = $count * 100
+    show() with {label: "scaled", value: #x}
+    /say item {{$item}}
+    show() with {label: "quote", value: "a \"b\" \\ c"}
+    // `for` runs when the pack is built: it writes the addition 4 times, for 1 + 2 + 3 + 4.
+    var #total = 0
+    for i in 1..5: #total = #total + i
+    show() with {label: "for", value: #total}
+    show() with {label: "const", value: base * 7}
+    labelItem() with {n: 3}
 
-    #x = 4;
-    $ratio = #x * 5;
-    #x = $ratio * 10;
-    show() with {label: "typed", value: #x};
-    $stats.hp = #x / 10;
-    #x = $stats.hp;
-    show() with {label: "path", value: #x};
-    $pos = [#x, 7];
-    #x = $pos[1];
-    show() with {label: "literal", value: #x};
-    append($names, "Ann");
-    append($names, $stats.name);
-    #x = len($names);
-    show() with {label: "len", value: #x};
-    /say insert {{#x}} double {{#x * 2}};
-    /say second {{$names[1]}};
-    if ($stats.name == "Steve" and $flag == true) { /say condition ok; }
-    $flag = false;
-    if ($flag == false) { /say flag off; }
+    #x = 4
+    $ratio = #x * 5
+    #x = $ratio * 10
+    show() with {label: "typed", value: #x}
+    $stats.hp = #x / 10
+    #x = $stats.hp
+    show() with {label: "path", value: #x}
+    $pos = [#x, 7]
+    #x = $pos[1]
+    show() with {label: "literal", value: #x}
+    append($names, "Ann")
+    append($names, $stats.name)
+    #x = len($names)
+    show() with {label: "len", value: #x}
+    /say insert {{#x}} double {{#x * 2}}
+    /say second {{$names[1]}}
+    if $stats.name == "Steve" and $flag == true: /say condition ok
+    $flag = false
+    if $flag == false: /say flag off
     // A bare path is Minecraft's `if data`: the path exists, whatever its value.
-    if ($flag) { /say flag exists; }
-    if (!$stats.bonus) { /say no bonus; }
-    oddSum();
-    show() with {label: "odd sum", value: #sum};
-    show() with {label: "square", value: firstSquareOver() with {limit: 50}};
-    show() with {label: "abs", value: std:abs() with {x: -5}};
-    show() with {label: "clamp", value: std:clamp() with {x: 30, low: 0, high: 20}};
-    show() with {label: "sqrt", value: std:sqrt() with {x: 50}};
-    show() with {label: "pow", value: std:pow() with {base: 2, exponent: 10}};
-    show() with {label: "random", value: std:random() with {low: 5, high: 5}};
-    #x = std:random() with {low: 10, high: 20};
-    if (#x >= 10 and #x <= 20) { /say random in range; }
-    show() with {label: "minmax", value: std:min() with {a: 3, b: std:max() with {a: 1, b: 2}}};
-    show() with {label: "lerp", value: std:lerp() with {a: 0, b: 100, t: 250, scale: 1000}};
-    show() with {label: "sin", value: std:sin() with {degrees: 30}};
-    show() with {label: "cos", value: std:cos() with {degrees: 240}};
-    show() with {label: "sqrt big", value: std:sqrt() with {x: 2000000000}};
-    show() with {label: "weighted", value: std:weightedRandom() with {weights: [0, 5, 0]}};
-    var $people = ["Steve", "Alex", "Steve", "Ari"];
-    show() with {label: "count", value: std:countString() with {list: $people, value: "Steve"}};
-    show() with {label: "contains", value: std:containsString() with {list: $people, value: "Bob"}};
-    show() with {label: "indexOf", value: std:indexOfString() with {list: $people, value: "Ari"}};
-    var $numbers = [5, 1, 4, 1];
-    show() with {label: "sum", value: std:sum() with {list: $numbers}};
-    show() with {label: "minOf", value: std:minOf() with {list: $numbers} * 10 + std:maxOf() with {list: $numbers}};
-    show() with {label: "number search", value: std:count() with {list: $numbers, value: 1} * 100 + std:indexOf() with {list: $numbers, value: 4} * 10 + std:contains() with {list: $numbers, value: 9}};
-    var $ids = ["minecraft:stone", "minecraft:diamond"];
-    show() with {label: "id search", value: std:indexOfString() with {list: $ids, value: "minecraft:diamond"}};
-    std:sort() with {list: $numbers};
-    $numbers = $std:result;
-    /say sorted {{$numbers}};
-    std:reverse() with {list: $people};
-    $people = $std:result;
-    /say reversed {{$people}};
+    if $flag: /say flag exists
+    if !$stats.bonus: /say no bonus
+    oddSum()
+    show() with {label: "odd sum", value: #sum}
+    show() with {label: "square", value: firstSquareOver() with {limit: 50}}
+    show() with {label: "abs", value: std:abs() with {x: -5}}
+    show() with {label: "clamp", value: std:clamp() with {x: 30, low: 0, high: 20}}
+    show() with {label: "sqrt", value: std:sqrt() with {x: 50}}
+    show() with {label: "pow", value: std:pow() with {base: 2, exponent: 10}}
+    show() with {label: "random", value: std:random() with {low: 5, high: 5}}
+    #x = std:random() with {low: 10, high: 20}
+    if #x >= 10 and #x <= 20: /say random in range
+    show() with {label: "minmax", value: std:min() with {a: 3, b: std:max() with {a: 1, b: 2}}}
+    show() with {label: "lerp", value: std:lerp() with {a: 0, b: 100, t: 250, scale: 1000}}
+    show() with {label: "sin", value: std:sin() with {degrees: 30}}
+    show() with {label: "cos", value: std:cos() with {degrees: 240}}
+    show() with {label: "sqrt big", value: std:sqrt() with {x: 2000000000}}
+    show() with {label: "weighted", value: std:weightedRandom() with {weights: [0, 5, 0]}}
+    var $people = ["Steve", "Alex", "Steve", "Ari"]
+    show() with {label: "count", value: std:countString() with {list: $people, value: "Steve"}}
+    show() with {label: "contains", value: std:containsString() with {list: $people, value: "Bob"}}
+    show() with {label: "indexOf", value: std:indexOfString() with {list: $people, value: "Ari"}}
+    var $numbers = [5, 1, 4, 1]
+    show() with {label: "sum", value: std:sum() with {list: $numbers}}
+    show() with {label: "minOf", value: std:minOf() with {list: $numbers} * 10 + std:maxOf() with {list: $numbers}}
+    show() with {label: "number search", value: std:count() with {list: $numbers, value: 1} * 100 + std:indexOf() with {list: $numbers, value: 4} * 10 + std:contains() with {list: $numbers, value: 9}}
+    var $ids = ["minecraft:stone", "minecraft:diamond"]
+    show() with {label: "id search", value: std:indexOfString() with {list: $ids, value: "minecraft:diamond"}}
+    std:sort() with {list: $numbers}
+    $numbers = $std:result
+    /say sorted {{$numbers}}
+    std:reverse() with {list: $people}
+    $people = $std:result
+    /say reversed {{$people}}
 
-    /summon marker 0 0 0 {Tags:["poplar_e2e"]};
-    execute (as @e[type=marker,tag=poplar_e2e]) {
-        @s.#x = 7;
-        @s.#x = @s.#x * 3;
-    }
-    #x = @e[type=marker,tag=poplar_e2e,limit=1].#x;
-    show() with {label: "entity", value: #x};
-    show() with {label: "strong", value: anyStrong()};
+    /summon marker 0 0 0 {Tags:["poplar_e2e"]}
+    execute as @e[type=marker,tag=poplar_e2e]:
+        @s.#x = 7
+        @s.#x = @s.#x * 3
+    #x = @e[type=marker,tag=poplar_e2e,limit=1].#x
+    show() with {label: "entity", value: #x}
+    show() with {label: "strong", value: anyStrong()}
 
-    @n[tag=poplar_e2e].$data.hp = 7;
-    #x = @n[tag=poplar_e2e].$data.hp;
-    show() with {label: "nbt", value: #x};
-    @n[tag=poplar_e2e].$data.f = #x;
-    #x = @n[tag=poplar_e2e].$data.f * 10;
-    show() with {label: "nbt scaled", value: #x};
-    $copy = @n[tag=poplar_e2e].$data.hp;
-    /say copy {{$copy}};
-    /say marker {{@n[tag=poplar_e2e].$data.hp}};
-    execute (as @e[tag={{$tag}}]) { @s.$data.via = 5; }
-    #x = @n[tag=poplar_e2e].$data.via;
-    show() with {label: "via", value: #x};
-    markVia() with {v: 9};
-    #x = @n[tag=poplar_e2e].$data.param;
-    show() with {label: "param via", value: #x};
-    /kill @e[type=marker,tag=poplar_e2e];
+    @n[tag=poplar_e2e].$data.hp = 7
+    #x = @n[tag=poplar_e2e].$data.hp
+    show() with {label: "nbt", value: #x}
+    @n[tag=poplar_e2e].$data.f = #x
+    #x = @n[tag=poplar_e2e].$data.f * 10
+    show() with {label: "nbt scaled", value: #x}
+    $copy = @n[tag=poplar_e2e].$data.hp
+    /say copy {{$copy}}
+    /say marker {{@n[tag=poplar_e2e].$data.hp}}
+    execute as @e[tag={{$tag}}]: @s.$data.via = 5
+    #x = @n[tag=poplar_e2e].$data.via
+    show() with {label: "via", value: #x}
+    markVia() with {v: 9}
+    #x = @n[tag=poplar_e2e].$data.param
+    show() with {label: "param via", value: #x}
+    /kill @e[type=marker,tag=poplar_e2e]
 
-    var #count = 0;
-    var $words = [];
-    while (#count < 3) {
-        #count = #count + 1;
-        append($words, "w");
-    }
-    #x = #count + len($words);
-    show() with {label: "locals", value: #x};
-    #x = sumDown() with {n: 4};
-    show() with {label: "local recursion", value: #x};
-    $src = {x: 1};
-    copyLocal();
-    $src = {};
-    copyLocal();
+    var #count = 0
+    var $words = []
+    while #count < 3:
+        #count = #count + 1
+        append($words, "w")
+    #x = #count + len($words)
+    show() with {label: "locals", value: #x}
+    #x = sumDown() with {n: 4}
+    show() with {label: "local recursion", value: #x}
+    $src = {x: 1}
+    copyLocal()
+    $src = {}
+    copyLocal()
 
-    var $short = slice($sid, 10);
-    /say slice {{$short}};
-    /say end {{slice($sid, -3)}};
-    #x = 42;
-    var $text = str(#x);
-    /say str {{$text}};
-    /say nested {{slice(str(#x * 3), 1)}};
-    if (startsWith($sid, "minecraft:")) { /say starts; }
-    if (endsWith($sid, "stone")) { /say wrong suffix; }
-    var $tiny = "x";
-    if (!startsWith($tiny, "minecraft:")) { /say short ok; }
-    /execute if predicate self:alwaysTrue run say predicate ok;
-    /execute unless predicate language:checks/never run say string id ok;
-    /function #self:greeters;
-    if (dimension minecraft:overworld and #x > 0) { /say in overworld; }
-    if (!entity @e[tag=poplar_none] or #x > 1000) { /say no entity; }
-    if (dimension minecraft:the_nether) { /say wrong dimension; } else { /say not nether; }
-    /say snbt {{$small}} {{$typed}};
-    storeMacro() with {value: 0.25d};
-    storeMacro() with {value: [1, 2]};
-    $small = -0.25d;
-    /say negative {{$small}};
-    if ($small == -0.25d) { /say typed equal; }
+    var $short = slice($sid, 10)
+    /say slice {{$short}}
+    /say end {{slice($sid, -3)}}
+    #x = 42
+    var $text = str(#x)
+    /say str {{$text}}
+    /say nested {{slice(str(#x * 3), 1)}}
+    if startsWith($sid, "minecraft:"): /say starts
+    if endsWith($sid, "stone"): /say wrong suffix
+    var $tiny = "x"
+    if !startsWith($tiny, "minecraft:"): /say short ok
+    /execute if predicate self:alwaysTrue run say predicate ok
+    /execute unless predicate language:checks/never run say string id ok
+    /function #self:greeters
+    if dimension minecraft:overworld and #x > 0: /say in overworld
+    if !entity @e[tag=poplar_none] or #x > 1000: /say no entity
+    if dimension minecraft:the_nether: /say wrong dimension
+    else: /say not nether
+    /say snbt {{$small}} {{$typed}}
+    storeMacro() with {value: 0.25d}
+    storeMacro() with {value: [1, 2]}
+    $small = -0.25d
+    /say negative {{$small}}
+    if $small == -0.25d: /say typed equal
     // The game and the build count the same UTF-16 units.
-    $copy = "😀";
-    #x = len($copy);
-    /say emoji {{#x}} {{len("😀")}};
-    if ($small == -0.25f) { /say wrong number type; }
-}
+    $copy = "😀"
+    #x = len($copy)
+    /say emoji {{#x}} {{len("😀")}}
+    if $small == -0.25f: /say wrong number type
 
 // A failed copy must not leave the value of an earlier call: locals are removed when the mcfun ends.
-mcfun copyLocal() {
-    var $picked = $src.x;
-    if ($picked) { /say copy present; } else { /say copy absent; }
-}
+mcfun copyLocal:
+    var $picked = $src.x
+    if $picked: /say copy present
+    else: /say copy absent
 
 // Each call has its own #here, so the recursive call must not change it.
-mcfun sumDown() {
-    var #here = $(n);
-    if ($(n) <= 0) { return 0; }
-    var #rest = sumDown() with {n: $(n) - 1};
-    return #here * 10 + #rest;
-}
+mcfun sumDown:
+    var #here = $(n)
+    if $(n) <= 0: return 0
+    var #rest = sumDown() with {n: $(n) - 1}
+    return #here * 10 + #rest
 
 // A macro argument is text in the command, so any NBT value can be stored, the same as in a hand-written datapack.
-mcfun storeMacro() {
-    $copy = $(value);
-    /say macro stored {{$copy}};
-}
+mcfun storeMacro:
+    $copy = $(value)
+    /say macro stored {{$copy}}
 
 // Data files: the server must load them for the predicate and the tag to work.
 predicate alwaysTrue { "type": "minecraft:random_chance", "chance": 1.0 }
@@ -266,6 +257,5 @@ predicate "checks/never" {
 
 functionTag greeters { "values": ["language:greet"] }
 
-mcfun greet() {
-    /say tag ok;
-}
+mcfun greet:
+    /say tag ok

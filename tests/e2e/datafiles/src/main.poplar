@@ -1,7 +1,7 @@
 // One data file of each type. Each tag names the sample of its type, so the server fails to start
 // when a sample is missing or in the wrong folder. Each sample is the smallest vanilla file of its type.
 // Written by tools/gen_datafiles_test.py.
-namespace datafiles;
+namespace datafiles
 
 advancement "sample" {"criteria": {"impossible": {"trigger": "minecraft:impossible"}}, "requirements": [["impossible"]]}
 advancementTag "all" {"values": ["datafiles:sample"]}
@@ -192,18 +192,16 @@ predicate alwaysTrue { "type": "minecraft:random_chance", "chance": 1.0 }
 
 functionTag runAll { "values": ["datafiles:tagged"] }
 
-mcfun test() {
-    if (predicate self:alwaysTrue and predicate datafiles:sample) { /say predicate; }
-    /execute in datafiles:sample run say dimension;
-    /function #self:runAll;
-    /forceload add 0 0;
-    /setblock 0 -60 0 minecraft:chest;
-    /item replace block 0 -60 0 container.0 with minecraft:stone;
-    /item modify block 0 -60 0 container.0 datafiles:sample;
-    /execute if data block 0 -60 0 Items[{count:5}] run say item modifier;
-    /setblock 0 -60 0 minecraft:air;
-}
+mcfun test:
+    if predicate self:alwaysTrue and predicate datafiles:sample: /say predicate
+    /execute in datafiles:sample run say dimension
+    /function #self:runAll
+    /forceload add 0 0
+    /setblock 0 -60 0 minecraft:chest
+    /item replace block 0 -60 0 container.0 with minecraft:stone
+    /item modify block 0 -60 0 container.0 datafiles:sample
+    /execute if data block 0 -60 0 Items[{count:5}] run say item modifier
+    /setblock 0 -60 0 minecraft:air
 
-mcfun tagged() {
-    /say function tag;
-}
+mcfun tagged:
+    /say function tag

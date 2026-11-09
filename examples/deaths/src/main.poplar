@@ -1,32 +1,29 @@
 // Counts deaths for each player and for the whole server, with a random message.
-namespace deaths;
+namespace deaths
 
-import std;
+import std
 
-var #deaths = 0;
-var #worst = 0;
+var #deaths = 0
+var #worst = 0
 
-mcfun load() {
-    onEvent("deathCount", playerDied);
-}
+mcfun load:
+    onEvent("deathCount", playerDied)
 
 // Runs as the player who died, once per death.
-mcfun playerDied() {
-    #deaths = #deaths + 1;
-    @s.#deaths = @s.#deaths + 1;
-    #worst = std:max() with {a: #worst, b: @s.#deaths};
+mcfun playerDied:
+    #deaths = #deaths + 1
+    @s.#deaths = @s.#deaths + 1
+    #worst = std:max() with {a: #worst, b: @s.#deaths}
 
-    var #message = std:random() with {low: 1, high: 3};
-    if (#message == 1) {
-        /tellraw @a [{selector: "@s"}, " tripped."];
-    } else if (#message == 2) {
-        /tellraw @a [{selector: "@s"}, " forgot to eat."];
-    } else {
-        /tellraw @a [{selector: "@s"}, " met their end."];
-    }
+    var #message = std:random() with {low: 1, high: 3}
+    if #message == 1:
+        /tellraw @a [{selector: "@s"}, " tripped."]
+    elif #message == 2:
+        /tellraw @a [{selector: "@s"}, " forgot to eat."]
+    else:
+        /tellraw @a [{selector: "@s"}, " met their end."]
 
     // A subtitle shows with the next title, so it comes first.
-    /title @s subtitle {{["Deaths: ", text(@s.#deaths)]}};
-    /title @s title {text: "You died", color: "red"};
-    /title @a actionbar {{["Server deaths: ", text(#deaths), ", the most by one player: ", text(#worst)]}};
-}
+    /title @s subtitle {{["Deaths: ", text(@s.#deaths)]}}
+    /title @s title {text: "You died", color: "red"}
+    /title @a actionbar {{["Server deaths: ", text(#deaths), ", the most by one player: ", text(#worst)]}}

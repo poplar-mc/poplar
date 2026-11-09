@@ -131,7 +131,7 @@ type
       ## Calls to its generated functions pass it on.
     loop*: Option[string] ## The test function of the innermost `while`, for `break` and `continue`.
     returnThroughBody*: bool
-      ## True in a `while` or `execute (...)` body. There `return` stores the value and returns 1,
+      ## True in a `while` or `execute` body. There `return` stores the value and returns 1,
       ## so the caller can pass it on.
     inLoad*: bool ## True in a namespace's `mcfun load`. Only there `onEvent` is allowed.
     cleanup*: seq[Command]
@@ -181,6 +181,8 @@ type
       ## be Poplar names.
     fileNamespaces*: Table[string, string]
       ## The namespace of each source file (by its display path), for the language server.
+    fileConstants*: Table[string, Environment]
+      ## The constants of each file, by path. The mcfuns of the file read them.
     namedDataFiles*: OrderedTable[string, NamedDataFile]
       ## The data files with an identifier name, for the language server.
 
@@ -328,7 +330,7 @@ func collectMacroKeys*(body: openArray[Statement], keys: var OrderedSet[string])
 
 type Jumps* = object
   ## What a body can jump with. A `break` or `continue` in an inner `while` belongs to that loop,
-  ## and `execute (...)` cannot have one. A `return` leaves every level.
+  ## and `execute` cannot have one. A `return` leaves every level.
   hasReturn*, hasBreak*, hasContinue*: bool
 
 func merge(jumps: var Jumps, other: Jumps) =
@@ -368,7 +370,7 @@ func endsWithJump(body: openArray[Statement]): bool =
   else: false
 
 func branchesEndWithJump(ifStatement: If): bool =
-  ## True if the then body and every `else if` and `else` body end with `return`, `break` or
+  ## True if the then body and every `elif` and `else` body end with `return`, `break` or
   ## `continue`. The final `else` is optional.
   if not endsWithJump(ifStatement.thenBody): return false
   if ifStatement.elseBody.isNone: return true
@@ -435,7 +437,7 @@ proc scopeOf(compiler: Compiler, namespace: string, imports: seq[NamespaceName])
         outputNamespace: compiler.outputNamespace(namespace))
 
 proc resultScore(compiler: Compiler): Score =
-  ## The value of a `return` inside a `while` or `execute (...)` body, on its way out.
+  ## The value of a `return` inside a `while` or `execute` body, on its way out.
   resultScore(compiler.mcfun.folder, compiler.scope.outputNamespace)
 
 proc onBodyReturn(compiler: Compiler, bodyName: string): Command =
@@ -479,7 +481,7 @@ proc compileBodyAsCommand(compiler: Compiler, body: openArray[Statement], env: E
 
 proc compileJumpBody(compiler: Compiler, body: openArray[Statement], env: Environment,
                      loop: Option[string]): Option[Command] =
-  ## Compiles an `execute (...)` body. A body that can `return` is always a function, called as
+  ## Compiles an `execute` body. A body that can `return` is always a function, called as
   ## `if function ...`: it returns 1 for each entity that returns from the mcfun, and then the
   ## mcfun returns.
   let outerLoop = compiler.mcfun.loop
@@ -507,8 +509,8 @@ proc localKey(compiler: Compiler, name: string): string =
 
 proc declareLocal(compiler: Compiler, kind: LocalKind, varDecl: VarDecl, env: Environment,
                   commands: var seq[Command]) =
-  ## `var #i = 10;` in `mcfun countdown` is the fake player `#i_countdown` in `<ns>`.
-  ## `var $names = [];` is `names_countdown` in `<ns>:data`. The value is set here, on every call.
+  ## `var #i = 10` in `mcfun countdown` is the fake player `#i_countdown` in `<ns>`.
+  ## `var $names = []` is `names_countdown` in `<ns>:data`. The value is set here, on every call.
   let name = varDecl.target.name
   let sigil = if kind == lkScore: '#' else: '$'
   if kind == lkData and pathRoot(name).len != name.len:
@@ -549,22 +551,11 @@ proc declareLocal(compiler: Compiler, kind: LocalKind, varDecl: VarDecl, env: En
 proc compileVarDecl(compiler: Compiler, varDecl: VarDecl, env: Environment,
                     commands: var seq[Command]) =
   case varDecl.target.kind
-  of ikCompileTime: discard
-  of ikScore:
-    compiler.declareLocal(lkScore, varDecl, env, commands)
-    return
-  of ikData:
-    compiler.declareLocal(lkData, varDecl, env, commands)
-    return
+  of ikScore: compiler.declareLocal(lkScore, varDecl, env, commands)
+  of ikData: compiler.declareLocal(lkData, varDecl, env, commands)
   of ikEntityData:
-    compiler.fail("entity data cannot be declared with 'var'. Set it: '@s.$path = ...;'")
-  let name = varDecl.target.name
-  if containsRuntimeValue(varDecl.value):
-    compiler.fail(&"'{name}' is a build-time constant, but this value only exists in the game. " &
-                  &"Use 'var #{name}' for a score or 'var ${name}' for data")
-
-  let value = compiler.evaluate(varDecl.value, env)
-  if not env.declare(name, value): compiler.fail(&"'{name}' is already declared")
+    compiler.fail("entity data cannot be declared with 'var'. Set it: '@s.$path = ...'")
+  of ikCompileTime: raiseAssert "the parser gives 'var' only with '#' or '$'"
 
 func collectDataLocalNames(body: openArray[Statement], names: var OrderedSet[string]) =
   for statement in body:
@@ -592,27 +583,16 @@ proc localCleanup(compiler: Compiler, body: openArray[Statement]): seq[Command] 
 proc compileAssign(compiler: Compiler, assign: Assign, env: Environment,
                    commands: var seq[Command]) =
   case assign.target.kind
-  of ikCompileTime: discard
   of ikScore:
     compiler.compileScoreAssign(assign.target, assign.value, env, commands)
-    return
   of ikData:
     compiler.compileDataAssign(compiler.dataPath(assign.target, env), assign.value, env, commands)
-    return
   of ikEntityData:
     compiler.compileDataAssign(compiler.entityDataPath(assign.target), assign.value, env, commands)
-    return
-
-  if containsRuntimeValue(assign.value):
-    compiler.fail("a runtime value cannot be stored in a compile-time variable")
-
-  let value = compiler.evaluate(assign.value, env)
-  case env.assign(assign.target.name, value)
-  of arAssigned: discard
-  of arNotFound: compiler.fail(&"unknown name '{assign.target.name}'")
-  of arCrossesRuntimeBranch:
-    compiler.fail(&"cannot change compile-time '{assign.target.name}' inside a runtime 'if' or " &
-                  "'execute'")
+  of ikCompileTime:
+    let name = assign.target.name
+    if env.get(name).isNone: compiler.fail(&"unknown name '{name}'")
+    compiler.fail(&"'{name}' is a constant, so it cannot change")
 
 func returnRun(command: Command): Command =
   ## Wraps a command in `return run`, unless it already returns.
@@ -646,7 +626,7 @@ proc addBranches(compiler: Compiler, ifStatement: If, env: Environment, wrapper:
   if elseBody.len == 1:
     case elseBody[0]
     of IfStatement(elseIf):
-      # The rest of the chain belongs to this `else if`. `compileStatement` restores the position
+      # The rest of the chain belongs to this `elif`. `compileStatement` restores the position
       # after the chain.
       compiler.position = elseBody[0].position
       compiler.mcfun.tempCount = 0
@@ -694,7 +674,7 @@ proc compileIf(compiler: Compiler, ifStatement: If, env: Environment, commands: 
 
 proc compileReturn(compiler: Compiler, value: Expression, env: Environment,
                    commands: var seq[Command]) =
-  ## `value` is nil for a `return;` with no value.
+  ## `value` is nil for a `return` with no value.
   if compiler.mcfun.returnThroughBody:
     let target = compiler.resultScore()
     compiler.mcfun.tempCount = 0
@@ -859,11 +839,11 @@ proc compileStatement(compiler: Compiler, statement: Statement, env: Environment
   of ReturnStatement(returned): compiler.compileReturn(returned, env, commands)
   of BreakStatement:
     if compiler.mcfun.loop.isNone:
-      compiler.fail("'break' must be inside a 'while' (not in 'execute (...)')")
+      compiler.fail("'break' must be inside a 'while' (not in an 'execute' body)")
     commands.add ReturnValueCommand(returnValue: 0)
   of ContinueStatement:
     if compiler.mcfun.loop.isNone:
-      compiler.fail("'continue' must be inside a 'while' (not in 'execute (...)')")
+      compiler.fail("'continue' must be inside a 'while' (not in an 'execute' body)")
     let callLoop = compiler.generatedCall(compiler.mcfun.loop.get)
     commands.add ReturnRunCommand(returnRun: createCommand(callLoop))
   of WhileStatement(whileLoop): compiler.compileWhile(whileLoop, env, commands)
@@ -920,7 +900,8 @@ proc compileMcfun(compiler: Compiler, mcfunKey: string, declaration: McfunDeclar
   compiler.mcfun.cleanup = compiler.localCleanup(mcfun.body)
 
   var commands: seq[Command]
-  compiler.compileBlock(mcfun.body, Environment(), commands)
+  let env = Environment(outer: compiler.fileConstants.getOrDefault(declaration.path))
+  compiler.compileBlock(mcfun.body, env, commands)
   if mcfun.body.len == 0 or not mcfun.body[^1].isJump: commands.add compiler.mcfun.cleanup
 
   McFunction(name: declaration.irName, commands: commands)
@@ -972,9 +953,15 @@ proc addProgram*(compiler: Compiler, path: string, program: ast.Program, origin:
       continue
     compiler.mcfuns[key] = declaration
 
+  let constants = Environment()
+  compiler.fileConstants[path] = constants
+  for constant in program.constants:
+    compiler.position = constant.position
+    recover: compiler.addConstant(constant, constants)
+
   for global in program.globals:
     compiler.position = global.position
-    recover: compiler.addGlobal(global.decl)
+    recover: compiler.addGlobal(global.decl, constants)
 
   for dataFile in program.dataFiles:
     compiler.position = dataFile.position
@@ -988,7 +975,7 @@ proc compile*(compiler: Compiler): Program =
   var paths: Table[string, string]
 
   for mcfunKey, declaration in compiler.mcfuns:
-    # `import std;` costs nothing for the std mcfuns that the project never calls.
+    # `import std` costs nothing for the std mcfuns that the project never calls.
     if declaration.origin == orStd and mcfunKey notin used: continue
     try:
       functions.add compiler.compileMcfun(mcfunKey, declaration, paths)

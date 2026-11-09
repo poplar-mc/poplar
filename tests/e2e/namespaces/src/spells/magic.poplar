@@ -1,30 +1,25 @@
-namespace magic;
+namespace magic
 
-var #mana = 0;
-var #order = 0;
+var #mana = 0
+var #order = 0
 
-mcfun load() {
-    #order = 1;
-}
+mcfun load:
+    #order = 1
 
-mcfun heal() {
-    #mana = #mana + 1;
-    /say magic heal {{#mana}};
-}
+mcfun heal:
+    #mana = #mana + 1
+    /say magic heal {{#mana}}
 
-mcfun castSpell() {
-    /say spell;
-}
+mcfun castSpell:
+    /say spell
 
 // Locals survive a recursive call, in a namespace that is not the pack's.
-var #depth = 0;
+var #depth = 0
 
-mcfun keepLocals() {
-    var #mine = #depth;
-    var $label = "level";
-    if (#depth < 2) {
-        #depth = #depth + 1;
-        keepLocals();
-    }
-    /say {{$label}} {{#mine}};
-}
+mcfun keepLocals:
+    var #mine = #depth
+    var $label = "level"
+    if #depth < 2:
+        #depth = #depth + 1
+        keepLocals()
+    /say {{$label}} {{#mine}}

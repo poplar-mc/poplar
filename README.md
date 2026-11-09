@@ -5,18 +5,16 @@
 Poplar is a programming language that compiles to Minecraft Java datapacks.
 
 ```poplar
-namespace deaths;
+namespace deaths
 
-var #deaths = 0;
+var #deaths = 0
 
-mcfun load() {
-    onEvent("deathCount", playerDied);
-}
+mcfun load:
+    onEvent("deathCount", playerDied)
 
-mcfun playerDied() {
-    #deaths = #deaths + 1;
-    /tellraw @a {{["Deaths: ", text(#deaths)]}};
-}
+mcfun playerDied:
+    #deaths = #deaths + 1
+    /tellraw @a {{["Deaths: ", text(#deaths)]}}
 ```
 
 ## Install
